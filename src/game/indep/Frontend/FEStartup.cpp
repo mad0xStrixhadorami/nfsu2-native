@@ -188,7 +188,7 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     // advance on movie-done message 0xc3960eb9 (sent by FEngMovieStarter 0x00290cb8).
     if (strcasecmp(name, "LS_EAlogo.fng") == 0 || strcasecmp(name, "LS_THXMovie.fng") == 0) {
         if (msg == kMsgMovieDone) {
-            printf("[Startup] %s: stand-in movie finished (0x%08x)\n", name, msg);
+            printf("[Startup] %s: movie finished (0x%08x)\n", name, msg);
             Advance(name);
         }
         return;
@@ -198,7 +198,7 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     // advance on movie-done (0xc3960eb9), PAD_ACCEPT (0x406415e3), or PAD_START (0xb5af2461).
     if (strcasecmp(name, "LS_PSAMovie.fng") == 0 || strcasecmp(name, "UG_LS_IntroFMV.fng") == 0) {
         if (msg == kMsgMovieDone || msg == kMsgPadAccept || msg == kMsgPadStart) {
-            printf("[Startup] %s: stand-in movie finished/skipped (0x%08x)\n", name, msg);
+            printf("[Startup] %s: movie finished/skipped (0x%08x)\n", name, msg);
             Advance(name);
         }
         return;

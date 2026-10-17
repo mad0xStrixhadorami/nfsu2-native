@@ -51,7 +51,9 @@ target_link_libraries(feng_test PRIVATE feng)
 file(GLOB_RECURSE NFSU2_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_executable(nfsu2 ${NFSU2_SOURCES})
 target_include_directories(nfsu2 PRIVATE include src)
-target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswresample)
+target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng PkgConfig::FFMPEG)
 target_compile_options(nfsu2 PRIVATE -Wall -Wextra)
 
 

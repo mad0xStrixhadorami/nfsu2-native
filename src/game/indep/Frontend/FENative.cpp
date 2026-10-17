@@ -53,8 +53,9 @@ const char *PackageShortName(const uint8_t *feng)
 struct HidePCObjectsAndStartMovies : FEObjectCallback {
     FEngine *engine;
     FEPackage *pkg;
+    FENativeInterface *fe;
 
-    HidePCObjectsAndStartMovies(FEngine *e, FEPackage *p) : engine(e), pkg(p) {}
+    HidePCObjectsAndStartMovies(FEngine *e, FEPackage *p, FENativeInterface *f) : engine(e), pkg(p), fe(f) {}
 
     bool Callback(FEObject *obj) override
     {
@@ -66,12 +67,9 @@ struct HidePCObjectsAndStartMovies : FEObjectCallback {
         // If a group is marked invisible in the package, propagate to its children.
         if (obj->Type == FE_Group && (obj->Flags & 1))
             FENativeInterface::SetObjectVisible(obj, false);
-        // 0x00290cb8 (FEngMovieStarter): movie playback is a stand-in for now (ISSUES.md #45).
-        // When a movie finishes or is absent, 0x00290cb8 posts 0xc3960eb9 to the package screen.
-        if (obj->Type == FE_Movie && engine && !pkg->IsLibrary()) {
-            printf("Movie stand-in (%s, handle %08x): posting movie-done (0xc3960eb9)\n", pkg->GetName(), obj->Handle);
-            engine->QueueMessage(FEStartupSequence::kMsgMovieDone, obj, pkg, reinterpret_cast<FEObject *>(0xFFFFFFFFu), 0);
-        }
+        // 0x00290cb8 (FEngMovieStarter)
+        if (obj->Type == FE_Movie && engine && !pkg->IsLibrary())
+            fe->StartMovie(obj, pkg);
         return true;
     }
 };
@@ -360,8 +358,17 @@ bool FENativeInterface::LoadResources(FEPackage *, i32 count, FEResourceRequest 
 {
     for (i32 i = 0; i < count; ++i)
         if ((list[i].Type == kResourceImage || list[i].Type == kResourceFont || list[i].Type == kResourceMovie) &&
-            list[i].pFilename)
+            list[i].pFilename) {
             list[i].Handle = FEResourceHash(list[i].pFilename);
+            if (list[i].Type == kResourceMovie) {
+                std::string name = list[i].pFilename;
+                size_t slash = name.find_last_of("\\/");
+                if (slash != std::string::npos)
+                    name = name.substr(slash + 1);
+                name = name.substr(0, name.find('.'));
+                m_resourceNames[list[i].Handle] = name;
+            }
+        }
     return true;
 }
 
@@ -380,7 +387,7 @@ void FENativeInterface::PackageWasLoaded(FEPackage *pkg)
     SetVisible(pkg, FEHashUpper("OL_ICON_GROUP"), false);
     SetVisible(pkg, FEHashUpper("EA_MESSENGER_GROUP"), false);
 
-    HidePCObjectsAndStartMovies cb{m_engine, pkg};
+    HidePCObjectsAndStartMovies cb{m_engine, pkg, this};
     pkg->ForAllObjects(cb);
 
     if (m_startup && !pkg->IsLibrary())
@@ -837,8 +844,78 @@ void FENativeInterface::RenderObject(FEObject *pObject)
     case FE_String:
         DrawString(pObject);
         break;
+    case FE_Movie:
+        DrawMovie(pObject);
+        break;
     default:
-        // Movies, models, multi-images etc. are not drawn yet (ISSUES.md).
+        // Models, multi-images etc. are not drawn yet (ISSUES.md).
         break;
     }
+}
+
+// 0x002909e8: movie file name. Plain ".mpc" for FMVOpening, the district movies and THX; "ealogo"
+// and others take a language suffix (English: "_en.mpc"; other names only in this PAL region).
+static std::string MovieFileName(const std::string &name)
+{
+    static const char *const kPlain[] = {"FMVOpening", "IndustEast", "IndustWest", "Suburban",
+                                         "UpperClass", "THX_logo",   "THX_logo_fr"};
+    for (const char *p : kPlain)
+        if (strcasecmp(name.c_str(), p) == 0)
+            return "MOVIES\\" + name + ".mpc";
+    // Language 0 (English): ealogo always "_en"; others "_en" when the region check 0x002dbbf0
+    // passes, which it does for this PAL build (region 1).
+    return "MOVIES\\" + name + "_en.mpc";
+}
+
+void FENativeInterface::StartMovie(FEObject *obj, FEPackage *pkg)
+{
+    auto name = m_resourceNames.find(obj->Handle);
+    std::vector<uint8_t> data;
+    std::string file;
+    if (name != m_resourceNames.end() && m_readFile) {
+        file = MovieFileName(name->second);
+        data = m_readFile(file.c_str());
+    }
+    auto player = std::make_unique<MoviePlayer>();
+    if (data.empty() || !player->Open(std::move(data), m_renderer)) {
+        // As on PS2: a missing movie is reported done straight away.
+        printf("Movie %s: not available, posting movie-done\n", file.empty() ? "(unknown)" : file.c_str());
+        m_engine->QueueMessage(FEStartupSequence::kMsgMovieDone, obj, pkg, reinterpret_cast<FEObject *>(0xFFFFFFFFu), 0);
+        return;
+    }
+    printf("Movie %s: playing\n", file.c_str());
+    m_movies.push_back({obj, pkg, std::move(player), false});
+}
+
+void FENativeInterface::DrawMovie(FEObject *obj)
+{
+    for (ActiveMovie &m : m_movies) {
+        if (m.obj != obj)
+            continue;
+        if (!m.player->Update() && !m.notified) {
+            m.notified = true;
+            m_engine->QueueMessage(FEStartupSequence::kMsgMovieDone, obj, m.pkg, reinterpret_cast<FEObject *>(0xFFFFFFFFu), 0);
+        }
+        if (!m.player->Texture())
+            return;
+        Affine xform = LocalTransform(obj);
+        if (obj->RenderContext != 0)
+            xform = m_contexts[obj->RenderContext].xform * xform;
+        Affine screen;
+        screen.tx = kScreenWidth / 2.0f;
+        screen.ty = kScreenHeight / 2.0f;
+        xform = screen * xform;
+        int r, g, b, a;
+        ObjectColor(obj, r, g, b, a);
+        DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, 0, 0, 1, 1, SDL_Color{Uint8(r), Uint8(g), Uint8(b), Uint8(a)},
+                 m.player->Texture());
+        return;
+    }
+}
+
+bool FENativeInterface::PackageWillUnload(FEPackage *pkg)
+{
+    m_movies.erase(std::remove_if(m_movies.begin(), m_movies.end(), [pkg](const ActiveMovie &m) { return m.pkg == pkg; }),
+                   m_movies.end());
+    return true;
 }

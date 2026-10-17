@@ -2,6 +2,7 @@
 #include <SDL.h>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -10,6 +11,7 @@
 #include "Speed/Indep/Src/FEng/FEGameInterface.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
 #include "game/indep/Frontend/FEText.h"
+#include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
 class FEStartupSequence;
@@ -44,6 +46,10 @@ public:
     // Attach to an FEngine instance and configure joypads (0x002914a0 / cFEng::cFEng).
     void AttachEngine(FEngine *engine);
     void SetStartupSequence(FEStartupSequence *startup) { m_startup = startup; }
+    // Reads a file from the game data (used for movies, which are streamed separately).
+    void SetFileReader(std::function<std::vector<uint8_t>(const char *)> reader) { m_readFile = std::move(reader); }
+    // 0x00290cb8 (FEngMovieStarter): start the movie for a FE_Movie object, or report it done.
+    void StartMovie(FEObject *obj, FEPackage *pkg);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
@@ -72,7 +78,7 @@ public:
     bool LoadResources(FEPackage *pPackage, i32 Count, FEResourceRequest *pList) override;
     bool UnloadResources(FEPackage *, i32, FEResourceRequest *) override { return true; }
     void PackageWasLoaded(FEPackage *pPackage) override;
-    bool PackageWillUnload(FEPackage *) override { return true; }
+    bool PackageWillUnload(FEPackage *pkg) override;
     void NotificationMessage(u32 Message, FEObject *pObject, u32 Param1, u32 Param2) override;
     void NotifySoundMessage(u32 Message, FEObject *pObject, u32 ControlMask, u32 pPackagePtr) override;
     void BeginPackageRendering(FEPackage *) override {}
@@ -108,6 +114,17 @@ private:
     SDL_Renderer *m_renderer;
     FEngine *m_engine = nullptr;
     FEStartupSequence *m_startup = nullptr;
+
+    void DrawMovie(FEObject *obj);
+    struct ActiveMovie {
+        FEObject *obj;
+        FEPackage *pkg;
+        std::unique_ptr<MoviePlayer> player;
+        bool notified;
+    };
+    std::vector<ActiveMovie> m_movies;
+    std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
+    std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;
     std::vector<std::pair<const uint8_t *, size_t>> m_bundles;

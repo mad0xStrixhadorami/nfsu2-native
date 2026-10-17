@@ -146,6 +146,7 @@ int main(int argc, char **argv)
     fe.AddBundle(english.data(), english.size());
     FEngine *engine = new FEngine();
     fe.AttachEngine(engine);
+    fe.SetFileReader([fs](const char *path) { return ReadGameFile(*fs, path); });
 
     std::vector<uint8_t> globalB, frontB;
     FEStartupSequence startup(engine, &fe, /*isPal=*/true);
