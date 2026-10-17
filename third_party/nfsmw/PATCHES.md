@@ -12,3 +12,4 @@ Implement it from the UG2 binary when that happens, in `src/`, and log it in `IS
 | `src/Speed/Indep/bWare/Src/bSlotPool.cpp` | `SlotPool::Malloc` zeroes `SlotSize` bytes with `bMemSet` | Original zeroes `SlotSize/4` pointer-sized entries, which overran into neighbouring free slots on 64-bit and corrupted the free list |
 | `src/Speed/Indep/bWare/Src/bSlotPool.cpp` | `ExpandSlotPool` finds the last slot by byte offset | Original index assumed 4-byte pointers |
 | `src/Speed/Indep/Libs/Support/Utility/UStandard.h` | `UTL::Std::map` allocator is for `pair<const Key, T>` | GCC 16's libstdc++ static-asserts on an allocator for `T` (old compilers rebound it silently); 229 files failed |
+| `src/Speed/Indep/Src/FEng/FETypes.h` | `FEngGet*` byte swaps only on `EA_PLATFORM_GAMECUBE` | FEng data is little-endian; the decomp targets big-endian GameCube and always swapped, so x86 couldn't read any .fng |

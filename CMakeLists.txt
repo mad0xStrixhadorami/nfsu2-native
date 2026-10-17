@@ -43,3 +43,13 @@ add_executable(bware_test tests/bware_test.cpp src/platform/linux/bFunkStub.cpp 
 target_include_directories(bware_test PRIVATE src)
 target_link_libraries(bware_test PRIVATE bware)
 add_test(NAME bware COMMAND bware_test)
+
+# EA FEng front-end engine, reused from nfsmw. UG2 packages are the same format (version 0x20000).
+file(GLOB FENG_SOURCES ${NFSMW}/src/Speed/Indep/Src/FEng/*.cpp)
+add_library(feng STATIC ${FENG_SOURCES})
+target_link_libraries(feng PUBLIC bware)
+target_compile_options(feng PRIVATE -w)
+
+add_executable(feng_test tests/feng_test.cpp src/platform/linux/bFunkStub.cpp src/platform/linux/PlatformSystem.cpp src/game/indep/FEng/FEngMissing.cpp)
+target_include_directories(feng_test PRIVATE src)
+target_link_libraries(feng_test PRIVATE feng)
