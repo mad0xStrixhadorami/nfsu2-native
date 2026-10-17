@@ -77,6 +77,7 @@ private:
     void HandleMainMessage(uint32_t msg, FEPackage *pkg);
     void UpdateMainSelection(FEPackage *pkg);
     void PositionMainOptions(FEPackage *pkg);
+    void NavigateTo(const char *from, const char *target);
 
     FEngine *m_engine;
     FENativeInterface *m_fe;
@@ -102,4 +103,9 @@ private:
     float m_mainScrollPos = 0.0f;
     float m_mainScrollTarget = 0.0f;
     bool m_mainAllowFade = false;
+
+    // Menu navigation: screens to return to on Back, and a guard so one press acts once
+    // (BUTTON_PRESSED and PAD_ACCEPT both arrive for the same press).
+    std::vector<std::string> m_backStack;
+    bool m_navPending = false;
 };

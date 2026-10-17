@@ -148,6 +148,7 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
     if (!pkg || !pkg->GetName())
         return;
     const char *name = pkg->GetName();
+    m_navPending = false;
 
     if (strcasecmp(name, "UG_LS_Splash.fng") == 0) {
         HandleSplashLoaded(pkg);
@@ -222,6 +223,17 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
 
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         HandleMainMessage(msg, pkg);
+        return;
+    }
+
+    // Screens entered from the main menu: Back returns to the previous screen (the PS2 keeps a
+    // screen stack in FEManager, 0x00292158 push / 0x00292560 switch).
+    if (msg == kMsgPadBack && !m_backStack.empty() && !m_navPending) {
+        std::string prev = m_backStack.back();
+        m_backStack.pop_back();
+        printf("[Menu] %s -> back to %s\n", name, prev.c_str());
+        m_navPending = true;
+        m_engine->QueuePackageSwitch(prev.c_str(), 0xff);
         return;
     }
 }
@@ -485,6 +497,24 @@ void FEStartupSequence::HandleMainMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
 
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        // Option actions (vtable slot 5 of each option class, run on BUTTON_PRESSED 0x0c407210):
+        //   Career 0x00259398 -> push UI_StartCareer.fng; Quick Race 0x002595d0 / 2P 0x00259560 ->
+        //   mode 2/4, switch to UI_QRModeSelect.fng (gp-0x2e68); Online 0x00259498; Customize
+        //   0x002593c8 -> mode 0x20, push UI_QRCarSelect.fng; Profile 0x00259368 -> push
+        //   UI_ProfileManager.fng; Options 0x00259458 -> switch to UI_OptionsMain.fng.
+        static const char *const kTargets[] = {"UI_StartCareer.fng", "UI_QRModeSelect.fng", "UI_QRModeSelect.fng",
+                                               nullptr,              "UI_QRCarSelect.fng",  "UI_ProfileManager.fng",
+                                               "UI_OptionsMain.fng"};
+        const char *target = m_mainSelected < 7 ? kTargets[m_mainSelected] : nullptr;
+        if (!target) {
+            printf("[Menu] Online is not available in the native build\n");
+            return;
+        }
+        NavigateTo(pkg->GetName(), target);
+        return;
+    }
+
     if (msg == kMsgPadLeft) {
         // 0x0029d710 -> 0x002d41e8 -> 0x0029c718 (ScrollWrapped prev):
         m_mainSelected = (m_mainSelected + m_mainOptions.size() - 1) % m_mainOptions.size();
@@ -515,4 +545,12 @@ void FEStartupSequence::HandleMainMessage(uint32_t msg, FEPackage *pkg)
         }
         PositionMainOptions(pkg);
     }
+}
+
+void FEStartupSequence::NavigateTo(const char *from, const char *target)
+{
+    printf("[Menu] %s -> %s\n", from, target);
+    m_backStack.push_back(from);
+    m_navPending = true;
+    m_engine->QueuePackageSwitch(target, 0xff);
 }

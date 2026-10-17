@@ -219,6 +219,32 @@ int main(int argc, char **argv)
     const int maxFrames = maxFramesEnv ? atoi(maxFramesEnv) : 0;
     int frameCount = 0;
     bool pressSent = false;
+    struct ScriptedPress {
+        Uint32 ms;
+        u32 mask;
+        bool down = false, released = false;
+    };
+    std::vector<ScriptedPress> script;
+    if (const char *in = getenv("NFSU2_INPUT")) {
+        static const struct { const char *name; u32 mask; } kButtons[] = {
+            {"up", FENativeInterface::kPadUp},         {"down", FENativeInterface::kPadDown},
+            {"left", FENativeInterface::kPadLeft},     {"right", FENativeInterface::kPadRight},
+            {"accept", FENativeInterface::kPadAccept}, {"back", FENativeInterface::kPadBack},
+            {"start", FENativeInterface::kPadStart}};
+        for (const char *p = in; *p;) {
+            char name[16] = {};
+            unsigned ms = 0;
+            int used = 0;
+            if (sscanf(p, "%u:%15[a-z]%n", &ms, name, &used) != 2)
+                break;
+            for (auto &b : kButtons)
+                if (strcmp(b.name, name) == 0)
+                    script.push_back({ms, b.mask});
+            p += used;
+            if (*p == ',')
+                ++p;
+        }
+    }
 
     for (bool running = true; running;) {
         SDL_Event ev;
@@ -234,6 +260,17 @@ int main(int argc, char **argv)
             pressSent = true;
         } else if (pressSent && elapsed >= pressMs + 100) {
             fe.SetSimulatedPadMask(0);
+        }
+        // NFSU2_INPUT="ms:button,..." scripted presses (100 ms each) for repeatable screen tests.
+        // Buttons: up down left right accept back start.
+        for (ScriptedPress &p : script) {
+            if (!p.down && elapsed >= p.ms) {
+                fe.SetSimulatedPadMask(p.mask);
+                p.down = true;
+            } else if (p.down && !p.released && elapsed >= p.ms + 100) {
+                fe.SetSimulatedPadMask(0);
+                p.released = true;
+            }
         }
 
         startup.Tick(elapsed);
