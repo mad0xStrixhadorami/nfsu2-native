@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <strings.h>
 
 #include "Speed/Indep/Src/FEng/FEImage.h"
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
+#include "Speed/Indep/Src/FEng/FEString.h"
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
 #include "game/bWare/bChunk.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -16,22 +18,9 @@
 namespace {
 constexpr uint32_t kChunkFEngPackage = 0x00030203; // BCHUNK_FENG_PACKAGE
 constexpr uint32_t kResourceImage = 1;             // FEResourceRequest::Type for textures
-
-// Texture lookup key used by UG2: bStringHash of the upper-case file name without extension
-// ("NFSU_logo_chrome.tga" -> bStringHash("NFSU_LOGO_CHROME")), which equals the TPK name hash.
-uint32_t TextureHashFromFilename(const char *filename)
-{
-    const char *base = filename;
-    for (const char *p = filename; *p; ++p)
-        if (*p == '\\' || *p == '/')
-            base = p + 1;
-    char upper[128];
-    size_t n = 0;
-    for (; base[n] && base[n] != '.' && n < sizeof(upper) - 1; ++n)
-        upper[n] = static_cast<char>(toupper(static_cast<unsigned char>(base[n])));
-    upper[n] = '\0';
-    return bStringHash(upper);
-}
+constexpr uint32_t kResourceFont = 2;              // FEResourceRequest::Type for fonts
+constexpr uint32_t kChunkFEngFont = 0x00030201;    // BCHUNK_FENG_FONT
+constexpr uint32_t kChunkLanguage = 0x00039000;    // BCHUNK_LANGUAGE
 
 // FEng package short name lives in the PkHd chunk: u32[6] = version, ?, resources, objects,
 // name length, file name length, then the short name.
@@ -80,6 +69,21 @@ FENativeInterface::~FENativeInterface()
 void FENativeInterface::AddBundle(const uint8_t *data, size_t size)
 {
     m_bundles.emplace_back(data, size);
+    for (const uint8_t *p = data, *end = data + size; p + 8 <= end;) {
+        const bChunk *c = reinterpret_cast<const bChunk *>(p);
+        if (c->Data() + c->size > end)
+            break;
+        if (c->id == kChunkFEngFont) {
+            FEFont font;
+            if (font.Parse(c->Data(), c->size))
+                m_fonts[FEResourceHash(font.Name().c_str())] = font;
+        } else if (c->id == kChunkLanguage) {
+            FELanguage lang;
+            if (lang.Parse(c->Data(), c->size))
+                m_languages.push_back(lang);
+        }
+        p = c->Data() + c->size;
+    }
     auto *pack = new TexturePack();
     if (pack->Parse(data, size))
         m_packs.push_back(pack);
@@ -112,8 +116,8 @@ u8 *FENativeInterface::GetPackageData(const char *name, u8 **pBlockStart, bool &
 bool FENativeInterface::LoadResources(FEPackage *, i32 count, FEResourceRequest *list)
 {
     for (i32 i = 0; i < count; ++i)
-        if (list[i].Type == kResourceImage && list[i].pFilename)
-            list[i].Handle = TextureHashFromFilename(list[i].pFilename);
+        if ((list[i].Type == kResourceImage || list[i].Type == kResourceFont) && list[i].pFilename)
+            list[i].Handle = FEResourceHash(list[i].pFilename);
     return true;
 }
 
@@ -220,6 +224,9 @@ void FENativeInterface::GetViewTransformation(FEMatrix4 *pView)
 void FENativeInterface::DrawImage(FEObject *obj)
 {
     const FEImageData *d = reinterpret_cast<const FEImageData *>(obj->pData);
+    if (getenv("NFSU2_FEDEBUG"))
+        fprintf(stderr, "FEImage %08x pos (%.1f,%.1f,%.1f) size (%.1f,%.1f) ctx %u flags %08x\n", obj->NameHash, d->Pos.x,
+                d->Pos.y, d->Pos.z, d->Size.x, d->Size.y, obj->RenderContext, obj->Flags);
     Affine xform = LocalTransform(obj);
     if (obj->RenderContext != 0)
         xform = m_contexts[obj->RenderContext].xform * xform;
@@ -234,11 +241,15 @@ void FENativeInterface::DrawImage(FEObject *obj)
         return;
     SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
 
-    const float corners[4][2] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
-    const float uv[4][2] = {{d->UpperLeft.x, d->UpperLeft.y},
-                            {d->LowerRight.x, d->UpperLeft.y},
-                            {d->LowerRight.x, d->LowerRight.y},
-                            {d->UpperLeft.x, d->LowerRight.y}};
+    DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, d->UpperLeft.x, d->UpperLeft.y, d->LowerRight.x, d->LowerRight.y, col,
+             TextureFor(obj->Handle));
+}
+
+void FENativeInterface::DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0,
+                                 float u1, float v1, SDL_Color col, SDL_Texture *tex)
+{
+    const float corners[4][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+    const float uv[4][2] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
     SDL_Vertex v[4];
     for (int i = 0; i < 4; ++i) {
         xform.Apply(corners[i][0], corners[i][1], v[i].position.x, v[i].position.y);
@@ -246,7 +257,107 @@ void FENativeInterface::DrawImage(FEObject *obj)
         v[i].tex_coord = {uv[i][0], uv[i][1]};
     }
     const int indices[6] = {0, 1, 2, 0, 2, 3};
-    SDL_RenderGeometry(m_renderer, TextureFor(obj->Handle), v, 4, indices, 6);
+    SDL_RenderGeometry(m_renderer, tex, v, 4, indices, 6);
+}
+
+// Text, following nfsmw FEngFont::RenderString: lines break on '\n' or '^', justification from
+// FEString::Format, glyph quads at x + kern + offsetX, advancing by the glyph's advance.
+void FENativeInterface::DrawString(FEObject *obj)
+{
+    FEString *str = static_cast<FEString *>(obj);
+    auto font = m_fonts.find(obj->Handle);
+    if (font == m_fonts.end()) {
+        static uint32_t warned = 0;
+        if (warned != obj->Handle)
+            fprintf(stderr, "FEng: font %08x not loaded\n", obj->Handle);
+        warned = obj->Handle;
+        return;
+    }
+    const FEFont &f = font->second;
+
+    // Text: the object's own string, else its label from the language tables.
+    std::vector<uint16_t> text;
+    if (const i16 *w = str->GetString(); w && *w) {
+        for (; *w; ++w)
+            text.push_back(static_cast<uint16_t>(*w));
+    } else if (str->GetLabelHash() != 0xFFFFFFFF) {
+        for (const FELanguage &lang : m_languages)
+            if (const char *s8 = lang.Find(str->GetLabelHash())) {
+                for (; *s8; ++s8)
+                    text.push_back(static_cast<unsigned char>(*s8));
+                break;
+            }
+    }
+    if (getenv("NFSU2_FEDEBUG")) {
+        const FEObjData *dd = obj->GetObjData();
+        fprintf(stderr, "FEString %08x label %08x len %zu pos (%.1f,%.1f,%.1f) size (%.2f,%.2f) pivot (%.0f,%.0f) flags %08x ctx %u fmt %x a=%d text:",
+                obj->NameHash, str->GetLabelHash(), text.size(), dd->Pos.x, dd->Pos.y, dd->Pos.z, dd->Size.x, dd->Size.y,
+                dd->Pivot.x, dd->Pivot.y, obj->Flags, obj->RenderContext, str->Format, int(dd->Col.a));
+        for (size_t i = 0; i < text.size() && i < 60; ++i)
+            fputc(text[i] < 128 ? int(text[i]) : '?', stderr);
+        fputc('\n', stderr);
+    }
+    if (text.empty())
+        return;
+
+    auto isNewline = [](uint16_t c) { return c == '\n' || c == '^'; };
+    auto lineWidth = [&](size_t from) {
+        float w = 0;
+        for (size_t i = from; i < text.size() && !isNewline(text[i]); ++i)
+            if (const FontGlyph *g = f.Glyph(text[i]))
+                w += g->advanceX;
+        return w;
+    };
+    int lines = 1;
+    for (uint16_t c : text)
+        lines += isNewline(c);
+    const float leading = static_cast<float>(str->Leading);
+    const float textHeight = lines * f.Height() + (lines - 1) * leading;
+    const u32 format = str->Format;
+    auto xOffset = [&](float w) {
+        return (format & FESTRING_JUSTIFY_HCENTER) ? -0.5f * w : (format & FESTRING_JUSTIFY_HRIGHT) ? -w : 0.0f;
+    };
+    float y = (format & FESTRING_JUSTIFY_VCENTER) ? -0.5f * textHeight : (format & FESTRING_JUSTIFY_VBOTTOM) ? -textHeight : 0.0f;
+    float x = xOffset(lineWidth(0));
+
+    Affine xform = LocalTransform(obj);
+    // Glyphs are laid out in pixels; drop the unit-quad scale and keep Size as a multiplier.
+    if (obj->RenderContext != 0)
+        xform = m_contexts[obj->RenderContext].xform * xform;
+    Affine screen;
+    screen.tx = kScreenWidth / 2.0f;
+    screen.ty = kScreenHeight / 2.0f;
+    xform = screen * xform;
+
+    int r, g, b, a;
+    ObjectColor(obj, r, g, b, a);
+    if (a == 0)
+        return;
+    SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
+    SDL_Texture *tex = TextureFor(f.TextureHash());
+    int tw = 1, th = 1;
+    SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+
+    uint16_t prev = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        uint16_t c = text[i];
+        if (isNewline(c)) {
+            y += f.Height() + leading;
+            x = xOffset(lineWidth(i + 1));
+            prev = 0;
+            continue;
+        }
+        const FontGlyph *gl = f.Glyph(c);
+        if (!gl)
+            continue;
+        float kern = prev ? static_cast<float>(f.Kern(gl, prev)) : 0.0f;
+        float gw = std::max<float>(gl->width, 4.0f);
+        float x0 = x + kern + gl->offsetX, y0 = y + gl->offsetY;
+        DrawQuad(xform, x0, y0, x0 + gw, y0 + gl->height, float(gl->u) / tw, float(gl->v) / th,
+                 float(gl->u + gl->width + 1) / tw, float(gl->v + gl->height) / th, col, tex);
+        x += gl->advanceX + kern;
+        prev = c;
+    }
 }
 
 void FENativeInterface::RenderObject(FEObject *pObject)
@@ -255,8 +366,11 @@ void FENativeInterface::RenderObject(FEObject *pObject)
     case FE_Image:
         DrawImage(pObject);
         break;
+    case FE_String:
+        DrawString(pObject);
+        break;
     default:
-        // Strings, movies, models etc. are not drawn yet (ISSUES.md).
+        // Movies, models, multi-images etc. are not drawn yet (ISSUES.md).
         break;
     }
 }

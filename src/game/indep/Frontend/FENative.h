@@ -7,6 +7,7 @@
 
 #include "Speed/Indep/Src/FEng/FEGameInterface.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
+#include "game/indep/Frontend/FEText.h"
 
 class TexturePack;
 
@@ -56,11 +57,16 @@ private:
     void ObjectColor(const FEObject *obj, int &r, int &g, int &b, int &a) const;
     SDL_Texture *TextureFor(uint32_t hash);
     void DrawImage(FEObject *obj);
+    void DrawString(FEObject *obj);
+    void DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
+                  SDL_Color col, SDL_Texture *tex);
 
     SDL_Renderer *m_renderer;
     std::vector<std::pair<const uint8_t *, size_t>> m_bundles;
     std::vector<TexturePack *> m_packs;
     std::map<uint32_t, SDL_Texture *> m_textures; // by texture name hash
     SDL_Texture *m_white = nullptr;               // stand-in for textures we cannot decode yet
+    std::map<uint32_t, FEFont> m_fonts;           // by font name hash
+    std::vector<FELanguage> m_languages;          // string tables, searched in load order
     Context m_contexts[256];
 };

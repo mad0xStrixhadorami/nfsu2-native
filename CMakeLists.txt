@@ -54,3 +54,10 @@ target_include_directories(nfsu2 PRIVATE include src)
 target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng)
 target_compile_options(nfsu2 PRIVATE -Wall -Wextra)
 
+
+add_executable(texture_test tests/texture_test.cpp src/game/indep/Texture/TexturePack.cpp src/game/bWare/bCompression.cpp src/game/bWare/bHuffman.cpp)
+target_include_directories(texture_test PRIVATE src)
+target_link_libraries(texture_test PRIVATE SDL2::SDL2)
+
+add_executable(huff_test tests/huff_test.cpp src/game/bWare/bCompression.cpp src/game/bWare/bHuffman.cpp)
+target_include_directories(huff_test PRIVATE src)

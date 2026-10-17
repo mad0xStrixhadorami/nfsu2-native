@@ -7,6 +7,8 @@
 
 #include "Speed/Indep/Src/FEng/FEGameInterface.h"
 #include "Speed/Indep/Src/FEng/FEGroup.h"
+#include "Speed/Indep/Src/FEng/FEScript.h"
+#include "Speed/Indep/Src/FEng/FEKeyTrack.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
 #include "Speed/Indep/bWare/Inc/bMemory.hpp"
@@ -53,6 +55,20 @@ static void DumpObject(FEObject *o, int depth)
         printf("  pos (%.0f,%.0f) size (%.0f,%.0f) rgba (%.0f,%.0f,%.0f,%.0f)", d->Pos.x, d->Pos.y, d->Size.x, d->Size.y,
                float(d->Col.r), float(d->Col.g), float(d->Col.b), float(d->Col.a));
     printf("  scripts %u\n", o->GetNumScripts());
+    for (FEScript *sc = o->GetFirstScript(); sc; sc = static_cast<FEScript *>(sc->GetNext())) {
+        printf("%*s  script id %08x len %d flags %x tracks %u\n", depth * 2, "", sc->ID, sc->Length, sc->Flags, sc->TrackCount);
+        for (u32 t = 0; t < sc->TrackCount; ++t) {
+            FEKeyTrack &k = sc->pTracks[t];
+            const u32 *bv = reinterpret_cast<const u32 *>(&k.BaseKey.Val);
+            printf("%*s    track type %u size %u interp %u action %u len %d off %d base t=%d val %08x %08x %08x %08x deltas %u\n",
+                   depth * 2, "", k.ParamType, k.ParamSize, k.InterpType, k.InterpAction, int(k.Length), int(k.LongOffset),
+                   k.BaseKey.tTime, bv[0], bv[1], bv[2], bv[3], k.DeltaKeys.GetNumElements());
+            for (FEKeyNode *n = k.GetFirstDeltaKey(); n; n = n->GetNext()) {
+                const i32 *v = reinterpret_cast<const i32 *>(&n->Val);
+                printf("%*s      key t=%d val %d %d %d %d\n", depth * 2, "", n->tTime, v[0], v[1], v[2], v[3]);
+            }
+        }
+    }
     if (o->Type == FE_Group)
         for (FEObject *c = static_cast<FEGroup *>(o)->GetFirstChild(); c; c = c->GetNext())
             DumpObject(c, depth + 1);

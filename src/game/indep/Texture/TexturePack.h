@@ -1,13 +1,14 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <memory>
 #include <vector>
 
 // PS2 texture pack (TPK), chunk 0xb3300000:
 //   0xb3310000 header container
 //     0x33310001 pack name / path
 //     0x33310002 name hashes
-//     0x33310004 texture info, 124 bytes per texture
+//     0x33310004 texture info, 124 bytes per texture (or 0x33310003: compressed entries, see .cpp)
 //     0x33310005 GS register settings, 84 bytes per texture (not needed natively)
 //   0xb3320000 data container
 //     0x33320002 palettes followed by pixel data, after 0x11 padding to 0x80 alignment
@@ -19,6 +20,8 @@ struct TextureInfo {
     uint32_t dataOffset, paletteOffset, dataSize, paletteSize;
     uint16_t width, height;
     uint8_t bitsPerPixel;
+    const uint8_t *pixels = nullptr;  // resolved at parse time (inside the bundle or a decompressed copy)
+    const uint8_t *palette = nullptr;
 };
 
 struct DecodedTexture {
@@ -36,6 +39,5 @@ public:
 
 private:
     std::vector<TextureInfo> m_textures;
-    const uint8_t *m_blob = nullptr;
-    size_t m_blobSize = 0;
+    std::vector<std::unique_ptr<std::vector<uint8_t>>> m_owned; // decompressed texture blocks
 };

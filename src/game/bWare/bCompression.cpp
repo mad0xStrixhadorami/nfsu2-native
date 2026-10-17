@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+uint32_t bHuffDecode(const uint8_t *src, uint8_t *dst); // bHuffman.cpp, 0x002e8720
+
 static uint32_t ReadU32(const uint8_t *p)
 {
     uint32_t v;
@@ -98,7 +100,11 @@ uint32_t bDecompress(const void *src, void *dst)
     switch (ReadU32(static_cast<const uint8_t *>(src))) {
     case kTagJDLZ:
         return bDecompressJDLZ(src, dst);
-    case kTagHUFF: // 0x002e9640, todo
+    case kTagHUFF: // 0x002e9640: 16-byte header, then huffcodex data
+        if (static_cast<const uint8_t *>(src)[4] != 1)
+            return 0;
+        bHuffDecode(static_cast<const uint8_t *>(src) + 16, static_cast<uint8_t *>(dst));
+        return bGetDecompressedSize(src);
     case kTagCOMP: // 0x002e96f8, todo
     case kTagRAWW: // 0x002e9698, todo
     default:

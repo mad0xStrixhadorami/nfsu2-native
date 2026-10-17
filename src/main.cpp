@@ -125,12 +125,20 @@ int main(int argc, char **argv)
     // Boot screen, as InitializeEverything does it (0x002df948, LoadGlobalAChunks + BootLoadingScreen):
     // GLOBAL\GLOBALA.BUN holds loading_boot.fng and its textures.
     std::vector<uint8_t> globalA = ReadGameFile(*fs, "GLOBAL\\GLOBALA.BUN");
+    // Language data, as the language init (0x00262840) loads it: font sheets, then the fonts and
+    // strings of the current language.
+    std::vector<uint8_t> langTextures = ReadGameFile(*fs, "LANGUAGES\\LANGUAGETEXTURES.BIN");
+    std::vector<uint8_t> english = ReadGameFile(*fs, "LANGUAGES\\ENGLISH.BIN");
     FENativeInterface fe(ren);
     fe.AddBundle(globalA.data(), globalA.size());
+    fe.AddBundle(langTextures.data(), langTextures.size());
+    fe.AddBundle(english.data(), english.size());
     FEngine *engine = new FEngine();
     engine->SetInterface(&fe);
-    if (!engine->PushPackage("loading_boot.fng", 0, 0xff))
-        fprintf(stderr, "could not push loading_boot.fng\n");
+    // NFSU2_PACKAGE=name.fng shows another front-end package instead (development aid).
+    const char *package = getenv("NFSU2_PACKAGE") ? getenv("NFSU2_PACKAGE") : "loading_boot.fng";
+    if (!engine->PushPackage(package, 0, 0xff))
+        fprintf(stderr, "could not push %s\n", package);
 
     Uint32 last = SDL_GetTicks();
     const Uint32 start = last;

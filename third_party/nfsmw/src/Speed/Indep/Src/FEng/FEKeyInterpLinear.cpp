@@ -125,9 +125,10 @@ write_base:
     }
 
     if (t == 0.0f || t == 1.0f) {
-        void *pValPtr = pKey->GetKeyData();
+        // nfsu2 patch: key values live in GetKeyData()->Val; GetKeyData() itself points at tTime.
+        void *pValPtr = pKey->GetKeyData()->Val.Data;
         if (t == 0.0f) {
-            pValPtr = pPrevKey->GetKeyData();
+            pValPtr = pPrevKey->GetKeyData()->Val.Data;
         }
         switch (pTrack->ParamType) {
             case 1: {
@@ -167,27 +168,27 @@ write_base:
     } else {
         switch (pTrack->ParamType) {
             case 1:
-                FELerpInteger(*reinterpret_cast<i32 *>(pPrevKey->GetKeyData()), *reinterpret_cast<i32 *>(pKey->GetKeyData()), t,
+                FELerpInteger(*reinterpret_cast<i32 *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<i32 *>(pKey->GetKeyData()->Val.Data), t,
                               reinterpret_cast<i32 *>(pBaseValue), reinterpret_cast<i32 *>(pOutDataPtr));
                 break;
             case 2:
-                FELerpFloat(*reinterpret_cast<float *>(pPrevKey->GetKeyData()), *reinterpret_cast<float *>(pKey->GetKeyData()), t,
+                FELerpFloat(*reinterpret_cast<float *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<float *>(pKey->GetKeyData()->Val.Data), t,
                             reinterpret_cast<float *>(pBaseValue), reinterpret_cast<float *>(pOutDataPtr));
                 break;
             case 3:
-                FELerpVector2(*reinterpret_cast<FEVector2 *>(pPrevKey->GetKeyData()), *reinterpret_cast<FEVector2 *>(pKey->GetKeyData()), t,
+                FELerpVector2(*reinterpret_cast<FEVector2 *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<FEVector2 *>(pKey->GetKeyData()->Val.Data), t,
                               reinterpret_cast<FEVector2 *>(pBaseValue), reinterpret_cast<FEVector2 *>(pOutDataPtr));
                 break;
             case 4:
-                FELerpVector3(*reinterpret_cast<FEVector3 *>(pPrevKey->GetKeyData()), *reinterpret_cast<FEVector3 *>(pKey->GetKeyData()), t,
+                FELerpVector3(*reinterpret_cast<FEVector3 *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<FEVector3 *>(pKey->GetKeyData()->Val.Data), t,
                               reinterpret_cast<FEVector3 *>(pBaseValue), reinterpret_cast<FEVector3 *>(pOutDataPtr));
                 break;
             case 5:
-                FELerpQuaternion(*reinterpret_cast<FEQuaternion *>(pPrevKey->GetKeyData()), *reinterpret_cast<FEQuaternion *>(pKey->GetKeyData()), t,
+                FELerpQuaternion(*reinterpret_cast<FEQuaternion *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<FEQuaternion *>(pKey->GetKeyData()->Val.Data), t,
                                  reinterpret_cast<FEQuaternion *>(pBaseValue), reinterpret_cast<FEQuaternion *>(pOutDataPtr));
                 break;
             case 6:
-                FELerpColor(*reinterpret_cast<FEColor *>(pPrevKey->GetKeyData()), *reinterpret_cast<FEColor *>(pKey->GetKeyData()), t,
+                FELerpColor(*reinterpret_cast<FEColor *>(pPrevKey->GetKeyData()->Val.Data), *reinterpret_cast<FEColor *>(pKey->GetKeyData()->Val.Data), t,
                             reinterpret_cast<FEColor *>(pBaseValue), reinterpret_cast<FEColor *>(pOutDataPtr));
                 break;
         }

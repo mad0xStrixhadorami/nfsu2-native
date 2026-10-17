@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "game/bWare/bChunk.h"
+#include "game/bWare/bCompression.h"
 
 namespace {
 
@@ -53,34 +54,71 @@ uint32_t Ps2ColorToRgba(const uint8_t *c)
 
 } // namespace
 
+static TextureInfo ReadInfoRecord(const uint8_t *e)
+{
+    TextureInfo t;
+    t.name.assign(reinterpret_cast<const char *>(e + 12), strnlen(reinterpret_cast<const char *>(e + 12), 24));
+    t.nameHash = U32(e + 36);
+    t.dataOffset = U32(e + 48);
+    t.paletteOffset = U32(e + 52);
+    t.dataSize = U32(e + 56);
+    t.paletteSize = U32(e + 60);
+    t.width = U16(e + 68);
+    t.height = U16(e + 70);
+    t.bitsPerPixel = e[74];
+    return t;
+}
+
 bool TexturePack::Parse(const uint8_t *data, size_t size)
 {
     const uint8_t *end = data + size;
+    const bChunk *tpk = bFindChunk(data, end, 0xb3300000);
     const bChunk *info = bFindChunk(data, end, 0x33310004);
+    const bChunk *compressed = bFindChunk(data, end, 0x33310003);
     const bChunk *blob = bFindChunk(data, end, 0x33320002);
-    if (!info || !blob)
+    if (!tpk || !blob || (!info && !compressed))
         return false;
 
     const uint8_t *b = blob->Data();
     const uint8_t *bEnd = b + blob->size;
     while (b < bEnd && *b == 0x11)
         ++b;
-    m_blob = b;
-    m_blobSize = bEnd - b;
-
     m_textures.clear();
-    for (size_t off = 0; off + kInfoStride <= info->size; off += kInfoStride) {
-        const uint8_t *e = info->Data() + off;
-        TextureInfo t;
-        t.name.assign(reinterpret_cast<const char *>(e + 12), strnlen(reinterpret_cast<const char *>(e + 12), 24));
-        t.nameHash = U32(e + 36);
-        t.dataOffset = U32(e + 48);
-        t.paletteOffset = U32(e + 52);
-        t.dataSize = U32(e + 56);
-        t.paletteSize = U32(e + 60);
-        t.width = U16(e + 68);
-        t.height = U16(e + 70);
-        t.bitsPerPixel = e[74];
+    m_owned.clear();
+
+    if (info) {
+        for (size_t off = 0; off + kInfoStride <= info->size; off += kInfoStride) {
+            TextureInfo t = ReadInfoRecord(info->Data() + off);
+            if (t.dataOffset + t.dataSize > size_t(bEnd - b) || t.paletteOffset + t.paletteSize > size_t(bEnd - b))
+                continue;
+            t.pixels = b + t.dataOffset;
+            t.palette = b + t.paletteOffset;
+            m_textures.push_back(std::move(t));
+        }
+        return true;
+    }
+
+    // Compressed pack (e.g. LANGUAGES\LANGUAGETEXTURES.BIN): 24-byte entries
+    //   u32 name hash, u32 offset from the TPK chunk, u32 compressed size, u32 decompressed size, ...
+    // Each entry is a HUFF/JDLZ block that expands to: pixels, palette, a 124-byte info record and
+    // 84 bytes of GS settings. The record's offsets refer to the uncompressed pack, so pixels start
+    // at 0 and the palette at (paletteOffset - dataOffset).
+    const uint8_t *tpkBase = reinterpret_cast<const uint8_t *>(tpk);
+    for (size_t off = 0; off + 24 <= compressed->size; off += 24) {
+        const uint8_t *e = compressed->Data() + off;
+        uint32_t offset = U32(e + 4), csize = U32(e + 8), dsize = U32(e + 12);
+        if (offset + csize > size_t(end - tpkBase) || dsize < kInfoStride + 84 || !bIsCompressed(tpkBase + offset))
+            continue;
+        auto buf = std::make_unique<std::vector<uint8_t>>(dsize);
+        if (bDecompress(tpkBase + offset, buf->data()) != dsize)
+            continue;
+        TextureInfo t = ReadInfoRecord(buf->data() + dsize - 84 - kInfoStride);
+        uint32_t paletteAt = t.paletteOffset - t.dataOffset;
+        if (t.dataSize > dsize || paletteAt + t.paletteSize > dsize)
+            continue;
+        t.pixels = buf->data();
+        t.palette = buf->data() + paletteAt;
+        m_owned.push_back(std::move(buf));
         m_textures.push_back(std::move(t));
     }
     return true;
@@ -96,13 +134,21 @@ const TextureInfo *TexturePack::Find(const char *name) const
 
 bool TexturePack::Decode(const TextureInfo &t, DecodedTexture &out) const
 {
-    if (t.dataOffset + t.dataSize > m_blobSize || t.paletteOffset + t.paletteSize > m_blobSize)
+    if (t.bitsPerPixel != 8 && t.bitsPerPixel != 4)
         return false;
-    // 4-bit textures use a different GS layout that is not decoded yet (ISSUES.md).
-    if (t.bitsPerPixel != 8)
-        return false;
-    const uint8_t *pixels = m_blob + t.dataOffset;
-    const uint8_t *palette = m_blob + t.paletteOffset;
+    const uint8_t *pixels = t.pixels;
+    // 4-bit textures: expand each byte to two 4-bit indices (low nibble first), then they use the
+    // same block swizzle as 8-bit data. Found by scoring layouts against the font glyph table.
+    std::vector<uint8_t> expanded;
+    if (t.bitsPerPixel == 4) {
+        expanded.resize(size_t(t.width) * t.height);
+        for (size_t i = 0; i < expanded.size() / 2 && i < t.dataSize; ++i) {
+            expanded[2 * i] = pixels[i] & 0x0f;
+            expanded[2 * i + 1] = pixels[i] >> 4;
+        }
+        pixels = expanded.data();
+    }
+    const uint8_t *palette = t.palette;
     const int colors = t.paletteSize / 4;
 
     out.width = t.width;
