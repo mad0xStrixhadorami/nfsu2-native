@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <string>
@@ -24,6 +25,8 @@ public:
     void Setup(FEPackage *pkg, std::vector<Widget> widgets);
     // Returns true if the message was consumed (Up/Down/Left/Right).
     bool HandleMessage(uint32_t msg);
+    // FEHASH_INITCOMPLETE: the screen's intro scripts are done; set every row's highlight state.
+    void OnInitComplete();
     FEPackage *Package() const { return m_pkg; }
 
 private:
@@ -32,4 +35,5 @@ private:
     FEPackage *m_pkg = nullptr;
     std::vector<Widget> m_widgets;
     size_t m_selected = 0;
+    size_t m_highlighted = SIZE_MAX; // row whose Highlight script is running
 };

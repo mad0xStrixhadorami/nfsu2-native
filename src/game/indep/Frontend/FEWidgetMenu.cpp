@@ -1,6 +1,9 @@
 #include "game/indep/Frontend/FEWidgetMenu.h"
 
 #include <cstdio>
+#include <cstdlib>
+
+#include "Speed/Indep/Src/FEng/FEScript.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -26,6 +29,7 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
     m_pkg = pkg;
     m_widgets = std::move(widgets);
     m_selected = 0;
+    m_highlighted = SIZE_MAX;
 
     float nameX = 0, nameY = 0, dataX = 0, dataY = 0;
     FEObject *titleMaster = pkg->FindObjectByHash(bStringHash("TITLE_MASTER"));
@@ -54,6 +58,20 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
                 FENativeInterface::SetCenter(o, dataX, dataY + y);
         FENativeInterface::SetLanguageHash(pkg, RowHash("OPTION_NAME_", row), m_widgets[row].titleLabel);
     }
+    if (getenv("NFSU2_FEDEBUG"))
+        for (const char *prefix : {"OPTION_NAME_", "OPTION_DATA_", "OPTION_BACKING_", "LEFT_ARROW_"})
+            if (FEObject *o = pkg->FindObjectByHash(RowHash(prefix, 0))) {
+                fprintf(stderr, "[widget] %s1 type %d scripts:", prefix, int(o->Type));
+                for (FEScript *sc = o->GetFirstScript(); sc; sc = static_cast<FEScript *>(sc->GetNext()))
+                    fprintf(stderr, " %08x", sc->ID);
+                fprintf(stderr, "\n");
+            }
+    Refresh();
+}
+
+void FEWidgetMenu::OnInitComplete()
+{
+    m_highlighted = SIZE_MAX;
     Refresh();
 }
 
@@ -92,12 +110,20 @@ void FEWidgetMenu::Refresh()
             FENativeInterface::SetLanguageHash(m_pkg, RowHash("OPTION_DATA_", row), label);
         else
             FENativeInterface::SetString(m_pkg, RowHash("OPTION_DATA_", row), text.c_str());
-        // Arrows only on the selected row; the selected row is the current button (highlight).
-        bool sel = row == m_selected;
-        FENativeInterface::SetVisible(m_pkg, RowHash("LEFT_ARROW_", row), sel);
-        FENativeInterface::SetVisible(m_pkg, RowHash("RIGHT_ARROW_", row), sel);
-        if (sel)
-            if (FEObject *b = m_pkg->FindObjectByHash(RowHash("OPTION_BACKING_", row)))
-                m_pkg->SetCurrentButton(b, true);
+    }
+    // Row highlight: the row objects carry "Highlight" (0x249db7b7) / "UnHighlight" (0x7ab5521a)
+    // scripts; run them when the selection changes (restarting them every frame would freeze them).
+    if (m_highlighted != m_selected) {
+        static const char *const kRowObjects[] = {"OPTION_NAME_", "OPTION_DATA_", "OPTION_BACKING_", "LEFT_ARROW_",
+                                                  "RIGHT_ARROW_"};
+        for (const char *prefix : kRowObjects) {
+            if (m_highlighted == SIZE_MAX) // first refresh: every row starts un-highlighted
+                for (size_t row = 0; row < m_widgets.size(); ++row)
+                    FENativeInterface::SetScript(m_pkg, RowHash(prefix, row), 0x7ab5521a, true);
+            else if (m_highlighted < m_widgets.size())
+                FENativeInterface::SetScript(m_pkg, RowHash(prefix, m_highlighted), 0x7ab5521a, true);
+            FENativeInterface::SetScript(m_pkg, RowHash(prefix, m_selected), 0x249db7b7, true);
+        }
+        m_highlighted = m_selected;
     }
 }

@@ -668,6 +668,10 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
         return;
     if (msg == kMsgButtonPressed)
         return; // Accept comes from the pad path (Tick)
+    if (msg == kMsgInitComplete) {
+        m_widgets.OnInitComplete();
+        return;
+    }
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
         const RaceOptions &o = m_options[m_raceType & 15];
         printf("[Menu] options: laps %d, opponents %d, difficulty %d, traffic %d, lap KO %d, catch up %d\n", o.laps,
