@@ -78,10 +78,11 @@ int FEFont::Kern(const FontGlyph *glyph, uint16_t prev) const
 {
     if (!m_kern || !glyph->numKern)
         return 0;
+    // Kerning table: u32 count, then 4-byte entries {u16 previous char, s8 amount, u8 glyph char}.
     for (int i = 0; i < glyph->numKern; ++i) {
-        const uint8_t *k = m_kern + (glyph->kernIndex + i) * 4;
+        const uint8_t *k = m_kern + 4 + (glyph->kernIndex + i) * 4;
         if (Read<uint16_t>(k) == prev)
-            return Read<int16_t>(k + 2);
+            return static_cast<int8_t>(k[2]);
     }
     return 0;
 }

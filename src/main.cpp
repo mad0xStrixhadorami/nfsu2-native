@@ -135,6 +135,20 @@ int main(int argc, char **argv)
     fe.AddBundle(english.data(), english.size());
     FEngine *engine = new FEngine();
     engine->SetInterface(&fe);
+    std::vector<uint8_t> globalB, frontB;
+    if (getenv("NFSU2_PACKAGE")) {
+        // LoadGlobalChunks (0x002df9a0) loads GLOBALB; LoadingFrontEnd (0x002dfea8) loads FRONTB.
+        globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
+        fe.AddBundle(globalB.data(), globalB.size());
+        frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
+        fe.AddBundle(frontB.data(), frontB.size());
+    }
+    if (getenv("NFSU2_LIST_PACKAGES")) {
+        for (const std::string &n : fe.PackageNames())
+            printf("%s\n", n.c_str());
+        fflush(stdout);
+        _Exit(0);
+    }
     // NFSU2_PACKAGE=name.fng shows another front-end package instead (development aid).
     const char *package = getenv("NFSU2_PACKAGE") ? getenv("NFSU2_PACKAGE") : "loading_boot.fng";
     if (!engine->PushPackage(package, 0, 0xff))

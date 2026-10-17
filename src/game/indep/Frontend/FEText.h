@@ -33,7 +33,7 @@ private:
     uint32_t m_textureHash = 0;
     float m_height = 0;
     std::vector<FontGlyph> m_glyphs;                  // sorted by unicode in the file
-    const uint8_t *m_kern = nullptr;                  // kerning table: {u16 prev, i16 amount} pairs
+    const uint8_t *m_kern = nullptr;                  // kerning table (see Kern)
 };
 
 class FELanguage {

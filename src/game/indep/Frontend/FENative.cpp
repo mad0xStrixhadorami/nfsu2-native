@@ -13,14 +13,24 @@
 #include "Speed/Indep/Src/FEng/FEString.h"
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
 #include "game/bWare/bChunk.h"
+#include "game/bWare/bCompression.h"
 #include "game/indep/Texture/TexturePack.h"
 
 namespace {
 constexpr uint32_t kChunkFEngPackage = 0x00030203; // BCHUNK_FENG_PACKAGE
+constexpr uint32_t kChunkFEngPackageLZ = 0x00030210; // BCHUNK_FENG_COMPRESSED_PACKAGE: u32 hash + JDLZ
 constexpr uint32_t kResourceImage = 1;             // FEResourceRequest::Type for textures
 constexpr uint32_t kResourceFont = 2;              // FEResourceRequest::Type for fonts
 constexpr uint32_t kChunkFEngFont = 0x00030201;    // BCHUNK_FENG_FONT
 constexpr uint32_t kChunkLanguage = 0x00039000;    // BCHUNK_LANGUAGE
+
+std::string LowerName(const char *s)
+{
+    std::string r(s);
+    for (char &c : r)
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return r;
+}
 
 // FEng package short name lives in the PkHd chunk: u32[6] = version, ?, resources, objects,
 // name length, file name length, then the short name.
@@ -73,7 +83,15 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size)
         const bChunk *c = reinterpret_cast<const bChunk *>(p);
         if (c->Data() + c->size > end)
             break;
-        if (c->id == kChunkFEngFont) {
+        if (c->id == kChunkFEngPackage) {
+            m_packages[LowerName(PackageShortName(c->Data()))] = c->Data();
+        } else if (c->id == kChunkFEngPackageLZ && c->size > 4 + 18 && bIsCompressed(c->Data() + 4)) {
+            auto buf = std::make_unique<std::vector<uint8_t>>(bGetDecompressedSize(c->Data() + 4));
+            if (bDecompress(c->Data() + 4, buf->data()) == buf->size()) {
+                m_packages[LowerName(PackageShortName(buf->data()))] = buf->data();
+                m_unpacked.push_back(std::move(buf));
+            }
+        } else if (c->id == kChunkFEngFont) {
             FEFont font;
             if (font.Parse(c->Data(), c->size))
                 m_fonts[FEResourceHash(font.Name().c_str())] = font;
@@ -97,20 +115,22 @@ u8 *FENativeInterface::GetPackageData(const char *name, u8 **pBlockStart, bool &
     for (const char *p = name; *p; ++p)
         if (*p == '\\' || *p == '/')
             base = p + 1;
-    for (auto &[data, size] : m_bundles) {
-        const uint8_t *end = data + size;
-        for (const uint8_t *p = data; p + 8 <= end;) {
-            const bChunk *c = reinterpret_cast<const bChunk *>(p);
-            if (c->id == kChunkFEngPackage && strcasecmp(PackageShortName(c->Data()), base) == 0) {
-                *pBlockStart = const_cast<u8 *>(c->Data());
-                bDeleteBlock = false;
-                return const_cast<u8 *>(c->Data());
-            }
-            p = c->Data() + c->size;
-        }
+    auto it = m_packages.find(LowerName(base));
+    if (it == m_packages.end()) {
+        fprintf(stderr, "FEng: package %s not found in loaded bundles\n", name);
+        return nullptr;
     }
-    fprintf(stderr, "FEng: package %s not found in loaded bundles\n", name);
-    return nullptr;
+    *pBlockStart = const_cast<u8 *>(it->second);
+    bDeleteBlock = false;
+    return const_cast<u8 *>(it->second);
+}
+
+std::vector<std::string> FENativeInterface::PackageNames() const
+{
+    std::vector<std::string> names;
+    for (auto &p : m_packages)
+        names.push_back(p.first);
+    return names;
 }
 
 bool FENativeInterface::LoadResources(FEPackage *, i32 count, FEResourceRequest *list)
@@ -145,10 +165,8 @@ SDL_Texture *FENativeInterface::TextureFor(uint32_t hash)
             }
         }
     }
-    if (!tex) {
+    if (!tex)
         fprintf(stderr, "FEng: texture %08x not in any loaded pack\n", hash);
-        tex = m_white;
-    }
     m_textures[hash] = tex;
     return tex;
 }
@@ -241,8 +259,10 @@ void FENativeInterface::DrawImage(FEObject *obj)
         return;
     SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
 
-    DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, d->UpperLeft.x, d->UpperLeft.y, d->LowerRight.x, d->LowerRight.y, col,
-             TextureFor(obj->Handle));
+    SDL_Texture *tex = obj->Handle ? TextureFor(obj->Handle) : m_white;
+    if (!tex)
+        return; // texture not in any loaded pack: draw nothing rather than a placeholder
+    DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, d->UpperLeft.x, d->UpperLeft.y, d->LowerRight.x, d->LowerRight.y, col, tex);
 }
 
 void FENativeInterface::DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0,

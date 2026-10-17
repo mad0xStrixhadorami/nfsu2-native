@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "Speed/Indep/Src/FEng/FEGameInterface.h"
@@ -23,6 +25,7 @@ public:
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
     void AddBundle(const uint8_t *data, size_t size);
+    std::vector<std::string> PackageNames() const;
 
     u8 *GetPackageData(const char *pPackageName, u8 **pBlockStart, bool &bDeleteBlock) override;
     bool LoadResources(FEPackage *pPackage, i32 Count, FEResourceRequest *pList) override;
@@ -63,6 +66,8 @@ private:
 
     SDL_Renderer *m_renderer;
     std::vector<std::pair<const uint8_t *, size_t>> m_bundles;
+    std::map<std::string, const uint8_t *> m_packages;              // FEng package data by lower-case short name
+    std::vector<std::unique_ptr<std::vector<uint8_t>>> m_unpacked;  // decompressed packages (0x30210)
     std::vector<TexturePack *> m_packs;
     std::map<uint32_t, SDL_Texture *> m_textures; // by texture name hash
     SDL_Texture *m_white = nullptr;               // stand-in for textures we cannot decode yet
