@@ -151,11 +151,19 @@ int main(int argc, char **argv)
     FEStartupSequence startup(engine, &fe, /*isPal=*/true);
 
     if (const char *package = getenv("NFSU2_PACKAGE")) {
-        // Development override: load all bundles up front and push the requested package directly.
+        // Show loading_boot.fng with a live progress bar while decompressing GLOBALB.LZC & FRONTB.LZC.
+        FEPackage *bootPkg = engine->PushPackage("loading_boot.fng", 0, 0xff);
+        if (bootPkg) {
+            FENativeInterface::SetVisible(bootPkg, 0x855f83ba, false);
+            engine->Update(16, 0);
+            renderFrame(engine);
+        }
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
-        fe.AddBundle(globalB.data(), globalB.size());
+        fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
-        fe.AddBundle(frontB.data(), frontB.size());
+        fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
+        if (bootPkg)
+            engine->UnloadPackage(bootPkg);
         if (getenv("NFSU2_LIST_PACKAGES")) {
             for (const std::string &n : fe.PackageNames())
                 printf("%s\n", n.c_str());
@@ -174,7 +182,7 @@ int main(int argc, char **argv)
         }
         // 2. LoadGlobalChunks (0x002df9a0): load GLOBAL\GLOBALB.LZC while loading_boot.fng is shown.
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
-        fe.AddBundle(globalB.data(), globalB.size());
+        fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)
             engine->UnloadPackage(bootPkg);
@@ -186,7 +194,7 @@ int main(int argc, char **argv)
             renderFrame(engine);
         }
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
-        fe.AddBundle(frontB.data(), frontB.size());
+        fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
         if (getenv("NFSU2_LIST_PACKAGES")) {
             for (const std::string &n : fe.PackageNames())
                 printf("%s\n", n.c_str());
@@ -203,6 +211,12 @@ int main(int argc, char **argv)
     const Uint32 start = last;
     const char *pressMsEnv = getenv("NFSU2_PRESS_MS");
     const Uint32 pressMs = pressMsEnv ? Uint32(atoi(pressMsEnv)) : 0;
+    const char *padMaskEnv = getenv("NFSU2_PAD_MASK");
+    const u32 padMaskToInject = padMaskEnv ? u32(strtoul(padMaskEnv, nullptr, 0))
+                                           : (FENativeInterface::kPadAccept | FENativeInterface::kPadStart);
+    const char *maxFramesEnv = getenv("NFSU2_FRAMES");
+    const int maxFrames = maxFramesEnv ? atoi(maxFramesEnv) : 0;
+    int frameCount = 0;
     bool pressSent = false;
 
     for (bool running = true; running;) {
@@ -213,9 +227,9 @@ int main(int argc, char **argv)
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
 
-        // Optional automated input injection for testing screen transitions (NFSU2_PRESS_MS).
+        // Optional automated input injection for testing screen transitions (NFSU2_PRESS_MS / NFSU2_PAD_MASK).
         if (pressMs > 0 && !pressSent && elapsed >= pressMs) {
-            fe.SetSimulatedPadMask(FENativeInterface::kPadAccept | FENativeInterface::kPadStart);
+            fe.SetSimulatedPadMask(padMaskToInject);
             pressSent = true;
         } else if (pressSent && elapsed >= pressMs + 100) {
             fe.SetSimulatedPadMask(0);
@@ -243,6 +257,8 @@ int main(int argc, char **argv)
             }
         }
         SDL_RenderPresent(ren);
+        if (maxFrames > 0 && ++frameCount >= maxFrames)
+            running = false;
     }
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

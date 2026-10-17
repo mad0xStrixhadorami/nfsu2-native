@@ -312,21 +312,22 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             FELanguage lang;
             if (lang.Parse(c->Data(), c->size))
                 m_languages.push_back(lang);
+        } else if (c->id == 0xb3300000) {
+            auto *pack = new TexturePack();
+            if (pack->Parse(p, 8 + c->size))
+                m_packs.push_back(pack);
+            else
+                delete pack;
         }
         p = c->Data() + c->size;
         if (label && size > (512 << 10)) {
             Uint32 now = SDL_GetTicks();
             if (now - lastReport >= 40) {
-                ShowLoadingProgress(label, float(p - data) / float(size) * 0.9f);
+                ShowLoadingProgress(label, float(p - data) / float(size));
                 lastReport = now;
             }
         }
     }
-    auto *pack = new TexturePack();
-    if (pack->Parse(data, size))
-        m_packs.push_back(pack);
-    else
-        delete pack;
     if (label && size > (512 << 10))
         ShowLoadingProgress(label, 1.0f);
 }

@@ -28,7 +28,13 @@ public:
     static constexpr uint32_t kMsgScreenTick = 0xc98356ba;   // FEMSG_SCREEN_TICK
     static constexpr uint32_t kMsgMovieDone = 0xc3960eb9;    // movie finished / missing (0x00290cb8)
     static constexpr uint32_t kMsgPadAccept = 0x406415e3;    // __PAD_ACCEPT__
+    static constexpr uint32_t kMsgPadBack = 0x911ab364;      // __PAD_BACK__
     static constexpr uint32_t kMsgPadStart = 0xb5af2461;     // __PAD_START__
+    static constexpr uint32_t kMsgPadLeft = 0x9120409e;      // __PAD_LEFT__
+    static constexpr uint32_t kMsgPadRight = 0xb5971bf1;     // __PAD_RIGHT__
+    static constexpr uint32_t kMsgPadUp = 0x72619778;        // __PAD_UP__
+    static constexpr uint32_t kMsgPadDown = 0x911c0a4b;      // __PAD_DOWN__
+    static constexpr uint32_t kMsgButtonPressed = 0x0c407210; // __BUTTON_PRESSED__
 
     FEStartupSequence(FEngine *engine, FENativeInterface *fe, bool isPal = true);
 
@@ -54,8 +60,23 @@ public:
     const char *CurrentPackage() const;
 
 private:
+    struct MainMenuOption {
+        uint32_t texHash = 0;
+        uint32_t nameHash = 0;
+        FEObject *obj = nullptr;
+        float xPos = 0.0f;
+        float origW = 0.0f;
+        float origH = 0.0f;
+        int origAlpha = 255;
+    };
+
     void HandleSplashLoaded(FEPackage *pkg);
     void HandleSplashMessage(uint32_t msg, FEPackage *pkg);
+
+    void HandleMainLoaded(FEPackage *pkg);
+    void HandleMainMessage(uint32_t msg, FEPackage *pkg);
+    void UpdateMainSelection(FEPackage *pkg);
+    void PositionMainOptions(FEPackage *pkg);
 
     FEngine *m_engine;
     FENativeInterface *m_fe;
@@ -66,9 +87,19 @@ private:
 
     // UG_LS_Splash state (0x0023c2d8 / 0x0023c4a0):
     uint32_t m_nowMs = 0;
+    uint32_t m_lastTickMs = 0;
     uint32_t m_splashStartMs = 0;     // param_1[0x15]
     uint32_t m_copyrightStartMs = 0;  // param_1[0x14]
     bool m_allowContinue = false;     // iGpffffd838 (0x00566e28)
     bool m_splashFadedIn = false;
     bool m_splashAdvanced = false;
+
+    // UI_Main / IconScrollerMenu state (0x001e6b78, 0x001e6ea0, 0x0029c9c8..0x0029de00):
+    std::vector<MainMenuOption> m_mainOptions;
+    size_t m_mainSelected = 1; // 0x001e6ea0 defaults LastButton to 2 (1-based -> Quick Race)
+    float m_mainXCenter = 0.0f;
+    float m_mainYCenter = 0.0f;
+    float m_mainScrollPos = 0.0f;
+    float m_mainScrollTarget = 0.0f;
+    bool m_mainAllowFade = false;
 };

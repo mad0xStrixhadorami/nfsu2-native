@@ -156,6 +156,7 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         printf("[Startup] Reached %s (main menu)\n", name);
         m_finished = true;
+        HandleMainLoaded(pkg);
     }
 }
 
@@ -207,10 +208,16 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleSplashMessage(msg, pkg);
         return;
     }
+
+    if (strcasecmp(name, "UI_Main.fng") == 0) {
+        HandleMainMessage(msg, pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::Tick(uint32_t nowMs)
 {
+    m_lastTickMs = m_nowMs;
     m_nowMs = nowMs;
     if (!m_engine)
         return;
@@ -292,5 +299,209 @@ void FEStartupSequence::HandleSplashMessage(uint32_t msg, FEPackage *pkg)
             printf("[Startup] %s: button pressed (0x%08x), advancing to main menu\n", name, msg);
             Advance(name);
         }
+    }
+}
+
+void FEStartupSequence::HandleMainLoaded(FEPackage *pkg)
+{
+    // Decompiled from:
+    //   MenuScreen::MenuScreen     (0x00294558)
+    //   IconScroller::IconScroller (0x0029c9c8)
+    //   IconScrollerMenu           (0x0029d638)
+    //   UIMain::UIMain             (0x001e6b78)
+    //   UIMain::AddOptions         (0x001e6ea0)
+    // 1. MenuScreen ctor (0x00294558): hide OL_ICON_GROUP and EA_MESSENGER_GROUP.
+    FENativeInterface::SetVisible(pkg, bStringHash("OL_ICON_GROUP"), false);
+    FENativeInterface::SetVisible(pkg, bStringHash("EA_MESSENGER_GROUP"), false);
+
+    // 2. IconScroller ctor (0x0029c9c8): read center of OPTION_MASTER ("0x475288", 0xb04669e3) and hide it.
+    m_mainXCenter = 0.0f;
+    m_mainYCenter = 0.0f;
+    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"))) {
+        FENativeInterface::GetCenter(optMaster, m_mainXCenter, m_mainYCenter);
+        FENativeInterface::SetObjectVisible(optMaster, false);
+    }
+    if (FEObject *lockMaster = pkg->FindObjectByHash(bStringHash("LOCK_MASTER")))
+        FENativeInterface::SetObjectVisible(lockMaster, false);
+    if (FEObject *btnMaster = pkg->FindObjectByHash(bStringHash("BUTTON_MASTER")))
+        FENativeInterface::SetObjectVisible(btnMaster, false);
+
+    // 3. UIMain::AddOptions (0x001e6ea0): 7 main menu options on PAL (0x002dbcb8() != 0).
+    static constexpr struct {
+        uint32_t texHash;
+        uint32_t nameHash;
+    } kMainDefs[] = {
+        {0x03704f3d, 0x5e7e1192}, // Career
+        {0x4e6fbb02, 0x24909fd7}, // Quick Race
+        {0x883e25d6, 0x6a2b93eb}, // 2 Player Split-Screen
+        {0x771849a5, 0x7b63ff85}, // Online
+        {0xb0c46023, 0xa53039a3}, // Customize
+        {0x6b303856, 0xbcb18f38}, // Profile Manager
+        {0x3058fe37, 0xed1f0b2c}, // Options
+    };
+
+    m_mainOptions.clear();
+    float addPos = 0.0f;
+    constexpr float kIconSpacing = 40.0f; // 0x42200000 at 0x0029c9c8 line 29
+    for (size_t i = 0; i < sizeof(kMainDefs) / sizeof(kMainDefs[0]); ++i) {
+        char optName[32];
+        snprintf(optName, sizeof(optName), "OPTION_%zu", i + 1);
+        FEObject *obj = pkg->FindObjectByHash(bStringHash(optName));
+        if (!obj)
+            continue;
+        // Prevent FEngine's spatial button map from overriding IconScroller's Left/Right selection.
+        obj->Flags |= 0x00800000u; // FF_DontNavigate
+        FENativeInterface::SetTextureHash(obj, kMainDefs[i].texHash);
+        MainMenuOption opt;
+        opt.texHash = kMainDefs[i].texHash;
+        opt.nameHash = kMainDefs[i].nameHash;
+        opt.obj = obj;
+        opt.xPos = addPos;
+        FENativeInterface::GetSize(obj, opt.origW, opt.origH);
+        opt.origAlpha = obj->GetObjData() ? int(obj->GetObjData()->Col.a) : 255;
+        addPos += opt.origW + kIconSpacing;
+        m_mainOptions.push_back(opt);
+    }
+
+    if (m_mainOptions.empty())
+        return;
+    if (m_mainSelected >= m_mainOptions.size())
+        m_mainSelected = 1; // 0x001e6ea0 line 69: FEngSetLastButton(pkg, 2) -> Quick Race
+
+    m_mainAllowFade = false;
+    m_mainScrollPos = -m_mainOptions[m_mainSelected].xPos;
+    m_mainScrollTarget = m_mainScrollPos;
+    UpdateMainSelection(pkg);
+    PositionMainOptions(pkg);
+}
+
+void FEStartupSequence::UpdateMainSelection(FEPackage *pkg)
+{
+    if (!pkg || m_mainOptions.empty())
+        return;
+    // 0x0029ce70 (IconScroller::SetSelection):
+    for (size_t i = 0; i < m_mainOptions.size(); ++i) {
+        if (FEObject *o = m_mainOptions[i].obj) {
+            if (i == m_mainSelected)
+                o->Flags &= ~0x04000000u;
+            else
+                o->Flags |= 0x04000000u;
+        }
+    }
+    if (FEObject *selObj = m_mainOptions[m_mainSelected].obj)
+        pkg->SetCurrentButton(selObj, true);
+
+    // 0x0029de00 (IconScrollerMenu::RefreshHeader): update ICON_TITLE (0x5e7b09c9).
+    FENativeInterface::SetLanguageHash(pkg, 0x5e7b09c9, m_mainOptions[m_mainSelected].nameHash);
+
+    // 0x002991c0 / 0x00299480 (ScrollBar::Refresh) & 0x0029d360 (IconScroller::UpdateArrows):
+    FEObject *backing = pkg->FindObjectByHash(bStringHash("SCROLLBAR_BACKING"));
+    FEObject *handle = pkg->FindObjectByHash(bStringHash("SCROLLBAR_HANDLE"));
+    if (backing && handle && m_mainOptions.size() > 1) {
+        float bx = 0.0f, by = 0.0f, bw = 0.0f, bh = 0.0f;
+        float hx = 0.0f, hy = 0.0f, hw = 0.0f, hh = 0.0f;
+        FENativeInterface::GetCenter(backing, bx, by);
+        FENativeInterface::GetSize(backing, bw, bh);
+        FENativeInterface::GetCenter(handle, hx, hy);
+        FENativeInterface::GetSize(handle, hw, hh);
+        float left = bx - bw * 0.5f;
+        float t = float(m_mainSelected) / float(m_mainOptions.size() - 1);
+        float newX = left + hw * 0.5f + t * (bw - hw);
+        FENativeInterface::SetCenter(handle, newX, hy);
+    }
+    FENativeInterface::SetVisible(pkg, bStringHash("SCROLLBAR_ARROW_1"), m_mainSelected > 0);
+    FENativeInterface::SetVisible(pkg, bStringHash("SCROLLBAR_ARROW_2"), m_mainSelected + 1 < m_mainOptions.size());
+}
+
+void FEStartupSequence::PositionMainOptions(FEPackage *pkg)
+{
+    if (!pkg || m_mainOptions.empty())
+        return;
+    // Decompiled from IconScroller::PositionOption (0x0029d0d0), ClipEdges (0x0029d088),
+    // Scale/Fade (0x0029bab0, 0x0029d280):
+    constexpr float kScrollerWidth = 480.0f;   // 0x43f00000 in 0x0029d638
+    constexpr float kUnselectedScale = 0.80f;  // DAT_00563034 in 0x0029d0d0
+    const float halfWidth = kScrollerWidth * 0.5f;
+    const float leftEdge = m_mainXCenter - halfWidth;
+    const float rightEdge = m_mainXCenter + halfWidth;
+
+    for (size_t i = 0; i < m_mainOptions.size(); ++i) {
+        const MainMenuOption &opt = m_mainOptions[i];
+        FEObject *obj = opt.obj;
+        if (!obj)
+            continue;
+        float xpos = m_mainXCenter + m_mainScrollPos + opt.xPos;
+        // 0x0029d088: clip options outside [fXCenter - fWidth/2, fXCenter + fWidth/2].
+        bool inBounds = (xpos >= leftEdge && xpos <= rightEdge);
+        FENativeInterface::SetObjectVisible(obj, inBounds);
+
+        float scale = (i == m_mainSelected) ? 1.0f : kUnselectedScale;
+        FENativeInterface::SetSize(obj, opt.origW * scale, opt.origH * scale);
+        FENativeInterface::SetCenter(obj, xpos, m_mainYCenter);
+
+        // 0x0029bab0 & 0x0029d280: edge fade when bAllowColorAnim is active.
+        if (m_mainAllowFade && obj->GetObjData()) {
+            float fadeBand = opt.origW * kUnselectedScale;
+            float alphaFactor = 1.0f;
+            if (xpos < leftEdge || xpos > rightEdge)
+                alphaFactor = 0.0f;
+            else if (fadeBand > 0.0f && xpos < leftEdge + fadeBand)
+                alphaFactor = (xpos - leftEdge) / fadeBand;
+            else if (fadeBand > 0.0f && xpos > rightEdge - fadeBand)
+                alphaFactor = (rightEdge - xpos) / fadeBand;
+            obj->GetObjData()->Col.a = static_cast<int>(opt.origAlpha * alphaFactor);
+        }
+    }
+}
+
+void FEStartupSequence::HandleMainMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_mainOptions.empty())
+        return;
+
+    if (msg == kMsgInitComplete) {
+        // 0x0029d710 line 30: RefreshHeader() (0x0029de00) when FEHASH_INITCOMPLETE (0x35f8620b) arrives.
+        FENativeInterface::SetLanguageHash(pkg, 0x5e7b09c9, m_mainOptions[m_mainSelected].nameHash);
+        PositionMainOptions(pkg);
+        return;
+    }
+
+    // 0x001e6c88: Event Handler (0x47ff4e7c) sends 0x34dc1bcf on intro completion, which queues 0x251bf83e.
+    if (msg == 0x34dc1bcf || msg == 0x251bf83e) {
+        m_mainAllowFade = true; // 0x0029dcb0 -> 0x0029d038
+        FENativeInterface::SetScript(pkg, 0x47ff4e7c, 0x03d8eabc, true);
+        PositionMainOptions(pkg);
+        return;
+    }
+
+    if (msg == kMsgPadLeft) {
+        // 0x0029d710 -> 0x002d41e8 -> 0x0029c718 (ScrollWrapped prev):
+        m_mainSelected = (m_mainSelected + m_mainOptions.size() - 1) % m_mainOptions.size();
+        m_mainScrollTarget = -m_mainOptions[m_mainSelected].xPos;
+        UpdateMainSelection(pkg);
+        PositionMainOptions(pkg);
+        return;
+    }
+
+    if (msg == kMsgPadRight) {
+        // 0x0029d710 -> 0x002d4208 -> 0x0029c718 (ScrollWrapped next):
+        m_mainSelected = (m_mainSelected + 1) % m_mainOptions.size();
+        m_mainScrollTarget = -m_mainOptions[m_mainSelected].xPos;
+        UpdateMainSelection(pkg);
+        PositionMainOptions(pkg);
+        return;
+    }
+
+    if (msg == kMsgScreenTick) {
+        // 0x0029cae8: smoothly interpolate m_mainScrollPos towards m_mainScrollTarget (~0.3s duration).
+        float dt = (m_nowMs > m_lastTickMs) ? float(m_nowMs - m_lastTickMs) * 0.001f : 0.016f;
+        float diff = m_mainScrollTarget - m_mainScrollPos;
+        if (diff > 0.5f || diff < -0.5f) {
+            float step = std::min(1.0f, dt * 12.0f);
+            m_mainScrollPos += diff * step;
+        } else {
+            m_mainScrollPos = m_mainScrollTarget;
+        }
+        PositionMainOptions(pkg);
     }
 }
