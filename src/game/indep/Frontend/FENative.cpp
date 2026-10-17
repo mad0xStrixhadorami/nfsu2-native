@@ -7,22 +7,32 @@
 #include <cstring>
 #include <strings.h>
 
+#include "Speed/Indep/Src/FEng/FEGroup.h"
 #include "Speed/Indep/Src/FEng/FEImage.h"
 #include "Speed/Indep/Src/FEng/FEObject.h"
+#include "Speed/Indep/Src/FEng/FEObjectCallback.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
+#include "Speed/Indep/Src/FEng/FEScript.h"
 #include "Speed/Indep/Src/FEng/FEString.h"
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
 #include "game/bWare/bChunk.h"
 #include "game/bWare/bCompression.h"
+#include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 
+void SetActiveFEngineForWrapper(FEngine *engine);
+
 namespace {
-constexpr uint32_t kChunkFEngPackage = 0x00030203; // BCHUNK_FENG_PACKAGE
+constexpr uint32_t kChunkFEngPackage = 0x00030203;   // BCHUNK_FENG_PACKAGE
 constexpr uint32_t kChunkFEngPackageLZ = 0x00030210; // BCHUNK_FENG_COMPRESSED_PACKAGE: u32 hash + JDLZ
-constexpr uint32_t kResourceImage = 1;             // FEResourceRequest::Type for textures
-constexpr uint32_t kResourceFont = 2;              // FEResourceRequest::Type for fonts
-constexpr uint32_t kChunkFEngFont = 0x00030201;    // BCHUNK_FENG_FONT
-constexpr uint32_t kChunkLanguage = 0x00039000;    // BCHUNK_LANGUAGE
+constexpr uint32_t kResourceImage = 1;               // FEResourceRequest::Type for textures
+constexpr uint32_t kResourceFont = 2;                // FEResourceRequest::Type for fonts
+constexpr uint32_t kResourceMovie = 4;               // FEResourceRequest::Type for movies
+constexpr uint32_t kChunkFEngFont = 0x00030201;      // BCHUNK_FENG_FONT
+constexpr uint32_t kChunkLanguage = 0x00039000;      // BCHUNK_LANGUAGE
+
+constexpr u32 kMsgDisableInputs = 0x05922615;
+constexpr u32 kMsgEnableInputs = 0x7e4d1288;
 
 std::string LowerName(const char *s)
 {
@@ -38,6 +48,33 @@ const char *PackageShortName(const uint8_t *feng)
 {
     return reinterpret_cast<const char *>(feng + 8 + 8 + 24);
 }
+
+// 0x00290d48 (FEngHidePCObjects) + propagate group visibility to children.
+struct HidePCObjectsAndStartMovies : FEObjectCallback {
+    FEngine *engine;
+    FEPackage *pkg;
+
+    HidePCObjectsAndStartMovies(FEngine *e, FEPackage *p) : engine(e), pkg(p) {}
+
+    bool Callback(FEObject *obj) override
+    {
+        // Hide PC-only objects (FENG_OBJECT_PC_ONLY = 0x8) as 0x00290d48 does on PS2.
+        if (obj->Flags & 0x8) {
+            FENativeInterface::SetObjectVisible(obj, false);
+            obj->Flags = (obj->Flags & ~0x10000000u) | 0x400000u;
+        }
+        // If a group is marked invisible in the package, propagate to its children.
+        if (obj->Type == FE_Group && (obj->Flags & 1))
+            FENativeInterface::SetObjectVisible(obj, false);
+        // 0x00290cb8 (FEngMovieStarter): movie playback is a stand-in for now (ISSUES.md #45).
+        // When a movie finishes or is absent, 0x00290cb8 posts 0xc3960eb9 to the package screen.
+        if (obj->Type == FE_Movie && engine && !pkg->IsLibrary()) {
+            printf("Movie stand-in (%s, handle %08x): posting movie-done (0xc3960eb9)\n", pkg->GetName(), obj->Handle);
+            engine->QueueMessage(FEStartupSequence::kMsgMovieDone, obj, pkg, reinterpret_cast<FEObject *>(0xFFFFFFFFu), 0);
+        }
+        return true;
+    }
+};
 } // namespace
 
 FENativeInterface::Affine FENativeInterface::Affine::operator*(const Affine &o) const
@@ -46,7 +83,7 @@ FENativeInterface::Affine FENativeInterface::Affine::operator*(const Affine &o) 
     r.a = a * o.a + c * o.b;
     r.b = b * o.a + d * o.b;
     r.c = a * o.c + c * o.d;
-    r.d = b * o.c + d * o.d;
+    r.d = b * o.c + d * o.ty * 0 + d * o.d;
     r.tx = a * o.tx + c * o.ty + tx;
     r.ty = b * o.tx + d * o.ty + ty;
     return r;
@@ -60,20 +97,107 @@ void FENativeInterface::Affine::Apply(float x, float y, float &ox, float &oy) co
 
 FENativeInterface::FENativeInterface(SDL_Renderer *renderer) : m_renderer(renderer)
 {
-    m_white = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, 1, 1);
-    uint32_t px = 0xffffffff;
-    SDL_UpdateTexture(m_white, nullptr, &px, 4);
-    SDL_SetTextureBlendMode(m_white, SDL_BLENDMODE_BLEND);
+    if (renderer) {
+        m_white = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, 1, 1);
+        uint32_t px = 0xffffffff;
+        SDL_UpdateTexture(m_white, nullptr, &px, 4);
+        SDL_SetTextureBlendMode(m_white, SDL_BLENDMODE_BLEND);
+    }
+    if (SDL_WasInit(SDL_INIT_GAMECONTROLLER)) {
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (SDL_IsGameController(i)) {
+                m_controller = SDL_GameControllerOpen(i);
+                if (m_controller)
+                    break;
+            }
+        }
+    }
 }
 
 FENativeInterface::~FENativeInterface()
 {
+    if (m_controller)
+        SDL_GameControllerClose(m_controller);
     for (auto &t : m_textures)
         if (t.second && t.second != m_white)
             SDL_DestroyTexture(t.second);
-    SDL_DestroyTexture(m_white);
+    if (m_white)
+        SDL_DestroyTexture(m_white);
     for (TexturePack *p : m_packs)
         delete p;
+}
+
+void FENativeInterface::AttachEngine(FEngine *engine)
+{
+    m_engine = engine;
+    SetActiveFEngineForWrapper(engine);
+    if (engine) {
+        engine->SetInterface(this);
+        engine->SetNumJoyPads(1);
+        engine->SetInitialState();
+        engine->SetExecution(true);
+    }
+}
+
+// 0x00293010 (FEngSetVisible) and 0x00292f80 (FEngSetInvisible): toggle bit 0 (FF_Invisible),
+// mark FF_DirtyCode (0x400000), and recurse into FE_Group children.
+void FENativeInterface::SetObjectVisible(FEObject *obj, bool visible)
+{
+    if (!obj)
+        return;
+    if (visible)
+        obj->Flags = (obj->Flags & ~1u) | 0x400000u;
+    else
+        obj->Flags = obj->Flags | 0x400001u;
+    if (obj->Type == FE_Group) {
+        for (FEObject *c = static_cast<FEGroup *>(obj)->GetFirstChild(); c; c = c->GetNext())
+            SetObjectVisible(c, visible);
+    }
+}
+
+void FENativeInterface::SetVisible(FEPackage *pkg, uint32_t objHash, bool visible)
+{
+    if (!pkg)
+        return;
+    SetObjectVisible(pkg->FindObjectByHash(objHash), visible);
+}
+
+// 0x00292a68 (FEngSetLanguageHash): set label hash and clear FENG_OBJECT_IGNORE_LABELHASH (0x2).
+void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash)
+{
+    if (!pkg)
+        return;
+    FEObject *obj = pkg->FindObjectByHash(objHash);
+    if (!obj)
+        return;
+    auto apply = [&](FEObject *o) {
+        if (o->Type == FE_String) {
+            FEString *s = static_cast<FEString *>(o);
+            s->SetLabelHash(labelHash);
+            s->Flags = (s->Flags & ~2u) | 0x400000u;
+        }
+    };
+    if (obj->Type == FE_Group) {
+        for (FEObject *c = static_cast<FEGroup *>(obj)->GetFirstChild(); c; c = c->GetNext())
+            apply(c);
+    } else {
+        apply(obj);
+    }
+}
+
+// 0x00293240 (FEngSetScript): switch object to scriptHash and optionally reset CurTime = 0.
+void FENativeInterface::SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime)
+{
+    if (!pkg)
+        return;
+    FEObject *obj = pkg->FindObjectByHash(objHash);
+    if (!obj)
+        return;
+    if (FEScript *sc = obj->FindScript(scriptHash)) {
+        obj->SetCurrentScript(sc);
+        if (resetTime)
+            sc->CurTime = 0;
+    }
 }
 
 void FENativeInterface::AddBundle(const uint8_t *data, size_t size)
@@ -136,13 +260,118 @@ std::vector<std::string> FENativeInterface::PackageNames() const
 bool FENativeInterface::LoadResources(FEPackage *, i32 count, FEResourceRequest *list)
 {
     for (i32 i = 0; i < count; ++i)
-        if ((list[i].Type == kResourceImage || list[i].Type == kResourceFont) && list[i].pFilename)
+        if ((list[i].Type == kResourceImage || list[i].Type == kResourceFont || list[i].Type == kResourceMovie) &&
+            list[i].pFilename)
             list[i].Handle = FEResourceHash(list[i].pFilename);
     return true;
 }
 
+// 0x00290968 + 0x00290db8 (cFEngGameInterface::PackageWasLoaded):
+void FENativeInterface::PackageWasLoaded(FEPackage *pkg)
+{
+    if (!pkg)
+        return;
+    pkg->InitializePackage();
+    pkg->SetExecute(true);
+    pkg->SetInputEnabled(true); // UG2 FEngine enables input by default (0x00288070)
+    if (!pkg->IsLibrary() && m_engine)
+        pkg->Update(m_engine, 0);
+
+    // 0x00294558 (MenuScreen::MenuScreen): hide online/messenger icon groups by default.
+    SetVisible(pkg, FEHashUpper("OL_ICON_GROUP"), false);
+    SetVisible(pkg, FEHashUpper("EA_MESSENGER_GROUP"), false);
+
+    HidePCObjectsAndStartMovies cb{m_engine, pkg};
+    pkg->ForAllObjects(cb);
+
+    if (m_startup && !pkg->IsLibrary())
+        m_startup->OnPackageLoaded(pkg);
+}
+
+// 0x00290788 (cFEngGameInterface::NotificationMessage):
+void FENativeInterface::NotificationMessage(u32 message, FEObject *obj, u32 param1, u32 param2)
+{
+    if (message == kMsgDisableInputs || message == kMsgEnableInputs)
+        return;
+    FEPackage *pkg = reinterpret_cast<FEPackage *>(param2);
+    if (getenv("NFSU2_FEDEBUG"))
+        fprintf(stderr, "FENative::NotificationMessage msg=%08x pkg=%s\n", message, pkg ? pkg->GetName() : "?");
+    if (m_startup && pkg)
+        m_startup->NotificationMessage(message, obj, param1, pkg);
+}
+
+// 0x00290868 (cFEngGameInterface::NotifySoundMessage):
+void FENativeInterface::NotifySoundMessage(u32 message, FEObject *, u32, u32 pkgPtr)
+{
+    FEPackage *pkg = reinterpret_cast<FEPackage *>(pkgPtr);
+    if (getenv("NFSU2_FEDEBUG"))
+        fprintf(stderr, "FENative::NotifySoundMessage msg=%08x pkg=%s\n", message, pkg ? pkg->GetName() : "?");
+}
+
+// 0x00290fe8 (cFEngGameInterface::GetJoyPadMask) + FEJoyInput.cpp:
+u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
+{
+    if (padIndex != 0)
+        return 0;
+    u32 mask = m_simulatedPadMask;
+    int numKeys = 0;
+    if (const Uint8 *keys = SDL_GetKeyboardState(&numKeys)) {
+        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_KP_8])
+            mask |= kPadUp;
+        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_KP_2])
+            mask |= kPadDown;
+        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_KP_4])
+            mask |= kPadLeft;
+        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_KP_6])
+            mask |= kPadRight;
+        if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER] || keys[SDL_SCANCODE_SPACE])
+            mask |= kPadAccept;
+        if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER])
+            mask |= kPadStart;
+        if (keys[SDL_SCANCODE_BACKSPACE])
+            mask |= kPadBack;
+        if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_PAGEUP])
+            mask |= kPadLTrigger;
+        if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_PAGEDOWN])
+            mask |= kPadRTrigger;
+    }
+    if (m_controller && SDL_GameControllerGetAttached(m_controller)) {
+        constexpr Sint16 kDeadzone = 12000;
+        Sint16 lx = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTX);
+        Sint16 ly = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTY);
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -kDeadzone)
+            mask |= kPadUp;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > kDeadzone)
+            mask |= kPadDown;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT) || lx < -kDeadzone)
+            mask |= kPadLeft;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || lx > kDeadzone)
+            mask |= kPadRight;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_A))
+            mask |= kPadAccept;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_B) ||
+            SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_BACK))
+            mask |= kPadBack;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_START))
+            mask |= kPadStart;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER) ||
+            SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > kDeadzone)
+            mask |= kPadLTrigger;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ||
+            SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kDeadzone)
+            mask |= kPadRTrigger;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_X))
+            mask |= kPadButton0;
+        if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_Y))
+            mask |= kPadButton1;
+    }
+    return mask;
+}
+
 SDL_Texture *FENativeInterface::TextureFor(uint32_t hash)
 {
+    if (!m_renderer)
+        return nullptr;
     auto it = m_textures.find(hash);
     if (it != m_textures.end())
         return it->second;
@@ -241,6 +470,8 @@ void FENativeInterface::GetViewTransformation(FEMatrix4 *pView)
 
 void FENativeInterface::DrawImage(FEObject *obj)
 {
+    if (!m_renderer)
+        return;
     const FEImageData *d = reinterpret_cast<const FEImageData *>(obj->pData);
     if (getenv("NFSU2_FEDEBUG"))
         fprintf(stderr, "FEImage %08x pos (%.1f,%.1f,%.1f) size (%.1f,%.1f) ctx %u flags %08x\n", obj->NameHash, d->Pos.x,
@@ -284,6 +515,8 @@ void FENativeInterface::DrawQuad(const Affine &xform, float x0, float y0, float 
 // FEString::Format, glyph quads at x + kern + offsetX, advancing by the glyph's advance.
 void FENativeInterface::DrawString(FEObject *obj)
 {
+    if (!m_renderer)
+        return;
     FEString *str = static_cast<FEString *>(obj);
     auto font = m_fonts.find(obj->Handle);
     if (font == m_fonts.end()) {
@@ -295,18 +528,22 @@ void FENativeInterface::DrawString(FEObject *obj)
     }
     const FEFont &f = font->second;
 
-    // Text: the object's own string, else its label from the language tables.
+    // Text: unless FENG_OBJECT_IGNORE_LABELHASH (0x2) is set, look up the label in the language
+    // tables first (FELocalizer / 0x00292a68), falling back to the object's literal string.
     std::vector<uint16_t> text;
-    if (const i16 *w = str->GetString(); w && *w) {
-        for (; *w; ++w)
-            text.push_back(static_cast<uint16_t>(*w));
-    } else if (str->GetLabelHash() != 0xFFFFFFFF) {
+    if (!(obj->Flags & 0x2) && str->GetLabelHash() != 0 && str->GetLabelHash() != 0xFFFFFFFF) {
         for (const FELanguage &lang : m_languages)
             if (const char *s8 = lang.Find(str->GetLabelHash())) {
                 for (; *s8; ++s8)
                     text.push_back(static_cast<unsigned char>(*s8));
                 break;
             }
+    }
+    if (text.empty()) {
+        if (const i16 *w = str->GetString(); w && *w) {
+            for (; *w; ++w)
+                text.push_back(static_cast<uint16_t>(*w));
+        }
     }
     if (getenv("NFSU2_FEDEBUG")) {
         const FEObjData *dd = obj->GetObjData();
@@ -355,6 +592,8 @@ void FENativeInterface::DrawString(FEObject *obj)
         return;
     SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
     SDL_Texture *tex = TextureFor(f.TextureHash());
+    if (!tex)
+        return;
     int tw = 1, th = 1;
     SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
 
@@ -382,6 +621,9 @@ void FENativeInterface::DrawString(FEObject *obj)
 
 void FENativeInterface::RenderObject(FEObject *pObject)
 {
+    // 0x00290788 / cFEngGameInterface::RenderObject: skip objects with FF_Invisible (0x1).
+    if (pObject->Flags & 1)
+        return;
     switch (pObject->Type) {
     case FE_Image:
         DrawImage(pObject);

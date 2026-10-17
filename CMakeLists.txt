@@ -27,7 +27,7 @@ target_include_directories(bware SYSTEM PUBLIC
     ${NFSMW}/src/Speed/Indep/Libs/csis/dev/include ${NFSMW}/src/Speed/Indep/Libs/realcore/6.24.00/include/common
     ${NFSMW}/src/Speed/Indep/Libs)
 target_compile_options(bware PUBLIC -include ${CMAKE_SOURCE_DIR}/compat/nfsu2_prelude.h
-    -fsanitize=return -fno-sanitize-recover=return PRIVATE -w)
+    -fno-lifetime-dse -fsanitize=return -fno-sanitize-recover=return PRIVATE -w)
 # Upstream left some functions as empty stubs; abort loudly if one is reached (see PATCHES.md).
 target_link_options(bware PUBLIC -fsanitize=return)
 

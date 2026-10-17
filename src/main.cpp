@@ -19,6 +19,7 @@
 #include "game/indep/File/ZipFileSystem.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
 #include "game/indep/Frontend/FENative.h"
+#include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
@@ -111,9 +112,11 @@ int main(int argc, char **argv)
     if (argc > 3 && strcmp(argv[1], "--dump") == 0)
         return DumpFile(*fs, argv[2], argv[3]);
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
-        return 1;
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
+        if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+            fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+            return 1;
+        }
     }
     // FEng screen space is 640x480; open at 2x.
     SDL_Window *win = SDL_CreateWindow("Need for Speed Underground 2 (native)", SDL_WINDOWPOS_CENTERED,
@@ -121,6 +124,14 @@ int main(int argc, char **argv)
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
     SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+
+    // Helper to render a single frame during synchronous boot loading screens.
+    auto renderFrame = [&](FEngine *eng) {
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        eng->Render();
+        SDL_RenderPresent(ren);
+    };
 
     // Boot screen, as InitializeEverything does it (0x002df948, LoadGlobalAChunks + BootLoadingScreen):
     // GLOBAL\GLOBALA.BUN holds loading_boot.fng and its textures.
@@ -134,34 +145,83 @@ int main(int argc, char **argv)
     fe.AddBundle(langTextures.data(), langTextures.size());
     fe.AddBundle(english.data(), english.size());
     FEngine *engine = new FEngine();
-    engine->SetInterface(&fe);
+    fe.AttachEngine(engine);
+
     std::vector<uint8_t> globalB, frontB;
-    if (getenv("NFSU2_PACKAGE")) {
-        // LoadGlobalChunks (0x002df9a0) loads GLOBALB; LoadingFrontEnd (0x002dfea8) loads FRONTB.
+    FEStartupSequence startup(engine, &fe, /*isPal=*/true);
+
+    if (const char *package = getenv("NFSU2_PACKAGE")) {
+        // Development override: load all bundles up front and push the requested package directly.
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size());
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size());
+        if (getenv("NFSU2_LIST_PACKAGES")) {
+            for (const std::string &n : fe.PackageNames())
+                printf("%s\n", n.c_str());
+            fflush(stdout);
+            _Exit(0);
+        }
+        if (!engine->PushPackage(package, 0, 0xff))
+            fprintf(stderr, "could not push %s\n", package);
+    } else {
+        // 1. BootLoadingScreen (0x002e01f0): push loading_boot.fng, hide Legal_blurb (0x855f83ba) on PAL.
+        FEPackage *bootPkg = engine->PushPackage("loading_boot.fng", 0, 0xff);
+        if (bootPkg) {
+            FENativeInterface::SetVisible(bootPkg, 0x855f83ba, false);
+            engine->Update(16, 0);
+            renderFrame(engine);
+        }
+        // 2. LoadGlobalChunks (0x002df9a0): load GLOBAL\GLOBALB.LZC while loading_boot.fng is shown.
+        globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
+        fe.AddBundle(globalB.data(), globalB.size());
+        // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
+        if (bootPkg)
+            engine->UnloadPackage(bootPkg);
+
+        // 4. ChangeGameFlowState(3) -> LoadingFrontEnd (0x002dfea8): push Loading.fng while loading FRONTB.LZC.
+        FEPackage *loadPkg = engine->PushPackage("Loading.fng", 0, 0xff);
+        if (loadPkg) {
+            engine->Update(16, 0);
+            renderFrame(engine);
+        }
+        frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
+        fe.AddBundle(frontB.data(), frontB.size());
+        if (getenv("NFSU2_LIST_PACKAGES")) {
+            for (const std::string &n : fe.PackageNames())
+                printf("%s\n", n.c_str());
+            fflush(stdout);
+            _Exit(0);
+        }
+        // 5. EndGameFlowLoadingFrontEnd (0x002dfff8): unload Loading.fng and start FEStartupSequence (0x00292280).
+        if (loadPkg)
+            engine->UnloadPackage(loadPkg);
+        startup.Start();
     }
-    if (getenv("NFSU2_LIST_PACKAGES")) {
-        for (const std::string &n : fe.PackageNames())
-            printf("%s\n", n.c_str());
-        fflush(stdout);
-        _Exit(0);
-    }
-    // NFSU2_PACKAGE=name.fng shows another front-end package instead (development aid).
-    const char *package = getenv("NFSU2_PACKAGE") ? getenv("NFSU2_PACKAGE") : "loading_boot.fng";
-    if (!engine->PushPackage(package, 0, 0xff))
-        fprintf(stderr, "could not push %s\n", package);
 
     Uint32 last = SDL_GetTicks();
     const Uint32 start = last;
+    const char *pressMsEnv = getenv("NFSU2_PRESS_MS");
+    const Uint32 pressMs = pressMsEnv ? Uint32(atoi(pressMsEnv)) : 0;
+    bool pressSent = false;
+
     for (bool running = true; running;) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
             if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE))
                 running = false;
         Uint32 now = SDL_GetTicks();
+        Uint32 elapsed = now - start;
+
+        // Optional automated input injection for testing screen transitions (NFSU2_PRESS_MS).
+        if (pressMs > 0 && !pressSent && elapsed >= pressMs) {
+            fe.SetSimulatedPadMask(FENativeInterface::kPadAccept | FENativeInterface::kPadStart);
+            pressSent = true;
+        } else if (pressSent && elapsed >= pressMs + 100) {
+            fe.SetSimulatedPadMask(0);
+        }
+
+        startup.Tick(elapsed);
         engine->Update(static_cast<i32>(now - last), 0); // FEng ticks are milliseconds (cFEng::Service)
         last = now;
 
@@ -172,7 +232,7 @@ int main(int argc, char **argv)
         // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
         if (const char *shot = getenv("NFSU2_SCREENSHOT")) {
             const char *ms = getenv("NFSU2_SCREENSHOT_MS");
-            if (now - start > Uint32(ms ? atoi(ms) : 1500)) {
+            if (elapsed > Uint32(ms ? atoi(ms) : 1500)) {
                 int w, h;
                 SDL_GetRendererOutputSize(ren, &w, &h);
                 SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);

@@ -3,3 +3,4 @@ reference/
 *.BIN
 *.bin
 *.iso
+__pycache__/

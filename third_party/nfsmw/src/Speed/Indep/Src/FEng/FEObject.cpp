@@ -183,32 +183,33 @@ void FEObject::SetupMoveToTracks() {
 
             if (pKey != nullptr) {
                 switch (pTrack[i].ParamType) {
+                    // nfsu2 patch: dereference pDataPtr instead of casting the pointer variable itself.
                     case PT_Int: {
-                        reinterpret_cast<i32 &>(pKey->Val.Data) = reinterpret_cast<i32 &>(pDataPtr) - reinterpret_cast<i32 &>(pBase->Val);
+                        reinterpret_cast<i32 &>(pKey->Val.Data) = *reinterpret_cast<i32 *>(pDataPtr) - *reinterpret_cast<i32 *>(pBase->Val.Data);
                         break;
                     }
                     case PT_Float: {
-                        reinterpret_cast<float &>(pKey->Val.Data) = reinterpret_cast<float &>(pDataPtr) - reinterpret_cast<float &>(pBase->Val.Data);
+                        reinterpret_cast<float &>(pKey->Val.Data) = *reinterpret_cast<float *>(pDataPtr) - *reinterpret_cast<float *>(pBase->Val.Data);
                         break;
                     }
                     case PT_Vector2:
                         reinterpret_cast<FEVector2 &>(pKey->Val.Data) =
-                            reinterpret_cast<FEVector2 &>(pDataPtr) - reinterpret_cast<FEVector2 &>(pBase->Val.Data);
+                            *reinterpret_cast<FEVector2 *>(pDataPtr) - *reinterpret_cast<FEVector2 *>(pBase->Val.Data);
                         break;
 
                     case PT_Vector3:
                         reinterpret_cast<FEVector3 &>(pKey->Val.Data) =
-                            reinterpret_cast<FEVector3 &>(pDataPtr) - reinterpret_cast<FEVector3 &>(pBase->Val.Data);
+                            *reinterpret_cast<FEVector3 *>(pDataPtr) - *reinterpret_cast<FEVector3 *>(pBase->Val.Data);
                         break;
 
                     case PT_Quaternion: {
-                        FEQuaternion BaseQuat = reinterpret_cast<FEQuaternion &>(pBase->Val);
+                        FEQuaternion BaseQuat = *reinterpret_cast<FEQuaternion *>(pBase->Val.Data);
                         BaseQuat.Conjugate();
-                        pKey->Val = reinterpret_cast<FEQuaternion &>(pDataPtr) * BaseQuat;
+                        pKey->Val = *reinterpret_cast<FEQuaternion *>(pDataPtr) * BaseQuat;
                         break;
                     }
                     case PT_Color:
-                        pKey->Val = reinterpret_cast<FEColor &>(pDataPtr) - reinterpret_cast<FEColor &>(pBase->Val.Data);
+                        pKey->Val = *reinterpret_cast<FEColor *>(pDataPtr) - *reinterpret_cast<FEColor *>(pBase->Val.Data);
                         break;
                 }
             }
