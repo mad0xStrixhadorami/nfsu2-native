@@ -183,6 +183,16 @@ void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32
     }
 }
 
+void FENativeInterface::SetString(FEPackage *pkg, uint32_t objHash, const char *text)
+{
+    FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr;
+    if (!obj || obj->Type != FE_String)
+        return;
+    FEString *s = static_cast<FEString *>(obj);
+    s->SetString(text);
+    s->Flags |= 0x2u | 0x400000u; // use own text, dirty
+}
+
 // 0x00292ee8 (FEngSetTextureHash): set image texture handle and mark FF_DirtyCode.
 void FENativeInterface::SetTextureHash(FEObject *obj, uint32_t texHash)
 {
@@ -301,6 +311,17 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             if (bDecompress(c->Data() + 4, buf->data()) == buf->size()) {
                 m_packages[LowerName(PackageShortName(buf->data()))] = buf->data();
                 m_unpacked.push_back(std::move(buf));
+            }
+        } else if (c->id == 0x00034201) { // race database
+            for (uint32_t off = 0; off + 0x128 <= c->size; off += 0x128) {
+                const uint8_t *r = c->Data() + off;
+                RaceInfo info;
+                memcpy(&info.number, r + 0x8a, 2);
+                memcpy(&info.category, r + 0x7c, 4);
+                memcpy(&info.typeFlags, r + 0x94, 4);
+                info.special = r[0x88];
+                memcpy(&info.length, r + 0x98, 4);
+                m_races.push_back(info);
             }
         } else if (c->id == kChunkFEngFont) {
             FEFont font;

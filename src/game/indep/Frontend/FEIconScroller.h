@@ -19,7 +19,10 @@ public:
     };
 
     // Bind to a loaded package and add options (IconScrollerMenu::AddOption for each Def).
-    void Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection);
+    // masterName/optionPrefix: object names of the template and the options; IconScroller
+    // menus use OPTION_MASTER / OPTION_n, the track list uses ICON_MASTER / TRACK_ICON_n.
+    void Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
+               const char *masterName = "OPTION_MASTER", const char *optionPrefix = "OPTION_");
     // Left/Right scroll, INITCOMPLETE header refresh, screen-tick animation. dtSeconds for ticks.
     void HandleMessage(uint32_t msg, float dtSeconds);
     // Start edge fades once the menu's intro animation has finished (0x0029dcb0 -> 0x0029d038).

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -9,7 +10,8 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 
-void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection)
+void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
+                           const char *masterName, const char *optionPrefix)
 {
     m_pkg = pkg;
     m_options.clear();
@@ -19,7 +21,7 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
 
     // IconScroller ctor (0x0029c9c8): read the centre of OPTION_MASTER and hide the masters.
     m_xCenter = m_yCenter = 0.0f;
-    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"))) {
+    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash(masterName))) {
         FENativeInterface::GetCenter(optMaster, m_xCenter, m_yCenter);
         FENativeInterface::SetObjectVisible(optMaster, false);
     }
@@ -28,12 +30,27 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
     if (FEObject *btnMaster = pkg->FindObjectByHash(bStringHash("BUTTON_MASTER")))
         FENativeInterface::SetObjectVisible(btnMaster, false);
 
+    // Option objects: "OPTION_1".."OPTION_n" (prefix ends in '_'), or, for scrollers built by
+    // 0x0029af60, every top-level object named exactly optionPrefix, in package order (0x0029b440).
+    std::vector<FEObject *> slots;
+    size_t prefixLen = strlen(optionPrefix);
+    if (prefixLen && optionPrefix[prefixLen - 1] == '_') {
+        for (size_t i = 0; i < 64; ++i) {
+            char optName[64];
+            snprintf(optName, sizeof(optName), "%s%zu", optionPrefix, i + 1);
+            slots.push_back(pkg->FindObjectByHash(bStringHash(optName)));
+        }
+    } else {
+        const uint32_t hash = bStringHash(optionPrefix);
+        for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext())
+            if (o->NameHash == hash)
+                slots.push_back(o);
+    }
+
     float addPos = 0.0f;
     constexpr float kIconSpacing = 40.0f; // 0x42200000 at 0x0029c9c8
-    for (size_t i = 0; i < defs.size(); ++i) {
-        char optName[32];
-        snprintf(optName, sizeof(optName), "OPTION_%zu", i + 1);
-        FEObject *obj = pkg->FindObjectByHash(bStringHash(optName));
+    for (size_t i = 0; i < defs.size() && i < slots.size(); ++i) {
+        FEObject *obj = slots[i];
         if (!obj)
             continue;
         // Keep FEngine's spatial button map from overriding the scroller's Left/Right selection.
@@ -49,13 +66,10 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
         addPos += opt.origW + kIconSpacing;
         m_options.push_back(opt);
     }
-    // Hide OPTION_n objects beyond the options added.
-    for (size_t i = defs.size(); i < 16; ++i) {
-        char optName[32];
-        snprintf(optName, sizeof(optName), "OPTION_%zu", i + 1);
-        if (FEObject *obj = pkg->FindObjectByHash(bStringHash(optName)))
-            FENativeInterface::SetObjectVisible(obj, false);
-    }
+    // Hide option objects beyond the options added.
+    for (size_t i = defs.size(); i < slots.size(); ++i)
+        if (slots[i])
+            FENativeInterface::SetObjectVisible(slots[i], false);
     if (m_options.empty())
         return;
     m_selected = defaultSelection < m_options.size() ? defaultSelection : 0;

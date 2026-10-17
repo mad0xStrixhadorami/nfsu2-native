@@ -14,6 +14,16 @@
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
+
+// One record of UG2's race database (chunk 0x34201 in GLOBAL\GLOBALB, 0x128 bytes each;
+// accessors 0x003389d8 / 0x00338990).
+struct RaceInfo {
+    int16_t number;     // +0x8a race / track number (TRACK_NAME_%d)
+    int32_t category;   // +0x7c track category (icon)
+    uint32_t typeFlags; // +0x94 race types this track supports (bit per type, see TrackSelect)
+    uint8_t special;    // +0x88 non-zero: not offered in quick race
+    int32_t length;     // +0x98 length in metres
+};
 class FEStartupSequence;
 
 // Native front-end host: the game side of EA's FEng engine, replacing MW's cFEng/cFEngRender
@@ -69,6 +79,9 @@ public:
     static void SetObjectVisible(FEObject *obj, bool visible);
     static void SetVisible(FEPackage *pkg, uint32_t objHash, bool visible);
     static void SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash);
+    // FEPrintf-style: give a string object its own text instead of a language label.
+    static void SetString(FEPackage *pkg, uint32_t objHash, const char *text);
+    const std::vector<RaceInfo> &Races() const { return m_races; }
     static void SetTextureHash(FEObject *obj, uint32_t texHash);
     static void SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime = true);
     static void GetCenter(const FEObject *obj, float &x, float &y);
@@ -126,7 +139,8 @@ private:
     };
     std::vector<ActiveMovie> m_movies;
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
-    std::map<FEObject *, std::string> m_movieNames;  // names set by screens (PS2: string at obj+0x24)
+    std::map<FEObject *, std::string> m_movieNames;
+    std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;

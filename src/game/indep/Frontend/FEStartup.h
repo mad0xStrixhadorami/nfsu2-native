@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "game/indep/Frontend/FEIconScroller.h"
+#include "game/indep/Frontend/FENative.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -70,6 +71,9 @@ private:
     void HandleMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleQRModeSelectLoaded(FEPackage *pkg);
     void HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg);
+    void HandleQRTrackSelectLoaded(FEPackage *pkg);
+    void HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshTrackInfo(FEPackage *pkg);
     const char *QuickRaceNext(const char *screen) const;
     const char *QuickRaceBack(const char *screen) const;
     void SwitchFlow(const char *from, const char *to);
@@ -98,7 +102,9 @@ private:
     size_t m_modeLastSelection = 0;
     std::vector<int> m_modeTypes;   // race type per mode option
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
-    int m_raceType = 0;             // DAT_004f13b0: 0 circuit .. 10 street x
+    int m_raceType = 0;
+    int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
+    std::vector<RaceInfo> m_tracks;   // tracks offered by the track select screen             // DAT_004f13b0: 0 circuit .. 10 street x
 
     // Menu navigation: screens to return to on Back, and a guard so one press acts once
     // (BUTTON_PRESSED and PAD_ACCEPT both arrive for the same press).

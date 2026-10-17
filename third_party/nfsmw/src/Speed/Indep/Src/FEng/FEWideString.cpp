@@ -57,6 +57,24 @@ FEWideString &FEWideString::operator=(const i16 *psString) {
     return *this;
 }
 
+// nfsu2 patch: ASCII assignment (declared upstream, not implemented). Widens each byte.
+FEWideString &FEWideString::operator=(const char *pcString) {
+    if (pcString == nullptr) {
+        return *this;
+    }
+
+    u32 ulStrLen = 0;
+    while (pcString[ulStrLen] != '\0') {
+        ulStrLen++;
+    }
+    mpsString = AllocateString(ulStrLen + 1);
+    for (u32 i = 0; i <= ulStrLen; i++) {
+        mpsString[i] = static_cast<unsigned char>(pcString[i]);
+    }
+
+    return *this;
+}
+
 u32 FEWideString::Length() const {
     return GetStringLength(mpsString);
 }

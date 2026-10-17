@@ -16,3 +16,4 @@ Implement it from the UG2 binary when that happens, in `src/`, and log it in `IS
 | `src/Speed/Indep/Src/FEng/FEObjectSorter.h` | `SortObjects` is a stable ascending sort by depth key | Upstream marks it UNSOLVED: it counts into the wrong array and assumes big-endian keys, producing null objects at render time |
 | `src/Speed/Indep/Src/FEng/FEKeyInterpLinear.cpp` | Key values read from `GetKeyData()->Val` | Upstream UNSOLVED: read values from `GetKeyData()` (which points at `tTime`), shifting every component by one (dot colours showed the timeline in the blue channel) |
 | `src/Speed/Indep/Src/FEng/FEObject.cpp` | `SetupMoveToTracks` dereferences `pDataPtr` | Upstream UNSOLVED: cast `u8 *pDataPtr` to `T &`, reading the stack address of the pointer instead of the object's current property |
+| `src/Speed/Indep/Src/FEng/FEWideString.cpp` | Add `operator=(const char *)` | Declared upstream but never implemented; needed by FEString::SetString |

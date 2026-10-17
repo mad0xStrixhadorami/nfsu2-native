@@ -176,6 +176,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRModeSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_QRTrackSelect.fng") == 0) {
+        HandleQRTrackSelectLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -234,6 +238,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
 
     if (strcasecmp(name, "UI_QRModeSelect.fng") == 0) {
         HandleQRModeSelectMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_QRTrackSelect.fng") == 0) {
+        HandleQRTrackSelectMessage(msg, pkg);
         return;
     }
     // Other quick race flow screens (contents not ported yet): Accept goes on, Back goes back.
@@ -474,6 +482,115 @@ void FEStartupSequence::HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     m_scroller.HandleMessage(msg, TickSeconds());
+}
+
+// UIQRTrackSelect (ctor 0x001fa428): track list from the race database (0x001faa38), filtered for
+// the race type by 0x001fadc0, icon per track category (0x001f9d28), name TRACK_NAME_%d
+// (0x00275640), length in the info panel (0x001faf90).
+static bool TrackOffered(const RaceInfo &r, int raceType)
+{
+    if (r.special)
+        return false;
+    const uint32_t f = r.typeFlags;
+    switch (raceType) {
+    case 0: return f & 1;           // circuit
+    case 1: return (f >> 2) & 1;    // sprint
+    case 2: return f & 2;           // drag
+    case 3: return f & 8;           // drift
+    case 4: return (f >> 13) & 1;   // underground racing league
+    case 5: return (f >> 12) & 1;
+    case 8: case 9: return (f >> 4) & 1;
+    case 10: return (f >> 11) & 1;  // street x
+    case 12: return (f & 5) != 0;
+    default: return false;
+    }
+}
+
+static uint32_t TrackIcon(const RaceInfo &r, int raceType)
+{
+    switch (r.category) {
+    case 0: return 0xb5a633a0;
+    case 1: return 0x79cead40;
+    case 2: return 0x4b938e3c;
+    case 3: return 0x4fde6feb;
+    case 4: return 0x6ba31820;
+    case 5:
+        if (raceType == 2) return bStringHash("TRACK_ICON_DRAG");
+        if (raceType == 3) return bStringHash("TRACK_ICON_DRIFT");
+        if (raceType == 4) return bStringHash("TRACK_ICON_U_RACING_LEAGUE");
+        return 0x74ce8c0b;
+    default: return 0x74ce8c0b;
+    }
+}
+
+void FEStartupSequence::HandleQRTrackSelectLoaded(FEPackage *pkg)
+{
+    std::vector<FEIconScroller::Def> defs;
+    m_tracks.clear();
+    for (const RaceInfo &r : m_fe->Races()) {
+        if (!TrackOffered(r, m_raceType))
+            continue;
+        // Locked tracks (0x00271a90, career progress) are not modelled: all are offered.
+        char label[32];
+        snprintf(label, sizeof(label), "TRACK_NAME_%d", r.number);
+        defs.push_back({TrackIcon(r, m_raceType), bStringHash(label)});
+        m_tracks.push_back(r);
+    }
+    size_t slots = 0;
+    for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext())
+        slots += o->NameHash == bStringHash("TRACK_ICON");
+    printf("[Menu] track select: %zu tracks for race type %d (%zu TRACK_ICON objects)\n", m_tracks.size(), m_raceType, slots);
+    m_scroller.Setup(pkg, defs, 0, "ICON_MASTER", "TRACK_ICON"); // 0x0029af60 args
+    // Title per mode (0x42adb44c): quick race / split screen track select.
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, m_raceMode == 4 ? 0x1bf733bd : 0xe5d63bb5);
+    RefreshTrackInfo(pkg);
+}
+
+void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
+{
+    if (m_tracks.empty())
+        return;
+    const RaceInfo &r = m_tracks[m_scroller.Selected()];
+    char label[32];
+    snprintf(label, sizeof(label), "TRACK_NAME_%d", r.number);
+    FENativeInterface::SetLanguageHash(pkg, 0xf601f2d4, bStringHash(label)); // 0x001faf90 header
+    FENativeInterface::SetVisible(pkg, 0x53c956c4, false);                    // debug track number
+    // 0x001fb388: race type text in 0x15e1351b.
+    uint32_t typeLabel = 0x93fdee74; // Circuit (default)
+    switch (m_raceType) {
+    case 1: typeLabel = 0xdcb9f861; break;  // Sprint
+    case 2: typeLabel = 0x35102edf; break;  // Drag
+    case 3: typeLabel = 0xd7162cfa; break;  // Drift
+    case 4: typeLabel = 0x75f903f4; break;  // Underground Racing League
+    case 9: typeLabel = 0x6f2421b7; break;  // Free Run
+    case 10: typeLabel = 0x30da61e1; break; // Street X
+    }
+    FENativeInterface::SetLanguageHash(pkg, 0x15e1351b, typeLabel);
+    // Length: metres * 0.001 (km), * 0.62137 for miles (units setting 0x004f12e8 = 0 -> "mi").
+    char text[32];
+    snprintf(text, sizeof(text), "%.2f mi", r.length * 0.001f * 0.62137f);
+    FENativeInterface::SetString(pkg, 0x080c9daa, text);
+}
+
+void FEStartupSequence::HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Package() != pkg)
+        return;
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        if (!m_tracks.empty()) {
+            m_raceNumber = m_tracks[m_scroller.Selected()].number; // 0x001fa998: race settings
+            printf("[Menu] track %d\n", m_raceNumber);
+        }
+        SwitchFlow(pkg->GetName(), QuickRaceNext(pkg->GetName()));
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        SwitchFlow(pkg->GetName(), QuickRaceBack(pkg->GetName()));
+        return;
+    }
+    m_scroller.HandleMessage(msg, TickSeconds());
+    if (msg == kMsgPadLeft || msg == kMsgPadRight)
+        RefreshTrackInfo(pkg);
 }
 
 void FEStartupSequence::SwitchFlow(const char *from, const char *to)
