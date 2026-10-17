@@ -82,6 +82,14 @@ bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size
                                         (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
                         positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
                     }
+            } else if (bits == 16 && comps <= 3 && addr >= 5 && addr + num <= 256) {
+                // VIF packs tail vertices as V1/V2-16 SoA or V3-16 AoS after full V4-16 groups.
+                for (unsigned k = 0; k < num; ++k)
+                    for (unsigned c = 0; c < comps; ++c) {
+                        uint16_t word = uint16_t(d[p + k * elem + c * 2]) |
+                                        (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
+                        positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
+                    }
             }
             p += (elem * num + 3) & ~size_t(3);
         } else if (cmd == 0x20) {
@@ -94,15 +102,29 @@ bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size
     }
     if (!haveBounds[0] || !haveBounds[1])
         return false;
+    unsigned soaVertices = nverts & ~3u;
     for (unsigned i = 0; i < nverts; ++i) {
-        unsigned group = i / 4, lane = i & 3, base = group * 3;
-        if (base + 2 >= 192)
-            return false;
         DecodedPreviewPoint v{};
         float *dst[3] = {&v.x, &v.y, &v.z};
-        for (unsigned a = 0; a < 3; ++a) {
-            float q = static_cast<float>(positions[base + a].v[lane]) / 32768.0f;
-            *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
+        if (i < soaVertices) {
+            unsigned group = i / 4, lane = i & 3, base = group * 3;
+            if (base + 2 >= 192)
+                return false;
+            for (unsigned a = 0; a < 3; ++a) {
+                float q = static_cast<float>(positions[base + a].v[lane]) / 32768.0f;
+                *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
+            }
+        } else {
+            unsigned tail = 5 + (soaVertices / 4) * 3;
+            unsigned rem = nverts - soaVertices, lane = i - soaVertices;
+            if (tail + (rem == 3 ? lane : 2) >= 256)
+                return false;
+            for (unsigned a = 0; a < 3; ++a) {
+                unsigned qword = tail + (rem == 3 ? lane : a);
+                unsigned component = rem == 1 ? 0 : (rem == 3 ? a : lane);
+                float q = static_cast<float>(positions[qword].v[component]) / 32768.0f;
+                *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
+            }
         }
         out.push_back(v);
     }

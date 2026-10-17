@@ -47,13 +47,24 @@ def strip_positions(d, start, size):
     nverts = hdr[0]
     pos = []
     addr = 5
-    while len(pos) < nverts:
-        n = min(4, nverts - len(pos))
+    soa_vertices = nverts & ~3
+    while len(pos) < soa_vertices:
         xs, ys, zs = vu.get(addr, ()), vu.get(addr + 1, ()), vu.get(addr + 2, ())
-        for k in range(n):
+        for k in range(4):
             if k < len(xs) and k < len(ys) and k < len(zs):
                 pos.append((xs[k], ys[k], zs[k]))
         addr += 3
+    tail_addr = 5 + (soa_vertices // 4) * 3
+    remainder = nverts - soa_vertices
+    for k in range(remainder):
+        if remainder == 1:
+            xyz = tuple(vu.get(tail_addr + a, (0,))[0] for a in range(3))
+        elif remainder == 2:
+            xyz = tuple(vu.get(tail_addr + a, (0, 0))[k] for a in range(3))
+        else:
+            tail = vu.get(tail_addr + k, (0, 0, 0))
+            xyz = tuple(tail[:3])
+        pos.append(xyz)
     lo, hi = vu.get(2), vu.get(3)
     if len(lo or ()) < 3 or len(hi or ()) < 3:
         raise ValueError('strip is missing candidate position bounds at VU addresses 2 and 3')
