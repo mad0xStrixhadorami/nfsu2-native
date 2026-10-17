@@ -13,3 +13,4 @@ Implement it from the UG2 binary when that happens, in `src/`, and log it in `IS
 | `src/Speed/Indep/bWare/Src/bSlotPool.cpp` | `ExpandSlotPool` finds the last slot by byte offset | Original index assumed 4-byte pointers |
 | `src/Speed/Indep/Libs/Support/Utility/UStandard.h` | `UTL::Std::map` allocator is for `pair<const Key, T>` | GCC 16's libstdc++ static-asserts on an allocator for `T` (old compilers rebound it silently); 229 files failed |
 | `src/Speed/Indep/Src/FEng/FETypes.h` | `FEngGet*` byte swaps only on `EA_PLATFORM_GAMECUBE` | FEng data is little-endian; the decomp targets big-endian GameCube and always swapped, so x86 couldn't read any .fng |
+| `src/Speed/Indep/Src/FEng/FEObjectSorter.h` | `SortObjects` is a stable ascending sort by depth key | Upstream marks it UNSOLVED: it counts into the wrong array and assumes big-endian keys, producing null objects at render time |

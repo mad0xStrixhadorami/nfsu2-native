@@ -2,6 +2,7 @@
 #define FEOBJECTSORTER_H_
 
 #include <types.h>
+#include <algorithm>
 #include "FEObject.h"
 #include "FEngStandard.h"
 
@@ -46,36 +47,12 @@ template <int N> class FEObjectSorter {
     void SortObjects();
 };
 
-// UNSOLVED
+// nfsu2 patch: the decompiled radix sort is unsolved upstream (it counts into the wrong array and
+// reads key bytes in big-endian order). Same result intended: stable ascending sort by the float
+// depth key (non-negative floats order like their bit patterns).
 template <int N> void FEObjectSorter<N>::SortObjects() { // Decl: 81
-    SFERadixKey *pstDestList = mastScratchList;
-    SFERadixKey *pstSrcList = mastFinalList;
-    i32 alElemCount[256];
-    i32 alElemIndex[256];
-    i32 lNumBytes = mulNumObjects << 3;
-    i32 i = 0;
-
-    for (int32 b = 3; b >= 0; b--) {
-        FEngMemSet(alElemCount, 0, sizeof(alElemCount));
-        u8 *pucByte = reinterpret_cast<u8 *>(pstSrcList) + b + 4;
-        for (i = 0; i < lNumBytes; i += 8) {
-            alElemIndex[pucByte[i]]++;
-        }
-        alElemIndex[0] = 0;
-        for (i = 0; i < 255; i++) {
-            alElemIndex[i + 1] = alElemIndex[i] + alElemCount[i];
-        }
-        for (i = 0; i < static_cast<i32>(mulNumObjects); i++) {
-            u8 ucIndex = pucByte[i * 8];
-            SFERadixKey *pstTemp = pstDestList + alElemIndex[ucIndex];
-            pstTemp->pobObject = pstSrcList[i].pobObject;
-            pstTemp->ulKey = pstSrcList[i].ulKey;
-            alElemIndex[ucIndex]++;
-        }
-        SFERadixKey *pstTemp = pstSrcList;
-        pstSrcList = pstDestList;
-        pstDestList = pstTemp;
-    }
-};
+    std::stable_sort(mastFinalList, mastFinalList + mulNumObjects,
+                     [](const SFERadixKey &a, const SFERadixKey &b) { return a.ulKey < b.ulKey; });
+}
 
 #endif

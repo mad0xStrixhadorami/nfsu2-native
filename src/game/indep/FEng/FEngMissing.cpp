@@ -17,3 +17,10 @@ void FEngGetCenter(FEObject *, float &, float &)
     fprintf(stderr, "FEngGetCenter: not implemented yet (ISSUES.md #24)\n");
     abort();
 }
+
+// Game-side FEng wrapper hooks used inside FEng (MW's cFEng lives in FEngInterface.cpp, which
+// drives the console renderer; the native host is FENativeInterface).
+#include "Speed/Indep/Src/Frontend/FEngInterfaces/FEngInterface.hpp"
+cFEng *cFEng::mInstance = nullptr;
+// TODO(ISSUES #28): forward to FEngine::QueueMessage once screens send messages.
+void cFEng::QueuePackageMessage(uint32, const char *, FEObject *) {}

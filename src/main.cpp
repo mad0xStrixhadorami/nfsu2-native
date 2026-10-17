@@ -4,8 +4,8 @@
 //   0x002dbef8                          -> todo
 //   0x002e2fc8 startup path selection   -> todo
 //   0x002dc298 main loop (run on the scratchpad stack on PS2) -> todo
-// For now it mounts the disc archive with the decompiled file system, checks it against
-// known files, and opens an SDL window.
+// Currently: mounts the disc archive, then shows the real boot screen (loading_boot.fng) through
+// the reused FEng engine and the native renderer.
 
 #include <SDL.h>
 
@@ -17,7 +17,10 @@
 
 #include "game/bWare/bCompression.h"
 #include "game/indep/File/ZipFileSystem.h"
+#include "Speed/Indep/Src/FEng/FEngine.h"
+#include "game/indep/Frontend/FENative.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
 
 static int SelfTest(const ZipFileSystem &fs)
@@ -62,20 +65,6 @@ static std::vector<uint8_t> ReadGameFile(const ZipFileSystem &fs, const char *ga
     return data;
 }
 
-static SDL_Texture *UploadTexture(SDL_Renderer *ren, const TexturePack &pack, const char *name)
-{
-    const TextureInfo *info = pack.Find(name);
-    DecodedTexture tex;
-    if (!info || !pack.Decode(*info, tex)) {
-        fprintf(stderr, "texture %s: not decoded\n", name);
-        return nullptr;
-    }
-    SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, tex.width, tex.height);
-    SDL_UpdateTexture(t, nullptr, tex.rgba.data(), tex.width * 4);
-    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-    return t;
-}
-
 // --dump GAME_PATH OUT: write a file from the disc archive, decompressed if needed.
 static int DumpFile(const ZipFileSystem &fs, const char *gamePath, const char *outPath)
 {
@@ -104,6 +93,7 @@ static int DumpFile(const ZipFileSystem &fs, const char *gamePath, const char *o
 
 int main(int argc, char **argv)
 {
+    platform::InitMainMemoryPool(64 << 20); // bWare "Main Pool" (InitPlatform 0x0032c7c0 on PS2)
     const char *root = getenv("NFSU2_DATA");
     platform::SetDataRoot(root ? root : ".");
 
@@ -125,63 +115,57 @@ int main(int argc, char **argv)
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
-    // PS2 PAL output is 640x512; scale 2x for a modern display.
+    // FEng screen space is 640x480; open at 2x.
     SDL_Window *win = SDL_CreateWindow("Need for Speed Underground 2 (native)", SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, 1280, 1024, SDL_WINDOW_RESIZABLE);
+                                       SDL_WINDOWPOS_CENTERED, 1280, 960, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    SDL_RenderSetLogicalSize(ren, 640, 512);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+    SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
 
-    // Boot splash from the front-end bundle's texture pack.
-    std::vector<uint8_t> frontend = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
-    TexturePack pack;
-    SDL_Texture *logo = nullptr, *ring = nullptr;
-    if (pack.Parse(frontend.data(), frontend.size())) {
-        printf("Front-end texture pack: %zu textures\n", pack.Count());
-        logo = UploadTexture(ren, pack, "EA_GAMES_LOGO");
-        ring = UploadTexture(ren, pack, "EA_GAMES_LOGO_RING");
-    }
+    // Boot screen, as InitializeEverything does it (0x002df948, LoadGlobalAChunks + BootLoadingScreen):
+    // GLOBAL\GLOBALA.BUN holds loading_boot.fng and its textures.
+    std::vector<uint8_t> globalA = ReadGameFile(*fs, "GLOBAL\\GLOBALA.BUN");
+    FENativeInterface fe(ren);
+    fe.AddBundle(globalA.data(), globalA.size());
+    FEngine *engine = new FEngine();
+    engine->SetInterface(&fe);
+    if (!engine->PushPackage("loading_boot.fng", 0, 0xff))
+        fprintf(stderr, "could not push loading_boot.fng\n");
 
-    const Uint32 start = SDL_GetTicks();
+    Uint32 last = SDL_GetTicks();
+    const Uint32 start = last;
     for (bool running = true; running;) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
             if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE))
                 running = false;
+        Uint32 now = SDL_GetTicks();
+        engine->Update(static_cast<i32>(now - last), 0); // FEng ticks are milliseconds (cFEng::Service)
+        last = now;
+
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        float t = (SDL_GetTicks() - start) / 1000.0f;
-        SDL_Rect dst = {320 - 128, 256 - 128, 256, 256};
-        if (ring) {
-            // Pulse the glow ring behind the logo.
-            Uint8 a = Uint8(128 + 127 * SDL_sinf(t * 3.0f));
-            SDL_SetTextureAlphaMod(ring, a);
-            SDL_Rect r = {320 - 160, 256 - 160, 320, 320};
-            SDL_RenderCopy(ren, ring, nullptr, &r);
-        }
-        if (logo) {
-            SDL_SetTextureAlphaMod(logo, Uint8(SDL_min(1.0f, t) * 255));
-            SDL_RenderCopy(ren, logo, nullptr, &dst);
-        }
-        // NFSU2_SCREENSHOT=file.bmp: save the frame 1.5 s in and quit (for testing).
-        if (const char *shot = getenv("NFSU2_SCREENSHOT"); shot && t > 1.5f) {
-            int w, h;
-            SDL_GetRendererOutputSize(ren, &w, &h);
-            SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
-            SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
-            SDL_SaveBMP(s, shot);
-            SDL_FreeSurface(s);
-            running = false;
+        engine->Render();
+
+        // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
+        if (const char *shot = getenv("NFSU2_SCREENSHOT")) {
+            const char *ms = getenv("NFSU2_SCREENSHOT_MS");
+            if (now - start > Uint32(ms ? atoi(ms) : 1500)) {
+                int w, h;
+                SDL_GetRendererOutputSize(ren, &w, &h);
+                SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+                SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
+                SDL_SaveBMP(s, shot);
+                SDL_FreeSurface(s);
+                running = false;
+            }
         }
         SDL_RenderPresent(ren);
     }
-    if (logo)
-        SDL_DestroyTexture(logo);
-    if (ring)
-        SDL_DestroyTexture(ring);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
-    delete fs;
-    return 0;
+    fflush(stdout);
+    // EA's static object pools are not safe to destroy at process exit (ISSUES.md #25).
+    _Exit(0);
 }

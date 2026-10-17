@@ -31,12 +31,6 @@ target_compile_options(bware PUBLIC -include ${CMAKE_SOURCE_DIR}/compat/nfsu2_pr
 # Upstream left some functions as empty stubs; abort loudly if one is reached (see PATCHES.md).
 target_link_options(bware PUBLIC -fsanitize=return)
 
-file(GLOB_RECURSE NFSU2_SOURCES CONFIGURE_DEPENDS src/*.cpp)
-add_executable(nfsu2 ${NFSU2_SOURCES})
-target_include_directories(nfsu2 PRIVATE include src)
-target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware)
-target_compile_options(nfsu2 PRIVATE -Wall -Wextra)
-
 enable_testing()
 
 add_executable(bware_test tests/bware_test.cpp src/platform/linux/bFunkStub.cpp src/platform/linux/PlatformSystem.cpp)
@@ -53,3 +47,10 @@ target_compile_options(feng PRIVATE -w)
 add_executable(feng_test tests/feng_test.cpp src/platform/linux/bFunkStub.cpp src/platform/linux/PlatformSystem.cpp src/game/indep/FEng/FEngMissing.cpp)
 target_include_directories(feng_test PRIVATE src)
 target_link_libraries(feng_test PRIVATE feng)
+
+file(GLOB_RECURSE NFSU2_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+add_executable(nfsu2 ${NFSU2_SOURCES})
+target_include_directories(nfsu2 PRIVATE include src)
+target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng)
+target_compile_options(nfsu2 PRIVATE -Wall -Wextra)
+

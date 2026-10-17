@@ -32,6 +32,7 @@ public:
     const TextureInfo *Find(const char *name) const;
     bool Decode(const TextureInfo &tex, DecodedTexture &out) const;
     size_t Count() const { return m_textures.size(); }
+    const TextureInfo &At(size_t i) const { return m_textures[i]; }
 
 private:
     std::vector<TextureInfo> m_textures;
