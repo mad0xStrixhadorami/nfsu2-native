@@ -229,6 +229,13 @@ bool MoviePlayer::Update()
     return !m_finished;
 }
 
+double MoviePlayer::CurrentTime() const
+{
+    if (!m)
+        return 0.0;
+    return (SDL_GetTicks() - m->startTicks) / 1000.0;
+}
+
 void MoviePlayer::Stop()
 {
     if (g_audio)

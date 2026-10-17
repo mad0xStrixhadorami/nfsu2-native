@@ -1330,7 +1330,8 @@ void FENativeInterface::StartMovie(FEObject *obj, FEPackage *pkg)
         return;
     }
     printf("Movie %s: playing\n", file.c_str());
-    m_movies.push_back({obj, pkg, std::move(player), false});
+    m_movies.push_back({obj, pkg, std::move(player), false, movie, {}, 0, 0x1A20BAu});
+    LoadSubtitles(m_movies.back());
 }
 
 void FENativeInterface::DrawMovie(FEObject *obj)
@@ -1342,6 +1343,7 @@ void FENativeInterface::DrawMovie(FEObject *obj)
             m.notified = true;
             m_engine->QueueMessage(FEStartupSequence::kMsgMovieDone, obj, m.pkg, reinterpret_cast<FEObject *>(0xFFFFFFFFu), 0);
         }
+        UpdateSubtitles(m);
         if (!m.player->Texture())
             return;
         Affine xform = LocalTransform(obj);
@@ -1355,8 +1357,166 @@ void FENativeInterface::DrawMovie(FEObject *obj)
         ObjectColor(obj, r, g, b, a);
         DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, 0, 0, 1, 1, SDL_Color{Uint8(r), Uint8(g), Uint8(b), Uint8(a)},
                  m.player->Texture());
+        DrawSubtitles(m);
         return;
     }
+}
+
+// 0x002edc70 (FEngCreateSubtitles): load "SUBTITLES\<movie>" and read its entry table. Each entry
+// is {u16 startTime, u16 pad, u32 labelHash}; the table ends at a 0xFFFF startTime. startTime is in
+// the same clock as 0x002ede10 (seconds since the movie started for this build).
+void FENativeInterface::LoadSubtitles(ActiveMovie &m)
+{
+    m.subtitles.clear();
+    m.subtitleNext = 0;
+    m.subtitleLabel = 0x1A20BAu;
+    if (m.movieName.empty() || !m_readFile)
+        return;
+    std::string path = "SUBTITLES\\" + m.movieName;
+    std::vector<uint8_t> data = m_readFile(path.c_str());
+    if (data.size() < 8)
+        return;
+    for (size_t i = 0; i + 8 <= data.size(); i += 8) {
+        uint16_t startTime;
+        uint32_t stringHash;
+        memcpy(&startTime, data.data() + i, 2);
+        memcpy(&stringHash, data.data() + i + 4, 4);
+        if (startTime == 0xFFFF)
+            break;
+        m.subtitles.push_back({startTime, stringHash});
+    }
+    if (getenv("NFSU2_MSGDEBUG"))
+        printf("Subtitles %s: %zu entries\n", path.c_str(), m.subtitles.size());
+}
+
+// 0x002ede70 (FEngUpdateSubtitles): show the most recent entry whose startTime has elapsed;
+// 0x1A20BA is the explicit clear/hide marker.
+void FENativeInterface::UpdateSubtitles(ActiveMovie &m)
+{
+    if (m.subtitles.empty())
+        return;
+    const double elapsed = m.player->CurrentTime();
+    while (m.subtitleNext < m.subtitles.size() && m.subtitles[m.subtitleNext].startTime <= elapsed)
+        ++m.subtitleNext;
+    m.subtitleLabel = m.subtitleNext == 0 ? 0x1A20BAu : m.subtitles[m.subtitleNext - 1].stringHash;
+}
+
+// Draw the current subtitle as a centered string near the bottom of the movie.
+void FENativeInterface::DrawSubtitles(ActiveMovie &m)
+{
+    if (!m_renderer || !m.pkg || m.subtitleLabel == 0x1A20BAu || m.subtitleLabel == 0)
+        return;
+    std::function<u32(FEObject *)> findFont = [&](FEObject *o) -> u32 {
+        if (o->Type == FE_String && m_fonts.count(o->Handle))
+            return o->Handle;
+        if (o->Type == FE_Group)
+            for (FEObject *c = static_cast<FEGroup *>(o)->GetFirstChild(); c; c = c->GetNext()) {
+                u32 f = findFont(c);
+                if (f)
+                    return f;
+            }
+        return 0;
+    };
+    u32 font = 0;
+    for (FEObject *o = m.pkg->GetFirstObject(); o && !font; o = o->GetNext())
+        font = findFont(o);
+    if (!font)
+        return;
+    auto fit = m_fonts.find(font);
+    if (fit == m_fonts.end())
+        return;
+    const FEFont &face = fit->second;
+
+    // Resolve the label to text, then soft-wrap it to the on-screen subtitle width. The PS2 text
+    // renderer wraps the subtitle box at its MaxWidth; DrawString only breaks on explicit markers.
+    std::vector<uint16_t> cps;
+    for (const FELanguage &lang : m_languages)
+        if (const char *s8 = lang.Find(m.subtitleLabel)) {
+            lang.DecodeString(s8, cps);
+            break;
+        }
+    if (cps.empty())
+        return;
+
+    auto advance = [&](uint16_t c, uint16_t prev) -> float {
+        const FontGlyph *g = face.Glyph(c);
+        return g ? float(prev ? face.Kern(g, prev) : 0) + g->advanceX : 0.0f;
+    };
+    std::vector<std::vector<uint16_t>> words(1);
+    for (uint16_t c : cps) {
+        if (c == ' ')
+            words.emplace_back();
+        else if (c == '\n' || c == '^') {
+            words.back().push_back(0x01); // forced-break marker
+            words.emplace_back();
+        } else
+            words.back().push_back(c);
+    }
+    const float maxWidth = 580.0f;
+    const float spaceWidth = advance(' ', 0);
+    std::vector<std::vector<uint16_t>> lines;
+    std::vector<uint16_t> line;
+    float lineWidth = 0;
+    for (auto &word : words) {
+        if (word.empty())
+            continue;
+        if (word.size() == 1 && word[0] == 0x01) {
+            lines.push_back(line);
+            line.clear();
+            lineWidth = 0;
+            continue;
+        }
+        float w = 0;
+        uint16_t prev = 0;
+        for (uint16_t c : word) {
+            w += advance(c, prev);
+            prev = c;
+        }
+        if (!line.empty() && lineWidth + spaceWidth + w > maxWidth) {
+            lines.push_back(line);
+            line.clear();
+            lineWidth = 0;
+        }
+        if (!line.empty()) {
+            line.push_back(' ');
+            lineWidth += spaceWidth;
+        }
+        for (uint16_t c : word)
+            line.push_back(c);
+        lineWidth += w;
+    }
+    if (!line.empty())
+        lines.push_back(line);
+    if (lines.empty())
+        return;
+
+    std::vector<i16> buffer;
+    for (size_t li = 0; li < lines.size(); ++li) {
+        if (li)
+            buffer.push_back('\n');
+        for (uint16_t c : lines[li])
+            buffer.push_back(static_cast<i16>(c));
+    }
+    buffer.push_back(0);
+
+    FEObjData *data = reinterpret_cast<FEObjData *>(ObjDataPool.Alloc(sizeof(FEObjData)));
+    if (!data)
+        return;
+    data->Col.b = data->Col.g = data->Col.r = data->Col.a = 255;
+    data->Pivot = FEVector3(0.0f, 0.0f, 0.0f);
+    data->Pos = FEVector3(0.0f, 150.0f, 0.0f);
+    data->Rot.x = data->Rot.y = data->Rot.z = 0.0f;
+    data->Rot.w = 1.0f;
+    data->Size = FEVector3(1.0f, 1.0f, 1.0f);
+
+    FEString label;
+    label.Handle = font;
+    label.RenderContext = 0;
+    label.Format = FESTRING_JUSTIFY_HCENTER;
+    label.pData = reinterpret_cast<u8 *>(data);
+    label.Flags &= ~0x2u;
+    label.SetString(buffer.data());
+    DrawString(&label);
 }
 
 bool FENativeInterface::PackageWillUnload(FEPackage *pkg)

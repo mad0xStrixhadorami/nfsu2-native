@@ -145,12 +145,25 @@ private:
     FEStartupSequence *m_startup = nullptr;
 
     void DrawMovie(FEObject *obj);
+    // One entry of a "SUBTITLES\<movie>" file (not the 0xFFFF terminator): a decisecond/second
+    // start time and the localized-string label hash to show from then on (0x1A20BA clears).
+    struct SubtitleEntry {
+        uint16_t startTime;
+        uint32_t stringHash;
+    };
     struct ActiveMovie {
         FEObject *obj;
         FEPackage *pkg;
         std::unique_ptr<MoviePlayer> player;
         bool notified;
+        std::string movieName;
+        std::vector<SubtitleEntry> subtitles;
+        size_t subtitleNext = 0;
+        uint32_t subtitleLabel = 0x1A20BAu; // current label (0x1A20BA = hidden)
     };
+    void LoadSubtitles(ActiveMovie &m);
+    void UpdateSubtitles(ActiveMovie &m);
+    void DrawSubtitles(ActiveMovie &m);
     std::vector<ActiveMovie> m_movies;
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
     std::map<FEObject *, std::string> m_movieNames;

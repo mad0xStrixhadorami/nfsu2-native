@@ -155,8 +155,8 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleSplashLoaded(pkg);
         return;
     }
-    // 0x0023b770 (LS_PSAMovie screen): FEngSetMovieName(pkg, 0xf2754103, "PSA"). The PS2 version
-    // also starts a subtitle player when subtitle data exists (0x00296760 / 0x002edc70); not ported.
+    // 0x0023b770 (LS_PSAMovie screen): FEngSetMovieName(pkg, 0xf2754103, "PSA"). The subtitle
+    // player (0x00296760 / 0x002edc70) is started by FENativeInterface when the movie opens.
     if (strcasecmp(name, "LS_PSAMovie.fng") == 0) {
         m_fe->SetMovieName(pkg, 0xf2754103, "PSA");
         return;

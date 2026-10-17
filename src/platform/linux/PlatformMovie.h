@@ -21,6 +21,8 @@ public:
     bool Update();
     SDL_Texture *Texture() const { return m_texture; }
     bool Finished() const { return m_finished; }
+    // Seconds since playback started (matches UG2's movie subtitle clock, 0x002ede10).
+    double CurrentTime() const;
     void Stop();
 
 private:
