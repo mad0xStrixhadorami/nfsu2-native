@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/FENative.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,9 +15,12 @@
 #include "Speed/Indep/Src/FEng/FEObjectCallback.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "Speed/Indep/Src/FEng/FEScript.h"
+#include "Speed/Indep/Src/FEng/FESlotPool.h"
 #include "Speed/Indep/Src/FEng/FEString.h"
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
 #include "game/bWare/bChunk.h"
+
+extern FEMultiPool ObjDataPool; // FEObject.cpp: pool for FEObject transform data
 #include "game/bWare/bCompression.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -425,6 +429,65 @@ void FENativeInterface::RenderCarPreviewOverlay()
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     SDL_RenderGeometry(m_renderer, nullptr, m_carPreviewSplats.data(),
                        static_cast<int>(m_carPreviewSplats.size()), nullptr, 0);
+
+    DrawCarPreviewLabel(pkg);
+}
+
+// Real car-name label from the GLOBALB car table (chunk 0x34600): "<manufacturer> <model>". The
+// UG2 car-select class builds this label object at runtime (no string object ships in the .fng),
+// so synthesize an FEString here and reuse whatever font the screen itself uses.
+void FENativeInterface::DrawCarPreviewLabel(FEPackage *pkg)
+{
+    if (!m_renderer || !pkg || m_carTable.empty())
+        return;
+    std::string key = m_previewCarName;
+    for (char &ch : key)
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    auto it = m_carTable.find(key);
+    if (it == m_carTable.end())
+        return;
+
+    std::function<u32(FEObject *)> findFont = [&](FEObject *o) -> u32 {
+        if (o->Type == FE_String && m_fonts.count(o->Handle))
+            return o->Handle;
+        if (o->Type == FE_Group)
+            for (FEObject *c = static_cast<FEGroup *>(o)->GetFirstChild(); c; c = c->GetNext()) {
+                u32 f = findFont(c);
+                if (f)
+                    return f;
+            }
+        return 0;
+    };
+    u32 font = 0;
+    for (FEObject *o = pkg->GetFirstObject(); o && !font; o = o->GetNext())
+        font = findFont(o);
+    if (!font)
+        return;
+
+    // FEObject::~FEObject frees pData back to the global ObjDataPool, so the synthetic object's
+    // transform data must be pool-allocated too (a stack pointer would crash on destruction).
+    FEObjData *data = reinterpret_cast<FEObjData *>(ObjDataPool.Alloc(sizeof(FEObjData)));
+    if (!data)
+        return;
+    data->Col.b = data->Col.g = data->Col.r = data->Col.a = 255;
+    data->Pivot = FEVector3(0.0f, 0.0f, 0.0f);
+    data->Pos = FEVector3(0.0f, -168.0f, 0.0f);
+    data->Rot.x = data->Rot.y = data->Rot.z = 0.0f;
+    data->Rot.w = 1.0f;
+    data->Size = FEVector3(1.0f, 1.0f, 1.0f);
+
+    std::string name = it->second.manufacturer;
+    if (!name.empty() && !it->second.folder.empty())
+        name += " ";
+    name += it->second.folder;
+
+    FEString label;
+    label.Handle = font;
+    label.RenderContext = 0;
+    label.Format = FESTRING_JUSTIFY_HCENTER;
+    label.pData = reinterpret_cast<u8 *>(data);
+    label.SetString(name.c_str());
+    DrawString(&label);
 }
 
 // Stand-in: cycle through car geometry files confirmed present in the mounted PAL archive.
@@ -642,6 +705,22 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             if (bDecompress(c->Data() + 4, buf->data()) == buf->size()) {
                 m_packages[LowerName(PackageShortName(buf->data()))] = buf->data();
                 m_unpacked.push_back(std::move(buf));
+            }
+        } else if (c->id == 0x00034600) { // car database: 46 records of 0x890 bytes (GLOBALB)
+            constexpr uint32_t kCarRecord = 0x890;
+            for (uint32_t off = 0; off + kCarRecord <= c->size; off += kCarRecord) {
+                const uint8_t *r = c->Data() + off;
+                const char *folder = reinterpret_cast<const char *>(r + 0x8);
+                const char *manuf = reinterpret_cast<const char *>(r + 0xC8);
+                if (!folder[0])
+                    continue;
+                CarRecord rec;
+                rec.folder = folder;
+                rec.manufacturer = manuf;
+                std::string key = rec.folder;
+                for (char &ch : key)
+                    ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                m_carTable[key] = rec;
             }
         } else if (c->id == 0x00034201) { // race database
             for (uint32_t off = 0; off + 0x128 <= c->size; off += 0x128) {

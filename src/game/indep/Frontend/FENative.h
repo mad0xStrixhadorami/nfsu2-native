@@ -125,11 +125,16 @@ private:
     struct PreviewTriangle {
         PreviewVertex v[3];
     };
+    struct CarRecord {
+        std::string folder;
+        std::string manufacturer;
+    };
 
     Affine LocalTransform(const FEObject *obj) const;
     void ObjectColor(const FEObject *obj, int &r, int &g, int &b, int &a) const;
     SDL_Texture *TextureFor(uint32_t hash);
     bool LoadCarPreview(const char *model);
+    void DrawCarPreviewLabel(FEPackage *pkg);
     void DrawImage(FEObject *obj);
     void DrawString(FEObject *obj);
     void DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
@@ -150,6 +155,7 @@ private:
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
     std::map<FEObject *, std::string> m_movieNames;
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
+    std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
