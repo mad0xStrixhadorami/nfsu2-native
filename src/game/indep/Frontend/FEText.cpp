@@ -67,8 +67,23 @@ bool FEFont::Parse(const uint8_t *chunk, size_t size)
     return true;
 }
 
+uint16_t FEFont::ConvertCharacter(uint16_t c)
+{
+    // 0x0028f720 (and nfsmw FEngFont::ConvertCharacter):
+    if (c >= 0xff80)
+        c &= 0xff;
+    if (c == 0x99)
+        return 0x2122; // ™
+    if (c == 0x9c)
+        return 0x0153; // œ
+    if (c == 0xa0)
+        return 0x0020; // NBSP -> space
+    return c;
+}
+
 const FontGlyph *FEFont::Glyph(uint16_t unicode) const
 {
+    unicode = ConvertCharacter(unicode);
     auto it = std::lower_bound(m_glyphs.begin(), m_glyphs.end(), unicode,
                                [](const FontGlyph &g, uint16_t u) { return g.unicode < u; });
     return it != m_glyphs.end() && it->unicode == unicode ? &*it : nullptr;
@@ -78,6 +93,7 @@ int FEFont::Kern(const FontGlyph *glyph, uint16_t prev) const
 {
     if (!m_kern || !glyph->numKern)
         return 0;
+    prev = ConvertCharacter(prev);
     // Kerning table: u32 count, then 4-byte entries {u16 previous char, s8 amount, u8 glyph char}.
     for (int i = 0; i < glyph->numKern; ++i) {
         const uint8_t *k = m_kern + 4 + (glyph->kernIndex + i) * 4;
@@ -87,16 +103,21 @@ int FEFont::Kern(const FontGlyph *glyph, uint16_t prev) const
     return 0;
 }
 
-// Header: u32 0x10, u32 count, u32 table offset, u32 string data offset (all from payload start).
+// Header (0x00263130): u32 convTableOffset (0x10), u32 count, u32 table offset, u32 string data offset.
 bool FELanguage::Parse(const uint8_t *chunk, size_t size)
 {
     if (size < 16)
         return false;
+    const uint32_t convOffset = Read<uint32_t>(chunk + 0);
     const uint32_t count = Read<uint32_t>(chunk + 4);
     const uint32_t table = Read<uint32_t>(chunk + 8);
     const uint32_t strings = Read<uint32_t>(chunk + 12);
     if (table + count * 8ull > size || strings > size)
         return false;
+    if (convOffset + 4 <= size && convOffset + 4 <= table) {
+        m_convTable = reinterpret_cast<const uint16_t *>(chunk + convOffset + 4);
+        m_convCount = (table - (convOffset + 4)) / sizeof(uint16_t);
+    }
     m_entries.resize(count);
     for (uint32_t i = 0; i < count; ++i)
         m_entries[i] = {Read<uint32_t>(chunk + table + i * 8), Read<uint32_t>(chunk + table + i * 8 + 4)};
@@ -109,4 +130,30 @@ const char *FELanguage::Find(uint32_t hash) const
     auto it = std::lower_bound(m_entries.begin(), m_entries.end(), hash,
                                [](const std::pair<uint32_t, uint32_t> &e, uint32_t h) { return e.first < h; });
     return it != m_entries.end() && it->first == hash ? m_strings + it->second : nullptr;
+}
+
+void FELanguage::DecodeString(const char *s8, std::vector<uint16_t> &out) const
+{
+    // Decompiled from 0x00296ec8 (called by 0x00262eb8):
+    if (!s8)
+        return;
+    const auto *bytes = reinterpret_cast<const uint8_t *>(s8);
+    for (size_t i = 0; bytes[i] != 0;) {
+        uint8_t b0 = bytes[i++];
+        uint16_t ch = b0;
+        if (b0 >= 0x80 && m_convTable && b0 < m_convCount) {
+            uint16_t mapped = m_convTable[b0];
+            ch = mapped;
+            if (mapped != 0 && mapped < 0x80) {
+                uint8_t b1 = bytes[i];
+                if (b1 != 0)
+                    ++i;
+                size_t idx = size_t(mapped) * 0x80 + b1 - 0x80;
+                ch = (b1 >= 0x80 && idx < m_convCount) ? m_convTable[idx] : 0;
+            }
+            if (ch == 0)
+                ch = 0x5f; // '_'
+        }
+        out.push_back(ch);
+    }
 }

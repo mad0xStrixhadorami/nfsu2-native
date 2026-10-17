@@ -47,17 +47,26 @@ public:
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
-    void AddBundle(const uint8_t *data, size_t size);
+    void AddBundle(const uint8_t *data, size_t size, const char *label = nullptr);
+    void ShowLoadingProgress(const char *stage, float fraction);
     std::vector<std::string> PackageNames() const;
 
     // Object helpers decompiled from UG2:
     //   0x00293010 FEngSetVisible / 0x00292f80 FEngSetInvisible
     //   0x00292a68 FEngSetLanguageHash
+    //   0x00292ee8 FEngSetTextureHash
     //   0x00293240 FEngSetScript
+    //   0x00293a40 FEngSetCenter / 0x00293b90 FEngGetCenter
+    //   0x00293df0 FEngGetSize   / 0x00293ee0 FEngSetSize
     static void SetObjectVisible(FEObject *obj, bool visible);
     static void SetVisible(FEPackage *pkg, uint32_t objHash, bool visible);
     static void SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash);
+    static void SetTextureHash(FEObject *obj, uint32_t texHash);
     static void SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime = true);
+    static void GetCenter(const FEObject *obj, float &x, float &y);
+    static void SetCenter(FEObject *obj, float x, float y);
+    static void GetSize(const FEObject *obj, float &w, float &h);
+    static void SetSize(FEObject *obj, float w, float h);
 
     u8 *GetPackageData(const char *pPackageName, u8 **pBlockStart, bool &bDeleteBlock) override;
     bool LoadResources(FEPackage *pPackage, i32 Count, FEResourceRequest *pList) override;

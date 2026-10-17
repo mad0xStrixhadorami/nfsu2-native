@@ -185,6 +185,15 @@ void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32
     }
 }
 
+// 0x00292ee8 (FEngSetTextureHash): set image texture handle and mark FF_DirtyCode.
+void FENativeInterface::SetTextureHash(FEObject *obj, uint32_t texHash)
+{
+    if (!obj)
+        return;
+    obj->Handle = texHash;
+    obj->Flags |= 0x400000u;
+}
+
 // 0x00293240 (FEngSetScript): switch object to scriptHash and optionally reset CurTime = 0.
 void FENativeInterface::SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime)
 {
@@ -200,9 +209,89 @@ void FENativeInterface::SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scr
     }
 }
 
-void FENativeInterface::AddBundle(const uint8_t *data, size_t size)
+// 0x00293b90 (FEngGetCenter) / 0x00293a40 (FEngSetCenter):
+void FENativeInterface::GetCenter(const FEObject *obj, float &x, float &y)
+{
+    if (!obj || !obj->GetObjData()) {
+        x = 0.0f;
+        y = 0.0f;
+        return;
+    }
+    x = obj->GetObjData()->Pos.x;
+    y = obj->GetObjData()->Pos.y;
+}
+
+void FENativeInterface::SetCenter(FEObject *obj, float x, float y)
+{
+    if (!obj || !obj->GetObjData())
+        return;
+    obj->GetObjData()->Pos.x = x;
+    obj->GetObjData()->Pos.y = y;
+    obj->Flags |= 0x400000u;
+}
+
+// 0x00293df0 (FEngGetSize) / 0x00293ee0 (FEngSetSize):
+void FENativeInterface::GetSize(const FEObject *obj, float &w, float &h)
+{
+    if (!obj || !obj->GetObjData()) {
+        w = 0.0f;
+        h = 0.0f;
+        return;
+    }
+    w = obj->GetObjData()->Size.x;
+    h = obj->GetObjData()->Size.y;
+}
+
+void FENativeInterface::SetSize(FEObject *obj, float w, float h)
+{
+    if (!obj || !obj->GetObjData())
+        return;
+    obj->GetObjData()->Size.x = w;
+    obj->GetObjData()->Size.y = h;
+    obj->Flags |= 0x400000u;
+}
+
+void FENativeInterface::ShowLoadingProgress(const char *stage, float fraction)
+{
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+    if (stage) {
+        constexpr int kBarWidth = 24;
+        int filled = static_cast<int>(fraction * kBarWidth + 0.5f);
+        char bar[kBarWidth + 1];
+        for (int i = 0; i < kBarWidth; ++i)
+            bar[i] = (i < filled) ? '#' : '.';
+        bar[kBarWidth] = '\0';
+        printf("\r  %-28s [%s] %3d%%%s", stage, bar, static_cast<int>(fraction * 100.0f + 0.5f),
+               fraction >= 1.0f ? "\n" : "");
+        fflush(stdout);
+    }
+    if (!m_renderer)
+        return;
+    SDL_PumpEvents();
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
+    if (m_engine)
+        m_engine->Render();
+    // Draw a subtle progress bar at the bottom of the 640x480 logical screen.
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    SDL_Rect bg = {120, 444, 400, 10};
+    SDL_SetRenderDrawColor(m_renderer, 30, 35, 45, 210);
+    SDL_RenderFillRect(m_renderer, &bg);
+    SDL_Rect fg = {122, 446, static_cast<int>(396.0f * fraction), 6};
+    SDL_SetRenderDrawColor(m_renderer, 90, 185, 255, 240);
+    SDL_RenderFillRect(m_renderer, &fg);
+    SDL_SetRenderDrawColor(m_renderer, 140, 210, 255, 255);
+    SDL_RenderDrawRect(m_renderer, &bg);
+    SDL_RenderPresent(m_renderer);
+}
+
+void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *label)
 {
     m_bundles.emplace_back(data, size);
+    Uint32 lastReport = SDL_GetTicks();
+    if (label && size > (512 << 10))
+        ShowLoadingProgress(label, 0.0f);
+
     for (const uint8_t *p = data, *end = data + size; p + 8 <= end;) {
         const bChunk *c = reinterpret_cast<const bChunk *>(p);
         if (c->Data() + c->size > end)
@@ -225,12 +314,21 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size)
                 m_languages.push_back(lang);
         }
         p = c->Data() + c->size;
+        if (label && size > (512 << 10)) {
+            Uint32 now = SDL_GetTicks();
+            if (now - lastReport >= 40) {
+                ShowLoadingProgress(label, float(p - data) / float(size) * 0.9f);
+                lastReport = now;
+            }
+        }
     }
     auto *pack = new TexturePack();
     if (pack->Parse(data, size))
         m_packs.push_back(pack);
     else
         delete pack;
+    if (label && size > (512 << 10))
+        ShowLoadingProgress(label, 1.0f);
 }
 
 u8 *FENativeInterface::GetPackageData(const char *name, u8 **pBlockStart, bool &bDeleteBlock)
@@ -534,8 +632,7 @@ void FENativeInterface::DrawString(FEObject *obj)
     if (!(obj->Flags & 0x2) && str->GetLabelHash() != 0 && str->GetLabelHash() != 0xFFFFFFFF) {
         for (const FELanguage &lang : m_languages)
             if (const char *s8 = lang.Find(str->GetLabelHash())) {
-                for (; *s8; ++s8)
-                    text.push_back(static_cast<unsigned char>(*s8));
+                lang.DecodeString(s8, text);
                 break;
             }
     }
@@ -557,12 +654,107 @@ void FENativeInterface::DrawString(FEObject *obj)
     if (text.empty())
         return;
 
+    const bool allowIcons = (obj->Flags & 0x820) == 0;
+    // Decompiled from 0x0028ef08 (GetJoyEventTextureInfo) and 0x002e53e0 / 0x00518600 / 0x0051e8c0:
+    // map $ICON_SPACER$ and $JOY_EVENT_...$ tokens to PS2 button icon texture hashes.
+    auto joyEventTexHash = [](const std::string &token) -> uint32_t {
+        if (strcasecmp(token.c_str(), "ICON_SPACER") == 0)
+            return 0xbca80379;
+        static const struct {
+            const char *name;
+            uint32_t texHash;
+        } kTable[] = {
+            {"JOY_EVENT_FENG_HELP", 0xd9a22505},
+            {"JOY_EVENT_MENU_HELP", 0xd9a22505},
+            {"JOY_EVENT_CLEAR_TEXT", 0xd9a22505},
+            {"JOY_EVENT_REPLAY_HELP", 0xd9a22505},
+            {"JOY_EVENT_FENG_SELECT", 0xe795717d},
+            {"JOY_EVENT_MENU_SELECT", 0xe795717d},
+            {"JOY_EVENT_EXIT_EDIT_TEXT", 0xe795717d},
+            {"JOY_EVENT_SKIP", 0xe795717d},
+            {"JOY_EVENT_FENG_CANCEL", 0x1ac94ca9},
+            {"JOY_EVENT_MENU_BACK", 0x1ac94ca9},
+            {"JOY_EVENT_CANCEL_EDIT_TEXT", 0x1ac94ca9},
+            {"JOY_EVENT_FENG_START", 0xe8b7d6a1},
+            {"JOY_EVENT_START", 0xe8b7d6a1},
+            {"JOY_EVENT_PAUSE", 0xe8b7d6a1},
+            {"JOY_EVENT_FENG_BUTTON0", 0xfea90a33},
+            {"JOY_EVENT_SELECT", 0xfea90a33},
+            {"JOY_EVENT_RESET_CAR", 0xfea90a33},
+            {"JOY_EVENT_FENG_BUTTON1", 0xff871084},
+            {"JOY_EVENT_MENU_CANCEL", 0xff871084},
+            {"JOY_EVENT_MENU_SQUARE", 0xff871084},
+            {"JOY_EVENT_DELETE_CHAR", 0xff871084},
+            {"JOY_EVENT_FENG_BUTTON2", 0x739d7071},
+            {"JOY_EVENT_MENU_L2", 0x739d7071},
+            {"JOY_EVENT_FENG_BUTTON3", 0x739d7137},
+            {"JOY_EVENT_MENU_R2", 0x739d7137},
+            {"JOY_EVENT_FENG_LTRIGGER", 0x739d7070},
+            {"JOY_EVENT_MENU_L1", 0x739d7070},
+            {"JOY_EVENT_MAIN_MENU_SELECT_TRANSMISSION", 0x739d7070},
+            {"JOY_EVENT_CARSEL_ORBIT_OUT", 0x739d7070},
+            {"JOY_EVENT_FENG_RTRIGGER", 0x739d7136},
+            {"JOY_EVENT_MENU_R1", 0x739d7136},
+            {"JOY_EVENT_CARSEL_ORBIT_IN", 0x739d7136},
+            {"JOY_EVENT_FENG_PAD_UP", 0xe7a633c1},
+            {"JOY_EVENT_SCROLL_UP", 0xe7a633c1},
+            {"JOY_EVENT_FENG_PAD_DOWN", 0xe7a633b0},
+            {"JOY_EVENT_SCROLL_DOWN", 0xe7a633b0},
+            {"JOY_EVENT_FENG_PAD_LEFT", 0xe7a633b8},
+            {"JOY_EVENT_SCROLL_LEFT", 0xe7a633b8},
+            {"JOY_EVENT_FENG_PAD_RIGHT", 0xe7a633be},
+            {"JOY_EVENT_SCROLL_RIGHT", 0xe7a633be},
+        };
+        for (const auto &e : kTable) {
+            if (strcasecmp(token.c_str(), e.name) == 0)
+                return e.texHash;
+        }
+        return FEResourceHash(token.c_str());
+    };
+
+    // 0x0028ee10 (IsJoyEventTexture) & 0x0028ee68 (SkipJoyEventTexture):
+    auto parseIconToken = [&](size_t pos, size_t &endPos, SDL_Texture *&iconTex, int &iw, int &ih) -> bool {
+        if (!allowIcons || pos + 2 >= text.size() || text[pos] != '$' || text[pos + 1] == '$')
+            return false;
+        size_t close = pos + 1;
+        while (close < text.size() && text[close] != '$')
+            ++close;
+        if (close >= text.size() || close == pos + 1)
+            return false;
+        std::string token;
+        token.reserve(close - (pos + 1));
+        for (size_t k = pos + 1; k < close; ++k)
+            token.push_back(static_cast<char>(text[k] & 0xff));
+        endPos = close;
+        iconTex = TextureFor(joyEventTexHash(token));
+        iw = 0;
+        ih = 0;
+        if (iconTex)
+            SDL_QueryTexture(iconTex, nullptr, nullptr, &iw, &ih);
+        return true;
+    };
+
     auto isNewline = [](uint16_t c) { return c == '\n' || c == '^'; };
     auto lineWidth = [&](size_t from) {
         float w = 0;
-        for (size_t i = from; i < text.size() && !isNewline(text[i]); ++i)
-            if (const FontGlyph *g = f.Glyph(text[i]))
+        uint16_t prevChar = 0;
+        for (size_t i = from; i < text.size() && !isNewline(text[i]); ++i) {
+            size_t endPos = i;
+            SDL_Texture *iconTex = nullptr;
+            int iw = 0, ih = 0;
+            if (parseIconToken(i, endPos, iconTex, iw, ih)) {
+                w += static_cast<float>(iw);
+                i = endPos;
+                prevChar = 0;
+                continue;
+            }
+            if (const FontGlyph *g = f.Glyph(text[i])) {
+                if (prevChar)
+                    w += static_cast<float>(f.Kern(g, prevChar));
                 w += g->advanceX;
+                prevChar = text[i];
+            }
+        }
         return w;
     };
     int lines = 1;
@@ -603,6 +795,19 @@ void FENativeInterface::DrawString(FEObject *obj)
         if (isNewline(c)) {
             y += f.Height() + leading;
             x = xOffset(lineWidth(i + 1));
+            prev = 0;
+            continue;
+        }
+        size_t endPos = i;
+        SDL_Texture *iconTex = nullptr;
+        int iw = 0, ih = 0;
+        if (parseIconToken(i, endPos, iconTex, iw, ih)) {
+            // 0x0028f0b0 (FEngFont::HandleJoyEventTexture): draw inline icon quad and advance by width.
+            if (iconTex && iw > 0 && ih > 0) {
+                DrawQuad(xform, x, y, x + float(iw), y + float(ih), 0.0f, 0.0f, 1.0f, 1.0f, col, iconTex);
+                x += static_cast<float>(iw);
+            }
+            i = endPos;
             prev = 0;
             continue;
         }
