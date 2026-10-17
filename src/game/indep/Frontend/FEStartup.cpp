@@ -168,7 +168,13 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         printf("[Startup] Reached %s (main menu)\n", name);
         m_finished = true;
+        m_backStack.clear();
         HandleMainLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_QRModeSelect.fng") == 0) {
+        HandleQRModeSelectLoaded(pkg);
+        return;
     }
 }
 
@@ -223,6 +229,20 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
 
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         HandleMainMessage(msg, pkg);
+        return;
+    }
+
+    if (strcasecmp(name, "UI_QRModeSelect.fng") == 0) {
+        HandleQRModeSelectMessage(msg, pkg);
+        return;
+    }
+    // Other quick race flow screens (contents not ported yet): Accept goes on, Back goes back.
+    if (QuickRaceBack(name) && (msg == kMsgPadBack) && !m_navPending) {
+        SwitchFlow(name, QuickRaceBack(name));
+        return;
+    }
+    if (QuickRaceNext(name) && (msg == kMsgPadAccept) && !m_navPending) {
+        SwitchFlow(name, QuickRaceNext(name));
         return;
     }
 
@@ -327,33 +347,9 @@ void FEStartupSequence::HandleSplashMessage(uint32_t msg, FEPackage *pkg)
 
 void FEStartupSequence::HandleMainLoaded(FEPackage *pkg)
 {
-    // Decompiled from:
-    //   MenuScreen::MenuScreen     (0x00294558)
-    //   IconScroller::IconScroller (0x0029c9c8)
-    //   IconScrollerMenu           (0x0029d638)
-    //   UIMain::UIMain             (0x001e6b78)
-    //   UIMain::AddOptions         (0x001e6ea0)
-    // 1. MenuScreen ctor (0x00294558): hide OL_ICON_GROUP and EA_MESSENGER_GROUP.
-    FENativeInterface::SetVisible(pkg, bStringHash("OL_ICON_GROUP"), false);
-    FENativeInterface::SetVisible(pkg, bStringHash("EA_MESSENGER_GROUP"), false);
-
-    // 2. IconScroller ctor (0x0029c9c8): read center of OPTION_MASTER ("0x475288", 0xb04669e3) and hide it.
-    m_mainXCenter = 0.0f;
-    m_mainYCenter = 0.0f;
-    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"))) {
-        FENativeInterface::GetCenter(optMaster, m_mainXCenter, m_mainYCenter);
-        FENativeInterface::SetObjectVisible(optMaster, false);
-    }
-    if (FEObject *lockMaster = pkg->FindObjectByHash(bStringHash("LOCK_MASTER")))
-        FENativeInterface::SetObjectVisible(lockMaster, false);
-    if (FEObject *btnMaster = pkg->FindObjectByHash(bStringHash("BUTTON_MASTER")))
-        FENativeInterface::SetObjectVisible(btnMaster, false);
-
-    // 3. UIMain::AddOptions (0x001e6ea0): 7 main menu options on PAL (0x002dbcb8() != 0).
-    static constexpr struct {
-        uint32_t texHash;
-        uint32_t nameHash;
-    } kMainDefs[] = {
+    // UIMain::UIMain (0x001e6b78) / UIMain::AddOptions (0x001e6ea0): 7 options on PAL
+    // (Online only when 0x002dbcb8() != 0). Default selection: last button, else Quick Race.
+    static const std::vector<FEIconScroller::Def> kMainDefs = {
         {0x03704f3d, 0x5e7e1192}, // Career
         {0x4e6fbb02, 0x24909fd7}, // Quick Race
         {0x883e25d6, 0x6a2b93eb}, // 2 Player Split-Screen
@@ -362,189 +358,136 @@ void FEStartupSequence::HandleMainLoaded(FEPackage *pkg)
         {0x6b303856, 0xbcb18f38}, // Profile Manager
         {0x3058fe37, 0xed1f0b2c}, // Options
     };
-
-    m_mainOptions.clear();
-    float addPos = 0.0f;
-    constexpr float kIconSpacing = 40.0f; // 0x42200000 at 0x0029c9c8 line 29
-    for (size_t i = 0; i < sizeof(kMainDefs) / sizeof(kMainDefs[0]); ++i) {
-        char optName[32];
-        snprintf(optName, sizeof(optName), "OPTION_%zu", i + 1);
-        FEObject *obj = pkg->FindObjectByHash(bStringHash(optName));
-        if (!obj)
-            continue;
-        // Prevent FEngine's spatial button map from overriding IconScroller's Left/Right selection.
-        obj->Flags |= 0x00800000u; // FF_DontNavigate
-        FENativeInterface::SetTextureHash(obj, kMainDefs[i].texHash);
-        MainMenuOption opt;
-        opt.texHash = kMainDefs[i].texHash;
-        opt.nameHash = kMainDefs[i].nameHash;
-        opt.obj = obj;
-        opt.xPos = addPos;
-        FENativeInterface::GetSize(obj, opt.origW, opt.origH);
-        opt.origAlpha = obj->GetObjData() ? int(obj->GetObjData()->Col.a) : 255;
-        addPos += opt.origW + kIconSpacing;
-        m_mainOptions.push_back(opt);
-    }
-
-    if (m_mainOptions.empty())
-        return;
-    if (m_mainSelected >= m_mainOptions.size())
-        m_mainSelected = 1; // 0x001e6ea0 line 69: FEngSetLastButton(pkg, 2) -> Quick Race
-
-    m_mainAllowFade = false;
-    m_mainScrollPos = -m_mainOptions[m_mainSelected].xPos;
-    m_mainScrollTarget = m_mainScrollPos;
-    UpdateMainSelection(pkg);
-    PositionMainOptions(pkg);
-}
-
-void FEStartupSequence::UpdateMainSelection(FEPackage *pkg)
-{
-    if (!pkg || m_mainOptions.empty())
-        return;
-    // 0x0029ce70 (IconScroller::SetSelection):
-    for (size_t i = 0; i < m_mainOptions.size(); ++i) {
-        if (FEObject *o = m_mainOptions[i].obj) {
-            if (i == m_mainSelected)
-                o->Flags &= ~0x04000000u;
-            else
-                o->Flags |= 0x04000000u;
-        }
-    }
-    if (FEObject *selObj = m_mainOptions[m_mainSelected].obj)
-        pkg->SetCurrentButton(selObj, true);
-
-    // 0x0029de00 (IconScrollerMenu::RefreshHeader): update ICON_TITLE (0x5e7b09c9).
-    FENativeInterface::SetLanguageHash(pkg, 0x5e7b09c9, m_mainOptions[m_mainSelected].nameHash);
-
-    // 0x002991c0 / 0x00299480 (ScrollBar::Refresh) & 0x0029d360 (IconScroller::UpdateArrows):
-    FEObject *backing = pkg->FindObjectByHash(bStringHash("SCROLLBAR_BACKING"));
-    FEObject *handle = pkg->FindObjectByHash(bStringHash("SCROLLBAR_HANDLE"));
-    if (backing && handle && m_mainOptions.size() > 1) {
-        float bx = 0.0f, by = 0.0f, bw = 0.0f, bh = 0.0f;
-        float hx = 0.0f, hy = 0.0f, hw = 0.0f, hh = 0.0f;
-        FENativeInterface::GetCenter(backing, bx, by);
-        FENativeInterface::GetSize(backing, bw, bh);
-        FENativeInterface::GetCenter(handle, hx, hy);
-        FENativeInterface::GetSize(handle, hw, hh);
-        float left = bx - bw * 0.5f;
-        float t = float(m_mainSelected) / float(m_mainOptions.size() - 1);
-        float newX = left + hw * 0.5f + t * (bw - hw);
-        FENativeInterface::SetCenter(handle, newX, hy);
-    }
-    FENativeInterface::SetVisible(pkg, bStringHash("SCROLLBAR_ARROW_1"), m_mainSelected > 0);
-    FENativeInterface::SetVisible(pkg, bStringHash("SCROLLBAR_ARROW_2"), m_mainSelected + 1 < m_mainOptions.size());
-}
-
-void FEStartupSequence::PositionMainOptions(FEPackage *pkg)
-{
-    if (!pkg || m_mainOptions.empty())
-        return;
-    // Decompiled from IconScroller::PositionOption (0x0029d0d0), ClipEdges (0x0029d088),
-    // Scale/Fade (0x0029bab0, 0x0029d280):
-    constexpr float kScrollerWidth = 480.0f;   // 0x43f00000 in 0x0029d638
-    constexpr float kUnselectedScale = 0.80f;  // DAT_00563034 in 0x0029d0d0
-    const float halfWidth = kScrollerWidth * 0.5f;
-    const float leftEdge = m_mainXCenter - halfWidth;
-    const float rightEdge = m_mainXCenter + halfWidth;
-
-    for (size_t i = 0; i < m_mainOptions.size(); ++i) {
-        const MainMenuOption &opt = m_mainOptions[i];
-        FEObject *obj = opt.obj;
-        if (!obj)
-            continue;
-        float xpos = m_mainXCenter + m_mainScrollPos + opt.xPos;
-        // 0x0029d088: clip options outside [fXCenter - fWidth/2, fXCenter + fWidth/2].
-        bool inBounds = (xpos >= leftEdge && xpos <= rightEdge);
-        FENativeInterface::SetObjectVisible(obj, inBounds);
-
-        float scale = (i == m_mainSelected) ? 1.0f : kUnselectedScale;
-        FENativeInterface::SetSize(obj, opt.origW * scale, opt.origH * scale);
-        FENativeInterface::SetCenter(obj, xpos, m_mainYCenter);
-
-        // 0x0029bab0 & 0x0029d280: edge fade when bAllowColorAnim is active.
-        if (m_mainAllowFade && obj->GetObjData()) {
-            float fadeBand = opt.origW * kUnselectedScale;
-            float alphaFactor = 1.0f;
-            if (xpos < leftEdge || xpos > rightEdge)
-                alphaFactor = 0.0f;
-            else if (fadeBand > 0.0f && xpos < leftEdge + fadeBand)
-                alphaFactor = (xpos - leftEdge) / fadeBand;
-            else if (fadeBand > 0.0f && xpos > rightEdge - fadeBand)
-                alphaFactor = (rightEdge - xpos) / fadeBand;
-            obj->GetObjData()->Col.a = static_cast<int>(opt.origAlpha * alphaFactor);
-        }
-    }
+    m_scroller.Setup(pkg, kMainDefs, m_mainLastSelection);
 }
 
 void FEStartupSequence::HandleMainMessage(uint32_t msg, FEPackage *pkg)
 {
-    if (m_mainOptions.empty())
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
         return;
-
-    if (msg == kMsgInitComplete) {
-        // 0x0029d710 line 30: RefreshHeader() (0x0029de00) when FEHASH_INITCOMPLETE (0x35f8620b) arrives.
-        FENativeInterface::SetLanguageHash(pkg, 0x5e7b09c9, m_mainOptions[m_mainSelected].nameHash);
-        PositionMainOptions(pkg);
-        return;
-    }
-
-    // 0x001e6c88: Event Handler (0x47ff4e7c) sends 0x34dc1bcf on intro completion, which queues 0x251bf83e.
+    // 0x001e6c88: the intro event sends 0x34dc1bcf, which queues 0x251bf83e; then edge fades start.
     if (msg == 0x34dc1bcf || msg == 0x251bf83e) {
-        m_mainAllowFade = true; // 0x0029dcb0 -> 0x0029d038
         FENativeInterface::SetScript(pkg, 0x47ff4e7c, 0x03d8eabc, true);
-        PositionMainOptions(pkg);
+        m_scroller.AllowFade();
         return;
     }
-
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
-        // Option actions (vtable slot 5 of each option class, run on BUTTON_PRESSED 0x0c407210):
+        // Option actions (slot 5 of each option class, on BUTTON_PRESSED 0x0c407210):
         //   Career 0x00259398 -> push UI_StartCareer.fng; Quick Race 0x002595d0 / 2P 0x00259560 ->
-        //   mode 2/4, switch to UI_QRModeSelect.fng (gp-0x2e68); Online 0x00259498; Customize
-        //   0x002593c8 -> mode 0x20, push UI_QRCarSelect.fng; Profile 0x00259368 -> push
-        //   UI_ProfileManager.fng; Options 0x00259458 -> switch to UI_OptionsMain.fng.
-        static const char *const kTargets[] = {"UI_StartCareer.fng", "UI_QRModeSelect.fng", "UI_QRModeSelect.fng",
-                                               nullptr,              "UI_QRCarSelect.fng",  "UI_ProfileManager.fng",
-                                               "UI_OptionsMain.fng"};
-        const char *target = m_mainSelected < 7 ? kTargets[m_mainSelected] : nullptr;
-        if (!target) {
+        //   race mode 2 / 4, quick race flow (0x001f5f48) at UI_QRModeSelect.fng; Online 0x00259498;
+        //   Customize 0x002593c8 -> mode 0x20, push UI_QRCarSelect.fng; Profile 0x00259368 ->
+        //   push UI_ProfileManager.fng; Options 0x00259458 -> mode 0x10, switch to UI_OptionsMain.fng.
+        static const struct {
+            const char *target;
+            int raceMode;
+        } kActions[] = {{"UI_StartCareer.fng", 1}, {"UI_QRModeSelect.fng", 2}, {"UI_QRModeSelect.fng", 4},
+                        {nullptr, 8},              {"UI_QRCarSelect.fng", 0x20}, {"UI_ProfileManager.fng", 0},
+                        {"UI_OptionsMain.fng", 0x10}};
+        size_t sel = m_scroller.Selected();
+        m_mainLastSelection = sel;
+        if (sel >= 7 || !kActions[sel].target) {
             printf("[Menu] Online is not available in the native build\n");
             return;
         }
-        NavigateTo(pkg->GetName(), target);
+        if (kActions[sel].raceMode)
+            m_raceMode = kActions[sel].raceMode;
+        NavigateTo(pkg->GetName(), kActions[sel].target);
         return;
     }
+    m_scroller.HandleMessage(msg, TickSeconds());
+}
 
-    if (msg == kMsgPadLeft) {
-        // 0x0029d710 -> 0x002d41e8 -> 0x0029c718 (ScrollWrapped prev):
-        m_mainSelected = (m_mainSelected + m_mainOptions.size() - 1) % m_mainOptions.size();
-        m_mainScrollTarget = -m_mainOptions[m_mainSelected].xPos;
-        UpdateMainSelection(pkg);
-        PositionMainOptions(pkg);
+// ---------------------------------------------------------------------------------------------
+// Quick race flow (0x001f5f48 / 0x001f6048): nodes with next/back functions
+//   UI_QRModeSelect   next 0x001f6540: TrackSelect (Free Run type 9: CarSelect)   back: UI_Main
+//   UI_QRTrackSelect  next 0x001f6680: ModeOptions                                back: ModeSelect
+//   UI_QRModeOptions  next 0x001f6648: CarSelect                                  back: ModeSelect
+// (The online flow uses UI_OLMain / UI_OLGameRoom instead; not ported.)
+const char *FEStartupSequence::QuickRaceNext(const char *screen) const
+{
+    if (strcasecmp(screen, "UI_QRModeSelect.fng") == 0)
+        return m_raceType == 9 ? "UI_QRCarSelect.fng" : "UI_QRTrackSelect.fng";
+    if (strcasecmp(screen, "UI_QRTrackSelect.fng") == 0)
+        return "UI_QRModeOptions.fng";
+    if (strcasecmp(screen, "UI_QRModeOptions.fng") == 0)
+        return "UI_QRCarSelect.fng";
+    return nullptr;
+}
+
+const char *FEStartupSequence::QuickRaceBack(const char *screen) const
+{
+    if (strcasecmp(screen, "UI_QRModeSelect.fng") == 0)
+        return "UI_Main.fng";
+    if (strcasecmp(screen, "UI_QRTrackSelect.fng") == 0 || strcasecmp(screen, "UI_QRModeOptions.fng") == 0)
+        return "UI_QRModeSelect.fng";
+    if (strcasecmp(screen, "UI_QRCarSelect.fng") == 0 && m_raceMode != 0x20)
+        return m_raceType == 9 ? "UI_QRModeSelect.fng" : "UI_QRModeOptions.fng";
+    return nullptr;
+}
+
+// UIQRModeSelect::UIQRModeSelect (0x001f6838) + AddOptions (0x001f6b50).
+void FEStartupSequence::HandleQRModeSelectLoaded(FEPackage *pkg)
+{
+    struct ModeDef {
+        FEIconScroller::Def def;
+        int raceType;
+    };
+    std::vector<ModeDef> modes = {
+        {{0xe9638d3e, 0x93fdee74}, 0},  // Circuit
+        {{0x2521e5eb, 0xdcb9f861}, 1},  // Sprint
+        {{0xaaab31e9, 0x35102edf}, 2},  // Drag
+        {{0x00119144, 0xd7162cfa}, 3},  // Drift
+        {{0x91703aef, 0x30da61e1}, 10}, // Street X
+        {{0x3f6495c5, 0xc786c4e7}, 4},  // Underground Racing League
+    };
+    if (m_raceMode == 4)
+        modes.push_back({{0x086c74cb, 0x613d3106}, 8}); // Outrun (split screen)
+    else
+        modes.push_back({{0x713d99c1, 0x6f2421b7}, 9}); // Free Run (offline quick race)
+    std::vector<FEIconScroller::Def> defs;
+    m_modeTypes.clear();
+    for (const ModeDef &m : modes) {
+        defs.push_back(m.def);
+        m_modeTypes.push_back(m.raceType);
+    }
+    m_scroller.Setup(pkg, defs, m_modeLastSelection);
+    // Screen title (0x42adb44c): "Quick Race Mode Select" / "Split-Screen Mode Select".
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, m_raceMode == 4 ? 0xef9f780d : 0x05416105);
+}
+
+void FEStartupSequence::HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Package() != pkg)
+        return;
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        // Mode option actions (0x002585xx-0x002586e8) set the race type (DAT_004f13b0); the screen
+        // then advances through the flow (0x001f69d0 -> 0x001f6350) once its exit animation ends.
+        size_t sel = m_scroller.Selected();
+        m_modeLastSelection = sel;
+        m_raceType = sel < m_modeTypes.size() ? m_modeTypes[sel] : 0;
+        printf("[Menu] race type %d\n", m_raceType);
+        SwitchFlow(pkg->GetName(), QuickRaceNext(pkg->GetName()));
         return;
     }
-
-    if (msg == kMsgPadRight) {
-        // 0x0029d710 -> 0x002d4208 -> 0x0029c718 (ScrollWrapped next):
-        m_mainSelected = (m_mainSelected + 1) % m_mainOptions.size();
-        m_mainScrollTarget = -m_mainOptions[m_mainSelected].xPos;
-        UpdateMainSelection(pkg);
-        PositionMainOptions(pkg);
+    if (msg == kMsgPadBack && !m_navPending) {
+        SwitchFlow(pkg->GetName(), QuickRaceBack(pkg->GetName())); // 0x001f6428
         return;
     }
+    m_scroller.HandleMessage(msg, TickSeconds());
+}
 
-    if (msg == kMsgScreenTick) {
-        // 0x0029cae8: smoothly interpolate m_mainScrollPos towards m_mainScrollTarget (~0.3s duration).
-        float dt = (m_nowMs > m_lastTickMs) ? float(m_nowMs - m_lastTickMs) * 0.001f : 0.016f;
-        float diff = m_mainScrollTarget - m_mainScrollPos;
-        if (diff > 0.5f || diff < -0.5f) {
-            float step = std::min(1.0f, dt * 12.0f);
-            m_mainScrollPos += diff * step;
-        } else {
-            m_mainScrollPos = m_mainScrollTarget;
-        }
-        PositionMainOptions(pkg);
-    }
+void FEStartupSequence::SwitchFlow(const char *from, const char *to)
+{
+    if (!to)
+        return;
+    printf("[Menu] %s -> %s\n", from, to);
+    m_navPending = true;
+    m_engine->QueuePackageSwitch(to, 0xff);
+}
+
+float FEStartupSequence::TickSeconds() const
+{
+    return m_nowMs > m_lastTickMs ? float(m_nowMs - m_lastTickMs) * 0.001f : 0.016f;
 }
 
 void FEStartupSequence::NavigateTo(const char *from, const char *target)

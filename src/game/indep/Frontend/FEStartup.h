@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "game/indep/Frontend/FEIconScroller.h"
+
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
@@ -60,23 +62,18 @@ public:
     const char *CurrentPackage() const;
 
 private:
-    struct MainMenuOption {
-        uint32_t texHash = 0;
-        uint32_t nameHash = 0;
-        FEObject *obj = nullptr;
-        float xPos = 0.0f;
-        float origW = 0.0f;
-        float origH = 0.0f;
-        int origAlpha = 255;
-    };
 
     void HandleSplashLoaded(FEPackage *pkg);
     void HandleSplashMessage(uint32_t msg, FEPackage *pkg);
 
     void HandleMainLoaded(FEPackage *pkg);
     void HandleMainMessage(uint32_t msg, FEPackage *pkg);
-    void UpdateMainSelection(FEPackage *pkg);
-    void PositionMainOptions(FEPackage *pkg);
+    void HandleQRModeSelectLoaded(FEPackage *pkg);
+    void HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg);
+    const char *QuickRaceNext(const char *screen) const;
+    const char *QuickRaceBack(const char *screen) const;
+    void SwitchFlow(const char *from, const char *to);
+    float TickSeconds() const;
     void NavigateTo(const char *from, const char *target);
 
     FEngine *m_engine;
@@ -95,14 +92,13 @@ private:
     bool m_splashFadedIn = false;
     bool m_splashAdvanced = false;
 
-    // UI_Main / IconScrollerMenu state (0x001e6b78, 0x001e6ea0, 0x0029c9c8..0x0029de00):
-    std::vector<MainMenuOption> m_mainOptions;
-    size_t m_mainSelected = 1; // 0x001e6ea0 defaults LastButton to 2 (1-based -> Quick Race)
-    float m_mainXCenter = 0.0f;
-    float m_mainYCenter = 0.0f;
-    float m_mainScrollPos = 0.0f;
-    float m_mainScrollTarget = 0.0f;
-    bool m_mainAllowFade = false;
+    // Icon carousel of the current menu screen (UI_Main, UI_QRModeSelect, ...).
+    FEIconScroller m_scroller;
+    size_t m_mainLastSelection = 1; // 0x001e6ea0: FEngSetLastButton(pkg, 2) -> Quick Race
+    size_t m_modeLastSelection = 0;
+    std::vector<int> m_modeTypes;   // race type per mode option
+    int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
+    int m_raceType = 0;             // DAT_004f13b0: 0 circuit .. 10 street x
 
     // Menu navigation: screens to return to on Back, and a guard so one press acts once
     // (BUTTON_PRESSED and PAD_ACCEPT both arrive for the same press).

@@ -18,10 +18,10 @@ Movie MOVIES\ealogo_en.mpc: playing
 Movie MOVIES\thx_logo.mpc: playing
 [Startup] LS_THXMovie.fng: movie finished (0xc3960eb9)
 [Startup] LS_THXMovie.fng -> LS_PSAMovie.fng
-Movie MOVIES\clock_en.mpc: not available, posting movie-done
+Movie MOVIES\PSA_en.mpc: playing
 [Startup] LS_PSAMovie.fng: movie finished/skipped (0xc3960eb9)
 [Startup] LS_PSAMovie.fng -> UG_LS_IntroFMV.fng
-Movie MOVIES\e3_title_en.mpc: not available, posting movie-done
+Movie MOVIES\FMVOpening.mpc: playing
 [Startup] UG_LS_IntroFMV.fng: movie finished/skipped (0xc3960eb9)
 [Startup] UG_LS_IntroFMV.fng -> UG_LS_Splash.fng
 [Startup] UG_LS_Splash.fng initialized (allowContinue=0)
@@ -30,3 +30,4 @@ Movie MOVIES\e3_title_en.mpc: not available, posting movie-done
 [Startup] Skipping MC_Background.fng (stand-in: memory-card check not needed)
 [Startup] UG_LS_Splash.fng -> UI_Main.fng
 [Startup] Reached UI_Main.fng (main menu)
+[Menu] UI_Main.fng -> UI_StartCareer.fng
