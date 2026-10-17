@@ -23,7 +23,9 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     target_compile_definitions(bware PUBLIC NFSU2_32BIT=1)
 endif()
 target_include_directories(bware SYSTEM PUBLIC
-    ${CMAKE_SOURCE_DIR}/compat ${NFSMW}/src ${NFSMW}/include ${NFSMW}/src/Speed/Indep/Libs/allocator/1.5.0)
+    ${CMAKE_SOURCE_DIR}/compat ${NFSMW}/src ${NFSMW}/include ${NFSMW}/src/Speed/Indep/Libs/allocator/1.5.0
+    ${NFSMW}/src/Speed/Indep/Libs/csis/dev/include ${NFSMW}/src/Speed/Indep/Libs/realcore/6.24.00/include/common
+    ${NFSMW}/src/Speed/Indep/Libs)
 target_compile_options(bware PUBLIC -include ${CMAKE_SOURCE_DIR}/compat/nfsu2_prelude.h
     -fsanitize=return -fno-sanitize-recover=return PRIVATE -w)
 # Upstream left some functions as empty stubs; abort loudly if one is reached (see PATCHES.md).
