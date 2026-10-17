@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 project(nfsu2_decomp CXX)
 
 set(CMAKE_CXX_STANDARD 20)
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR "nfsu2 is built as 32-bit x86: cmake -DCMAKE_TOOLCHAIN_FILE=cmake/linux-i386.cmake")
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
@@ -16,10 +19,13 @@ list(TRANSFORM BWARE_FILES PREPEND ${NFSMW}/src/Speed/Indep/bWare/Src/)
 list(TRANSFORM BWARE_FILES APPEND .cpp)
 add_library(bware STATIC ${BWARE_FILES})
 target_compile_definitions(bware PUBLIC EA_PLATFORM_WIN32)
-target_include_directories(bware PUBLIC
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_compile_definitions(bware PUBLIC NFSU2_32BIT=1)
+endif()
+target_include_directories(bware SYSTEM PUBLIC
     ${CMAKE_SOURCE_DIR}/compat ${NFSMW}/src ${NFSMW}/include ${NFSMW}/src/Speed/Indep/Libs/allocator/1.5.0)
 target_compile_options(bware PUBLIC -include ${CMAKE_SOURCE_DIR}/compat/nfsu2_prelude.h
-    PRIVATE -w -fsanitize=return -fno-sanitize-recover=return)
+    -fsanitize=return -fno-sanitize-recover=return PRIVATE -w)
 # Upstream left some functions as empty stubs; abort loudly if one is reached (see PATCHES.md).
 target_link_options(bware PUBLIC -fsanitize=return)
 

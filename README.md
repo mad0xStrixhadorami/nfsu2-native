@@ -29,7 +29,16 @@ rewritten as readable C++ that builds and runs natively on Linux.
 
 ## Build
 
+Built as **native 32-bit x86** (like the original PC release): EA's data and engine code assume
+4-byte pointers. Needs `g++-multilib` and `libsdl2-dev:i386`.
+
 ```sh
-cmake -S . -B build -G Ninja && cmake --build build
-NFSU2_DATA=~/re/nfsu2_game ./build/nfsu2
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-i386.cmake
+cmake --build build
+./build/bware_test                                  # engine core self-test
+NFSU2_DATA=~/re/nfsu2_game ./build/nfsu2 --test     # disc file system self-test
+NFSU2_DATA=~/re/nfsu2_game ./build/nfsu2            # run
 ```
+
+Engine code reused from the NFS Most Wanted decompilation lives in `third_party/nfsmw` (CC0);
+local changes are listed in `third_party/nfsmw/PATCHES.md`.
