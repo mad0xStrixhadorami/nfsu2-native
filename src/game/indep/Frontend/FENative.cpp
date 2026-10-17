@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <strings.h>
+#include <unordered_set>
 
 #include "Speed/Indep/Src/FEng/FEGroup.h"
 #include "Speed/Indep/Src/FEng/FEImage.h"
@@ -38,14 +39,17 @@ struct DecodedPreviewPoint {
     float x, y, z;
 };
 
+struct DecodedPreviewTriangle {
+    DecodedPreviewPoint v[3];
+};
+
 uint32_t ReadLE32(const std::vector<uint8_t> &d, size_t p)
 {
     return uint32_t(d[p]) | (uint32_t(d[p + 1]) << 8) | (uint32_t(d[p + 2]) << 16) |
            (uint32_t(d[p + 3]) << 24);
 }
 
-// Stand-in geometry decoder for the car-select preview. It decodes the verified Q15 position
-// streams but deliberately emits points until the original GIF strip topology is understood.
+// Decodes one strip entry's VIF block into its NumVerts Q15 positions (see tools/solid_mesh.py).
 bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size, unsigned nverts,
                        std::vector<DecodedPreviewPoint> &out)
 {
@@ -65,9 +69,9 @@ bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size
             unsigned bits = vl == 0 ? 32 : vl == 1 ? 16 : vl == 2 ? 8 : 5;
             size_t elem = bits == 5 ? 2 : bits * comps / 8;
             if (!elem || p + elem * num > end)
-                return false;
+                break; // truncated final unpack: keep whatever decoded so far
             unsigned addr = imm & 0x3ff;
-            if (bits == 32 && comps == 3 && addr >= 2 && addr <= 3 && num > 0) {
+            if (bits == 32 && (comps == 3 || comps == 4) && addr >= 2 && addr <= 3 && num > 0) {
                 for (unsigned k = 0; k < std::min(num, 2u); ++k) {
                     for (unsigned c = 0; c < 3; ++c) {
                         uint32_t word = ReadLE32(d, p + k * elem + c * 4);
@@ -100,25 +104,24 @@ bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size
             break;
         }
     }
-    if (!haveBounds[0] || !haveBounds[1])
-        return false;
+    if (!haveBounds[0] || !haveBounds[1]) return false;
     unsigned soaVertices = nverts & ~3u;
     for (unsigned i = 0; i < nverts; ++i) {
         DecodedPreviewPoint v{};
         float *dst[3] = {&v.x, &v.y, &v.z};
         if (i < soaVertices) {
             unsigned group = i / 4, lane = i & 3, base = group * 3;
-            if (base + 2 >= 192)
-                return false;
+            if (base + 2 >= 192) return false;
             for (unsigned a = 0; a < 3; ++a) {
                 float q = static_cast<float>(positions[base + a].v[lane]) / 32768.0f;
                 *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
             }
         } else {
-            unsigned tail = 5 + (soaVertices / 4) * 3;
+            // Tail vertices follow the full V4-16 groups at VU address 5+(soa/4)*3; positions[] is
+            // indexed by (VU address - 5), so the first tail qword is index (soa/4)*3.
+            unsigned tail = (soaVertices / 4) * 3;
             unsigned rem = nverts - soaVertices, lane = i - soaVertices;
-            if (tail + (rem == 3 ? lane : 2) >= 256)
-                return false;
+            if (tail + (rem == 3 ? lane : 2) >= 256) return false;
             for (unsigned a = 0; a < 3; ++a) {
                 unsigned qword = tail + (rem == 3 ? lane : a);
                 unsigned component = rem == 1 ? 0 : (rem == 3 ? a : lane);
@@ -131,8 +134,40 @@ bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size
     return true;
 }
 
+// Topology approximation (ISSUES #65): a strip entry is one triangle strip, but NumPolys is
+// always less than NumVerts-2 with an even gap, i.e. (NumVerts-NumPolys)/2 = run count R and 2
+// "bridge" triangles are skipped at each internal run seam. The seams are not stored, so drop the
+// (NumVerts-2)-NumPolys largest-longest-edge triangles as the bridges.
+void BuildStripTriangles(const std::vector<DecodedPreviewPoint> &p, unsigned nverts, unsigned numpoly,
+                         std::vector<DecodedPreviewTriangle> &out)
+{
+    if (nverts < 3 || p.size() != nverts)
+        return;
+    struct Tri {
+        float longest;
+        unsigned a, b, c;
+    };
+    std::vector<Tri> tris;
+    tris.reserve(nverts - 2);
+    auto edge = [&p](unsigned i, unsigned j) {
+        float dx = p[i].x - p[j].x, dy = p[i].y - p[j].y, dz = p[i].z - p[j].z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    for (unsigned k = 0; k + 2 < nverts; ++k) {
+        unsigned a = k % 2 == 0 ? k : k + 1, b = k % 2 == 0 ? k + 1 : k, c = k + 2;
+        tris.push_back({std::max(edge(a, b), std::max(edge(b, c), edge(a, c))), a, b, c});
+    }
+    unsigned keep = numpoly < tris.size() ? numpoly : static_cast<unsigned>(tris.size());
+    std::nth_element(tris.begin(), tris.begin() + keep, tris.end(),
+                     [](const Tri &l, const Tri &r) { return l.longest < r.longest; });
+    for (unsigned i = 0; i < keep; ++i) {
+        const DecodedPreviewPoint &a = p[tris[i].a], &b = p[tris[i].b], &c = p[tris[i].c];
+        out.push_back({{{a.x, a.y, a.z}, {b.x, b.y, b.z}, {c.x, c.y, c.z}}});
+    }
+}
+
 void DecodePreviewMesh(const std::vector<uint8_t> &d, size_t body, size_t size,
-                       std::vector<DecodedPreviewPoint> &out)
+                       std::vector<DecodedPreviewTriangle> &out)
 {
     size_t end = std::min(d.size(), body + size);
     size_t table = 0, tableSize = 0, vif = 0, vifSize = 0;
@@ -142,25 +177,38 @@ void DecodePreviewMesh(const std::vector<uint8_t> &d, size_t body, size_t size,
         if (len > end - child)
             return;
         if (id == 0x134a01) { table = child; tableSize = len; }
-        if (id == 0x134a02) { vif = child; vifSize = len; }
+        if (id == 0x134a02) {
+            // The VIF chunk body is prefixed with FLUSHE (0x11) bytes; strip DataQWordOffsets are
+            // relative to the first UNPACK, so skip the prefix (matches tools/solid_preview.py).
+            vif = child;
+            vifSize = len;
+            while (vifSize > 0 && d[vif] == 0x11) {
+                ++vif;
+                --vifSize;
+            }
+        }
         p = child + len;
     }
     if (!table || !vif || tableSize < 4)
         return;
+    std::vector<DecodedPreviewPoint> points;
     unsigned strips = (tableSize - 4) / 16;
     for (unsigned i = 0; i < strips; ++i) {
         size_t e = table + 4 + i * 16;
-        unsigned nverts = d[e + 2];
+        unsigned nverts = d[e + 2], numpoly = d[e + 3];
         unsigned dq = uint16_t(d[e + 8]) | (uint16_t(d[e + 9]) << 8);
         unsigned qwords = d[e + 12];
         size_t offset = vif + size_t(dq) * 16, bytes = size_t(qwords) * 16;
-        if (offset <= vif + vifSize && bytes <= vif + vifSize - offset)
-            DecodePreviewStrip(d, offset, bytes, nverts, out);
+        if (offset > vif + vifSize || bytes > vif + vifSize - offset)
+            continue;
+        points.clear();
+        if (DecodePreviewStrip(d, offset, bytes, nverts, points))
+            BuildStripTriangles(points, nverts, numpoly, out);
     }
 }
 
 void DecodePreviewChunks(const std::vector<uint8_t> &d, size_t begin, size_t end,
-                         std::vector<DecodedPreviewPoint> &out)
+                         std::vector<DecodedPreviewTriangle> &out)
 {
     for (size_t p = begin; p + 8 <= end;) {
         uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
@@ -176,11 +224,11 @@ void DecodePreviewChunks(const std::vector<uint8_t> &d, size_t begin, size_t end
 }
 
 // Stand-in geometry decoder; the engine equivalent is UG2's solid loader 0x001bf3b8.
-std::vector<DecodedPreviewPoint> DecodePreviewGeometry(const std::vector<uint8_t> &d)
+std::vector<DecodedPreviewTriangle> DecodePreviewGeometry(const std::vector<uint8_t> &d)
 {
-    std::vector<DecodedPreviewPoint> points;
-    DecodePreviewChunks(d, 0, d.size(), points);
-    return points;
+    std::vector<DecodedPreviewTriangle> tris;
+    DecodePreviewChunks(d, 0, d.size(), tris);
+    return tris;
 }
 
 std::string LowerName(const char *s)
@@ -268,17 +316,22 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         return false;
     std::string path = "CARS\\" + std::string(model) + "\\GEOMETRY.BIN";
     std::vector<uint8_t> geometry = m_readFile(path.c_str());
-    std::vector<DecodedPreviewPoint> decoded = DecodePreviewGeometry(geometry);
+    std::vector<DecodedPreviewTriangle> decoded = DecodePreviewGeometry(geometry);
     if (decoded.empty()) {
         fprintf(stderr, "[CarPreview] no geometry decoded from %s\n", path.c_str());
         return false;
     }
-    m_carPreviewPoints.clear();
-    m_carPreviewPoints.reserve(decoded.size());
-    for (const DecodedPreviewPoint &v : decoded)
-        m_carPreviewPoints.push_back({v.x, v.y, v.z});
+    m_carPreviewTris.clear();
+    m_carPreviewSplatsBuilt = false;
+    m_carPreviewTris.reserve(decoded.size());
+    for (const DecodedPreviewTriangle &t : decoded) {
+        PreviewTriangle tri;
+        for (int k = 0; k < 3; ++k)
+            tri.v[k] = {t.v[k].x, t.v[k].y, t.v[k].z};
+        m_carPreviewTris.push_back(tri);
+    }
     m_previewCarName = model;
-    fprintf(stderr, "[CarPreview] decoded %zu %s vertices from %s\n", m_carPreviewPoints.size(),
+    fprintf(stderr, "[CarPreview] decoded %zu %s triangles from %s\n", m_carPreviewTris.size(),
             model, path.c_str());
     return true;
 }
@@ -303,38 +356,75 @@ void FENativeInterface::RenderCarPreviewOverlay()
         m_carPreviewLoadAttempted = true;
         LoadCarPreview("SKYLINE");
     }
-    if (m_carPreviewPoints.empty())
+    if (m_carPreviewTris.empty())
         return;
 
-    float midX = 0.0f, midY = 0.0f, midZ = 0.0f;
-    for (const PreviewVertex &v : m_carPreviewPoints) {
-        midX += v.x; midY += v.y; midZ += v.z;
-    }
-    float invCount = 1.0f / static_cast<float>(m_carPreviewPoints.size());
-    midX *= invCount; midY *= invCount; midZ *= invCount;
+    // Draw the decoded vertices as depth-sorted splats. Strip triangle topology is not
+    // recoverable without executing the mesh VU microprogram, and the best-effort triangle
+    // approximation leaves bridge slivers streaking the silhouette, so points are used here.
+    // Oblique "hero" projection for the car-select preview (matches the offline splat tool).
     constexpr float yawCos = 0.8660254f, yawSin = 0.5f, elevSin = 0.22f;
-    float minX = 1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
-    for (const PreviewVertex &v : m_carPreviewPoints) {
-        float x = (v.x - midX) * yawCos + (v.z - midZ) * yawSin;
-        float depth = -(v.x - midX) * yawSin + (v.z - midZ) * yawCos;
-        float y = (v.y - midY) - depth * elevSin;
-        minX = std::min(minX, x); maxX = std::max(maxX, x);
-        minY = std::min(minY, y); maxY = std::max(maxY, y);
+    if (!m_carPreviewSplatsBuilt) {
+        m_carPreviewSplatsBuilt = true;
+        std::unordered_set<uint64_t> seen;
+        std::vector<PreviewVertex> pts;
+        pts.reserve(m_carPreviewTris.size());
+        auto quantize = [](float f) { return static_cast<uint32_t>(static_cast<int32_t>(std::lround(f * 2048.0f))); };
+        for (const PreviewTriangle &t : m_carPreviewTris) {
+            for (const PreviewVertex &v : t.v) {
+                uint64_t key = (static_cast<uint64_t>(quantize(v.x)) << 42) ^
+                               (static_cast<uint64_t>(quantize(v.y)) << 21) ^
+                               static_cast<uint64_t>(quantize(v.z));
+                if (seen.insert(key).second)
+                    pts.push_back(v);
+            }
+        }
+        if (!pts.empty()) {
+            float midX = 0.0f, midY = 0.0f, midZ = 0.0f;
+            for (const PreviewVertex &v : pts) { midX += v.x; midY += v.y; midZ += v.z; }
+            float inv = 1.0f / static_cast<float>(pts.size());
+            midX *= inv; midY *= inv; midZ *= inv;
+            struct Projected { float sx, sy, depth; };
+            std::vector<Projected> proj(pts.size());
+            float minX = 1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f, minD = 1e30f, maxD = -1e30f;
+            for (size_t i = 0; i < pts.size(); ++i) {
+                const PreviewVertex &v = pts[i];
+                float x = (v.x - midX) * yawCos + (v.z - midZ) * yawSin;
+                float d = -(v.x - midX) * yawSin + (v.z - midZ) * yawCos;
+                float y = (v.y - midY) - d * elevSin;
+                proj[i] = {x, y, d};
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+                minD = std::min(minD, d); maxD = std::max(maxD, d);
+            }
+            float scale = std::min(320.0f / std::max(maxX - minX, 0.01f),
+                                   145.0f / std::max(maxY - minY, 0.01f));
+            float invDepth = 1.0f / std::max(maxD - minD, 1e-6f);
+            std::sort(proj.begin(), proj.end(),
+                      [](const Projected &a, const Projected &b) { return a.depth < b.depth; });
+            constexpr float hs = 2.6f;
+            m_carPreviewSplats.clear();
+            m_carPreviewSplats.reserve(proj.size() * 6);
+            auto emit = [&](float x, float y, int shade) {
+                m_carPreviewSplats.push_back(
+                    {{x, y},
+                     {static_cast<Uint8>(shade), static_cast<Uint8>(std::min(shade + 40, 255)),
+                      static_cast<Uint8>(std::min(shade + 70, 255)), 255},
+                     {0.0f, 0.0f}});
+            };
+            for (const Projected &p : proj) {
+                float sx = 320.0f + p.sx * scale, sy = 300.0f - p.sy * scale;
+                int shade = 60 + int(150 * std::clamp((p.depth - minD) * invDepth, 0.0f, 1.0f));
+                emit(sx - hs, sy - hs, shade); emit(sx + hs, sy - hs, shade); emit(sx + hs, sy + hs, shade);
+                emit(sx - hs, sy - hs, shade); emit(sx + hs, sy + hs, shade); emit(sx - hs, sy + hs, shade);
+            }
+        }
     }
-    const float scale = std::min(320.0f / std::max(maxX - minX, 0.01f),
-                                 145.0f / std::max(maxY - minY, 0.01f));
-    std::vector<SDL_Point> screenPoints;
-    screenPoints.reserve(m_carPreviewPoints.size());
-    for (size_t i = 0; i < m_carPreviewPoints.size(); i += 2) {
-        const PreviewVertex &v = m_carPreviewPoints[i];
-        float x = (v.x - midX) * yawCos + (v.z - midZ) * yawSin;
-        float depth = -(v.x - midX) * yawSin + (v.z - midZ) * yawCos;
-        float y = (v.y - midY) - depth * elevSin;
-        screenPoints.push_back({int(320.0f + x * scale), int(300.0f - y * scale)});
-    }
-    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(m_renderer, 138, 194, 255, 220);
-    SDL_RenderDrawPoints(m_renderer, screenPoints.data(), static_cast<int>(screenPoints.size()));
+    if (m_carPreviewSplats.empty())
+        return;
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    SDL_RenderGeometry(m_renderer, nullptr, m_carPreviewSplats.data(),
+                       static_cast<int>(m_carPreviewSplats.size()), nullptr, 0);
 }
 
 // Stand-in: cycle through car geometry files confirmed present in the mounted PAL archive.

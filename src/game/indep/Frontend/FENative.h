@@ -122,6 +122,9 @@ private:
     struct PreviewVertex {
         float x, y, z;
     };
+    struct PreviewTriangle {
+        PreviewVertex v[3];
+    };
 
     Affine LocalTransform(const FEObject *obj) const;
     void ObjectColor(const FEObject *obj, int &r, int &g, int &b, int &a) const;
@@ -147,7 +150,9 @@ private:
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
     std::map<FEObject *, std::string> m_movieNames;
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
-    std::vector<PreviewVertex> m_carPreviewPoints;
+    std::vector<PreviewTriangle> m_carPreviewTris;
+    std::vector<SDL_Vertex> m_carPreviewSplats;
+    bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;
     size_t m_previewCarIndex = 6; // Skyline in the currently verified geometry roster.
     std::string m_previewCarName = "SKYLINE";
