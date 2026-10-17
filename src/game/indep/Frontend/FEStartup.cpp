@@ -153,6 +153,17 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleSplashLoaded(pkg);
         return;
     }
+    // 0x0023b770 (LS_PSAMovie screen): FEngSetMovieName(pkg, 0xf2754103, "PSA"). The PS2 version
+    // also starts a subtitle player when subtitle data exists (0x00296760 / 0x002edc70); not ported.
+    if (strcasecmp(name, "LS_PSAMovie.fng") == 0) {
+        m_fe->SetMovieName(pkg, 0xf2754103, "PSA");
+        return;
+    }
+    // 0x0023b598 (UG_LS_IntroFMV screen): FEngSetMovieName(pkg, 0x72cf9f38, "FMVOpening").
+    if (strcasecmp(name, "UG_LS_IntroFMV.fng") == 0) {
+        m_fe->SetMovieName(pkg, 0x72cf9f38, "FMVOpening");
+        return;
+    }
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         printf("[Startup] Reached %s (main menu)\n", name);
         m_finished = true;

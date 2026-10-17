@@ -50,6 +50,8 @@ public:
     void SetFileReader(std::function<std::vector<uint8_t>(const char *)> reader) { m_readFile = std::move(reader); }
     // 0x00290cb8 (FEngMovieStarter): start the movie for a FE_Movie object, or report it done.
     void StartMovie(FEObject *obj, FEPackage *pkg);
+    // 0x00259e48 / 0x00292f20 (FEngSetMovieName): set the movie a FE_Movie object plays.
+    void SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
@@ -124,6 +126,7 @@ private:
     };
     std::vector<ActiveMovie> m_movies;
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
+    std::map<FEObject *, std::string> m_movieNames;  // names set by screens (PS2: string at obj+0x24)
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;

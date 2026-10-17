@@ -387,11 +387,13 @@ void FENativeInterface::PackageWasLoaded(FEPackage *pkg)
     SetVisible(pkg, FEHashUpper("OL_ICON_GROUP"), false);
     SetVisible(pkg, FEHashUpper("EA_MESSENGER_GROUP"), false);
 
-    HidePCObjectsAndStartMovies cb{m_engine, pkg, this};
-    pkg->ForAllObjects(cb);
-
+    // Screen setup first (the PS2 creates the MenuScreen, whose constructor may set the movie
+    // name, before the package's movies are started).
     if (m_startup && !pkg->IsLibrary())
         m_startup->OnPackageLoaded(pkg);
+
+    HidePCObjectsAndStartMovies cb{m_engine, pkg, this};
+    pkg->ForAllObjects(cb);
 }
 
 // 0x00290788 (cFEngGameInterface::NotificationMessage):
@@ -867,13 +869,26 @@ static std::string MovieFileName(const std::string &name)
     return "MOVIES\\" + name + "_en.mpc";
 }
 
+void FENativeInterface::SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name)
+{
+    FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr;
+    if (!obj)
+        return;
+    m_movieNames[obj] = name;
+    obj->Flags |= 0x400000u;
+}
+
 void FENativeInterface::StartMovie(FEObject *obj, FEPackage *pkg)
 {
-    auto name = m_resourceNames.find(obj->Handle);
+    std::string movie;
+    if (auto set = m_movieNames.find(obj); set != m_movieNames.end())
+        movie = set->second;
+    else if (auto res = m_resourceNames.find(obj->Handle); res != m_resourceNames.end())
+        movie = res->second;
     std::vector<uint8_t> data;
     std::string file;
-    if (name != m_resourceNames.end() && m_readFile) {
-        file = MovieFileName(name->second);
+    if (!movie.empty() && m_readFile) {
+        file = MovieFileName(movie);
         data = m_readFile(file.c_str());
     }
     auto player = std::make_unique<MoviePlayer>();
@@ -917,5 +932,7 @@ bool FENativeInterface::PackageWillUnload(FEPackage *pkg)
 {
     m_movies.erase(std::remove_if(m_movies.begin(), m_movies.end(), [pkg](const ActiveMovie &m) { return m.pkg == pkg; }),
                    m_movies.end());
+    for (auto it = m_movieNames.begin(); it != m_movieNames.end();)
+        it = pkg->FindObjectByGUID(it->first->GUID) == it->first ? m_movieNames.erase(it) : std::next(it);
     return true;
 }

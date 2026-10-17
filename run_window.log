@@ -4,3 +4,29 @@ Mounted disc archive: 1500 entries
   global/globalb.lzc       ok  (ZZDATA2 sector 172212, 804492 bytes)
   (missing file)           ok
 File system self-test: passed
+  GLOBAL\GLOBALB.LZC           [........................]   0%  GLOBAL\GLOBALB.LZC           [########################] 100%
+  FRONTEND\FRONTB.LZC          [........................]   0%  FRONTEND\FRONTB.LZC          [########################] 100%
+[Startup] Starting sequence with LS_LangSelect.fng
+[Startup] LS_LangSelect.fng: stand-in (language select skipped)
+[Startup] LS_LangSelect.fng -> MC_Bootup.fng
+[Startup] MC_Bootup.fng: stand-in (memory-card check skipped)
+[Startup] MC_Bootup.fng -> LS_EAlogo.fng
+Movie audio: pulseaudio, 48000 Hz
+Movie MOVIES\ealogo_en.mpc: playing
+[Startup] LS_EAlogo.fng: movie finished (0xc3960eb9)
+[Startup] LS_EAlogo.fng -> LS_THXMovie.fng
+Movie MOVIES\thx_logo.mpc: playing
+[Startup] LS_THXMovie.fng: movie finished (0xc3960eb9)
+[Startup] LS_THXMovie.fng -> LS_PSAMovie.fng
+Movie MOVIES\clock_en.mpc: not available, posting movie-done
+[Startup] LS_PSAMovie.fng: movie finished/skipped (0xc3960eb9)
+[Startup] LS_PSAMovie.fng -> UG_LS_IntroFMV.fng
+Movie MOVIES\e3_title_en.mpc: not available, posting movie-done
+[Startup] UG_LS_IntroFMV.fng: movie finished/skipped (0xc3960eb9)
+[Startup] UG_LS_IntroFMV.fng -> UG_LS_Splash.fng
+[Startup] UG_LS_Splash.fng initialized (allowContinue=0)
+[Startup] UG_LS_Splash.fng: FadeIn triggered after 4.0s
+[Startup] UG_LS_Splash.fng: button pressed (0x406415e3), advancing to main menu
+[Startup] Skipping MC_Background.fng (stand-in: memory-card check not needed)
+[Startup] UG_LS_Splash.fng -> UI_Main.fng
+[Startup] Reached UI_Main.fng (main menu)
