@@ -239,6 +239,28 @@ FENativeInterface::FENativeInterface(SDL_Renderer *renderer) : m_renderer(render
     }
 }
 
+// Stand-in: load the verified geometry subset until UG2's full car roster loader is ported.
+bool FENativeInterface::LoadCarPreview(const char *model)
+{
+    if (!model || !m_readFile)
+        return false;
+    std::string path = "CARS\\" + std::string(model) + "\\GEOMETRY.BIN";
+    std::vector<uint8_t> geometry = m_readFile(path.c_str());
+    std::vector<DecodedPreviewPoint> decoded = DecodePreviewGeometry(geometry);
+    if (decoded.empty()) {
+        fprintf(stderr, "[CarPreview] no geometry decoded from %s\n", path.c_str());
+        return false;
+    }
+    m_carPreviewPoints.clear();
+    m_carPreviewPoints.reserve(decoded.size());
+    for (const DecodedPreviewPoint &v : decoded)
+        m_carPreviewPoints.push_back({v.x, v.y, v.z});
+    m_previewCarName = model;
+    fprintf(stderr, "[CarPreview] decoded %zu %s vertices from %s\n", m_carPreviewPoints.size(),
+            model, path.c_str());
+    return true;
+}
+
 // Stand-in: the UG2 car-select renderer is not ported yet; draw the decoded model as a point cloud.
 void FENativeInterface::EndPackageRendering(FEPackage *pkg)
 {
@@ -247,15 +269,7 @@ void FENativeInterface::EndPackageRendering(FEPackage *pkg)
 
     if (!m_carPreviewLoadAttempted) {
         m_carPreviewLoadAttempted = true;
-        if (m_readFile) {
-            std::vector<uint8_t> geometry = m_readFile("CARS\\SKYLINE\\GEOMETRY.BIN");
-            std::vector<DecodedPreviewPoint> decoded = DecodePreviewGeometry(geometry);
-            m_carPreviewPoints.reserve(decoded.size());
-            for (const DecodedPreviewPoint &v : decoded)
-                m_carPreviewPoints.push_back({v.x, v.y, v.z});
-            fprintf(stderr, "[CarPreview] decoded %zu Skyline vertices from CARS\\SKYLINE\\GEOMETRY.BIN\n",
-                    m_carPreviewPoints.size());
-        }
+        LoadCarPreview("SKYLINE");
     }
     if (m_carPreviewPoints.empty())
         return;
@@ -289,6 +303,22 @@ void FENativeInterface::EndPackageRendering(FEPackage *pkg)
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(m_renderer, 138, 194, 255, 220);
     SDL_RenderDrawPoints(m_renderer, screenPoints.data(), static_cast<int>(screenPoints.size()));
+}
+
+// Stand-in: cycle through car geometry files confirmed present in the mounted PAL archive.
+void FENativeInterface::CycleCarPreview(int direction)
+{
+    static const char *const roster[] = {"350Z", "COROLLA", "CORSA", "COUPE", "FOCUS",
+                                         "MIATA", "SKYLINE", "TIBURON", "TT"};
+    constexpr size_t count = sizeof(roster) / sizeof(roster[0]);
+    if (direction == 0)
+        return;
+    for (size_t attempt = 0; attempt < count; ++attempt) {
+        int next = (static_cast<int>(m_previewCarIndex) + (direction < 0 ? -1 : 1) + int(count)) % int(count);
+        m_previewCarIndex = static_cast<size_t>(next);
+        if (LoadCarPreview(roster[m_previewCarIndex]))
+            return;
+    }
 }
 
 FENativeInterface::~FENativeInterface()

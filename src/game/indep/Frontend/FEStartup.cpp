@@ -298,6 +298,16 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     const uint32_t pad = m_fe->GetJoyPadMask(0);
     const uint32_t pressed = pad & ~m_lastPad;
     m_lastPad = pad;
+    FEPackage *active = m_engine->GetPackageList()->GetFirstPackage();
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_QRCarSelect.fng") == 0) {
+        // Stand-in: the real carousel uses UG2 car-select messages (0x36db742/0x36db743).
+        if (pressed & FENativeInterface::kPadLeft)
+            m_fe->CycleCarPreview(-1);
+        else if (pressed & FENativeInterface::kPadRight)
+            m_fe->CycleCarPreview(1);
+        return;
+    }
     FEPackage *list = m_widgets.Package();
     if (pressed && list && list->IsInputEnabled() && m_engine->GetPackageList()->GetFirstPackage() == list) {
         static const struct { uint32_t bit, msg; } kMap[] = {{0x01, kMsgPadUp},    {0x02, kMsgPadDown},

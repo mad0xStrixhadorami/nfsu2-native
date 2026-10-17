@@ -63,6 +63,7 @@ public:
     // 0x00259e48 / 0x00292f20 (FEngSetMovieName): set the movie a FE_Movie object plays.
     void SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
+    void CycleCarPreview(int direction); // Stand-in for the car-select vehicle carousel.
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
     void AddBundle(const uint8_t *data, size_t size, const char *label = nullptr);
@@ -124,6 +125,7 @@ private:
     Affine LocalTransform(const FEObject *obj) const;
     void ObjectColor(const FEObject *obj, int &r, int &g, int &b, int &a) const;
     SDL_Texture *TextureFor(uint32_t hash);
+    bool LoadCarPreview(const char *model);
     void DrawImage(FEObject *obj);
     void DrawString(FEObject *obj);
     void DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
@@ -146,6 +148,8 @@ private:
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
     std::vector<PreviewVertex> m_carPreviewPoints;
     bool m_carPreviewLoadAttempted = false;
+    size_t m_previewCarIndex = 6; // Skyline in the currently verified geometry roster.
+    std::string m_previewCarName = "SKYLINE";
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;
