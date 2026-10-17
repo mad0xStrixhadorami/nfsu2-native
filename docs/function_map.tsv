@@ -1,0 +1,16 @@
+address	original	our_name	status	file	notes
+0x002dbf00	FUN_002dbf00	main	wip	src/main.cpp	boot order mirrored; subsystems todo
+0x00156d78	FUN_00156d78	bStringHash(const char*)	done	src/game/bWare/bString.cpp	EA name known from PC modding
+0x00156db8	FUN_00156db8	bStringHash(const char*, uint32_t)	done	src/game/bWare/bString.cpp
+0x002eace8	FUN_002eace8	ZipPathHash	done	src/game/indep/File/ZipFileSystem.cpp
+0x002dbd40	FUN_002dbd40	MountDiscArchive	done	src/game/indep/File/ZipFileSystem.cpp
+0x002eb078	FUN_002eb078	(create archive object)	done	src/game/indep/File/ZipFileSystem.cpp	folded into MountDiscArchive
+0x002eb3e0	FUN_002eb3e0	ZipFileSystem::Init	done	src/game/indep/File/ZipFileSystem.cpp
+0x002eb568	FUN_002eb568	ZipFileSystem::Find	done	src/game/indep/File/ZipFileSystem.cpp	nearest-copy seek optimisation kept
+0x002eb138	FUN_002eb138	ZipFileSystem::Open	done	src/game/indep/File/ZipFileSystem.cpp	record pool (0x00155e90) not replicated
+0x002eb120	FUN_002eb120	ZipFileSystem::ResetHead	done	src/game/indep/File/ZipFileSystem.h
+0x0040c308	FUN_0040c308	platform::FileExists	replaced	src/platform/linux/PlatformFile.cpp	PS2 CD/IOP layer -> POSIX
+0x0040c1e8	FUN_0040c1e8	platform::FileOpen	replaced	src/platform/linux/PlatformFile.cpp
+0x0040c2d0	FUN_0040c2d0	platform::FileSize	replaced	src/platform/linux/PlatformFile.cpp
+0x0040c220	FUN_0040c220	platform::FileRead	replaced	src/platform/linux/PlatformFile.cpp
+0x0040c290	FUN_0040c290	platform::FileClose	replaced	src/platform/linux/PlatformFile.cpp
