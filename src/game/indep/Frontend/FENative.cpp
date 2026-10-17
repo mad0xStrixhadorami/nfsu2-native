@@ -262,9 +262,19 @@ bool FENativeInterface::LoadCarPreview(const char *model)
 }
 
 // Stand-in: the UG2 car-select renderer is not ported yet; draw the decoded model as a point cloud.
-void FENativeInterface::EndPackageRendering(FEPackage *pkg)
+void FENativeInterface::RenderCarPreviewOverlay()
 {
-    if (!pkg || !pkg->GetName() || strcasecmp(pkg->GetName(), "UI_QRCarSelect.fng") != 0 || !m_renderer)
+    FEPackage *pkg = nullptr;
+    if (m_engine) {
+        for (FEPackage *candidate = m_engine->GetPackageList()->GetFirstPackage(); candidate;
+             candidate = candidate->GetNext()) {
+            if (candidate->GetName() && strcasecmp(candidate->GetName(), "UI_QRCarSelect.fng") == 0) {
+                pkg = candidate;
+                break;
+            }
+        }
+    }
+    if (!pkg || !m_renderer)
         return;
 
     if (!m_carPreviewLoadAttempted) {

@@ -98,7 +98,8 @@ public:
     void NotificationMessage(u32 Message, FEObject *pObject, u32 Param1, u32 Param2) override;
     void NotifySoundMessage(u32 Message, FEObject *pObject, u32 ControlMask, u32 pPackagePtr) override;
     void BeginPackageRendering(FEPackage *) override {}
-    void EndPackageRendering(FEPackage *pkg) override;
+    void EndPackageRendering(FEPackage *) override {}
+    void RenderCarPreviewOverlay(); // Stand-in overlay for the unported UG2 car renderer.
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
     void RenderObject(FEObject *pObject) override;
