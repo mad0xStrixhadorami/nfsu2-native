@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <strings.h>
 
@@ -180,6 +181,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRTrackSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_QRModeOptions.fng") == 0) {
+        HandleQRModeOptionsLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -188,6 +193,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     if (!pkg || !pkg->GetName() || pkg->GetControlMask() == 0)
         return;
     const char *name = pkg->GetName();
+    if (getenv("NFSU2_MSGDEBUG") && msg != kMsgScreenTick)
+        fprintf(stderr, "[msg] %s %08x\n", name, msg);
 
     // Stand-ins for screens whose subsystems (language select / memory card) are skipped for now:
     if (strcasecmp(name, "LS_LangSelect.fng") == 0) {
@@ -244,6 +251,13 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleQRTrackSelectMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_QRModeOptions.fng") == 0) {
+        // Pad messages for this list are taken from the pad in Tick(); ignore FEng's copies.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleQRModeOptionsMessage(msg, pkg);
+        return;
+    }
     // Other quick race flow screens (contents not ported yet): Accept goes on, Back goes back.
     if (QuickRaceBack(name) && (msg == kMsgPadBack) && !m_navPending) {
         SwitchFlow(name, QuickRaceBack(name));
@@ -276,6 +290,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     for (FEPackage *pkg = m_engine->GetPackageList()->GetFirstPackage(); pkg != nullptr;
          pkg = pkg->GetNext()) {
         NotificationMessage(kMsgScreenTick, nullptr, 0, pkg);
+    }
+
+    // Option lists read the pad directly: in our packages the focused row has no FEng responses for
+    // Up/Down/Left/Right, so FEng would not forward them. Only new presses, only while the package
+    // accepts input (FEng disables input during screen intros).
+    const uint32_t pad = m_fe->GetJoyPadMask(0);
+    const uint32_t pressed = pad & ~m_lastPad;
+    m_lastPad = pad;
+    FEPackage *list = m_widgets.Package();
+    if (pressed && list && list->IsInputEnabled() && m_engine->GetPackageList()->GetFirstPackage() == list) {
+        static const struct { uint32_t bit, msg; } kMap[] = {{0x01, kMsgPadUp},    {0x02, kMsgPadDown},
+                                                             {0x04, kMsgPadLeft},  {0x08, kMsgPadRight},
+                                                             {0x10, kMsgPadAccept}, {0x20, kMsgPadBack}};
+        for (auto &m : kMap)
+            if (pressed & m.bit)
+                HandleQRModeOptionsMessage(m.msg, list);
     }
 }
 
@@ -591,6 +621,65 @@ void FEStartupSequence::HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg)
     m_scroller.HandleMessage(msg, TickSeconds());
     if (msg == kMsgPadLeft || msg == kMsgPadRight)
         RefreshTrackInfo(pkg);
+}
+
+// UIQRModeOptions (ctor 0x001f6eb8, options 0x001f7930 per race type; circuit 0x001f7a80).
+// Widgets (vtable slot 5 Act / slot 9 Draw): Track Direction 0x0046f380, Lap KO 0x0046f410,
+// Laps 0x0046f530, Traffic 0x0046f6e0, Opponents 0x0046f890, Difficulty 0x0046f800,
+// Catch Up 0x0046f770. Settings are per race type (0x004f13b0 + 0x20 + type * 0x20); defaults
+// as nfsmw RaceSettings::Default (3 opponents, medium, traffic 1, catch up on, 2 laps).
+void FEStartupSequence::HandleQRModeOptionsLoaded(FEPackage *pkg)
+{
+    RaceOptions &o = m_options[m_raceType & 15];
+    auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
+    std::vector<FEWidgetMenu::Widget> w;
+    const bool circuitLike = m_raceType == 0 || m_raceType == 4 || m_raceType == 10;
+    if (circuitLike) {
+        w.push_back({0x7fd73849, [&o, onOff](uint32_t &l, std::string &) { l = onOff(o.lapKO); }, // Lap KO
+                     [&o](int) { o.lapKO = !o.lapKO; }});
+        w.push_back({0x48494e83, [&o](uint32_t &, std::string &t) { t = std::to_string(o.laps); }, // Laps 1..10
+                     [&o](int d) { o.laps = o.laps + d < 1 ? 10 : o.laps + d > 10 ? 1 : o.laps + d; }});
+    }
+    w.push_back({0xeb9dfc09, // Traffic Level: None, Minimum, Moderate, Maximum
+                 [&o](uint32_t &l, std::string &) {
+                     static const uint32_t k[] = {0x896bcb4d, 0xb6bd9c95, 0x907c555e, 0xb672f15a};
+                     l = k[o.traffic & 3];
+                 },
+                 [&o](int d) { o.traffic = (o.traffic + d + 4) % 4; }});
+    const int maxOpp = m_raceType == 4 ? 5 : 3; // 0x00257860
+    w.push_back({0x3384a679, [&o](uint32_t &, std::string &t) { t = std::to_string(o.opponents); }, // Opponents
+                 [&o, maxOpp](int d) { o.opponents = o.opponents + d < 0 ? maxOpp : o.opponents + d > maxOpp ? 0 : o.opponents + d; }});
+    w.push_back({0x4d156786, // Difficulty: Easy, Medium, Hard
+                 [&o](uint32_t &l, std::string &) {
+                     static const uint32_t k[] = {0xdbbb4e8f, 0xcab262de, 0xdbbcf37c};
+                     l = k[o.difficulty % 3];
+                 },
+                 [&o](int d) { o.difficulty = (o.difficulty + d + 3) % 3; }});
+    w.push_back({0x8b8e913a, [&o, onOff](uint32_t &l, std::string &) { l = onOff(o.catchUp); }, // Catch Up
+                 [&o](int) { o.catchUp = !o.catchUp; }});
+    m_widgets.Setup(pkg, std::move(w));
+    // Title (0x42adb44c): quick race / split screen mode options.
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, m_raceMode == 4 ? 0x7d7a6e0e : 0x47597606);
+}
+
+void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_widgets.Package() != pkg)
+        return;
+    if (msg == kMsgButtonPressed)
+        return; // Accept comes from the pad path (Tick)
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        const RaceOptions &o = m_options[m_raceType & 15];
+        printf("[Menu] options: laps %d, opponents %d, difficulty %d, traffic %d, lap KO %d, catch up %d\n", o.laps,
+               o.opponents, o.difficulty, o.traffic, o.lapKO, o.catchUp);
+        SwitchFlow(pkg->GetName(), QuickRaceNext(pkg->GetName()));
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        SwitchFlow(pkg->GetName(), QuickRaceBack(pkg->GetName()));
+        return;
+    }
+    m_widgets.HandleMessage(msg);
 }
 
 void FEStartupSequence::SwitchFlow(const char *from, const char *to)

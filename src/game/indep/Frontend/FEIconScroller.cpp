@@ -21,7 +21,13 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
 
     // IconScroller ctor (0x0029c9c8): read the centre of OPTION_MASTER and hide the masters.
     m_xCenter = m_yCenter = 0.0f;
+    m_focusObject = nullptr;
     if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash(masterName))) {
+        // 0x0029af60 scrollers keep the (hidden) master as the current button (0x002926f0 ->
+        // 0x00291ad8 -> SetCurrentButton), so its BUTTON_PRESSED response receives Accept.
+        size_t len = strlen(optionPrefix);
+        if (len && optionPrefix[len - 1] != '_')
+            m_focusObject = optMaster;
         FENativeInterface::GetCenter(optMaster, m_xCenter, m_yCenter);
         FENativeInterface::SetObjectVisible(optMaster, false);
     }
@@ -121,8 +127,8 @@ void FEIconScroller::UpdateSelection()
             else
                 o->Flags |= 0x04000000u;
         }
-    if (FEObject *sel = m_options[m_selected].obj)
-        m_pkg->SetCurrentButton(sel, true);
+    if (FEObject *focus = m_focusObject ? m_focusObject : m_options[m_selected].obj)
+        m_pkg->SetCurrentButton(focus, true);
 
     // 0x0029de00 (RefreshHeader): ICON_TITLE (0x5e7b09c9)
     FENativeInterface::SetLanguageHash(m_pkg, 0x5e7b09c9, m_options[m_selected].nameHash);

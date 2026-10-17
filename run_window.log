@@ -30,4 +30,7 @@ Movie MOVIES\FMVOpening.mpc: playing
 [Startup] Skipping MC_Background.fng (stand-in: memory-card check not needed)
 [Startup] UG_LS_Splash.fng -> UI_Main.fng
 [Startup] Reached UI_Main.fng (main menu)
-[Menu] UI_Main.fng -> UI_OptionsMain.fng
+[Menu] UI_Main.fng -> UI_QRModeSelect.fng
+[Menu] race type 0
+[Menu] UI_QRModeSelect.fng -> UI_QRTrackSelect.fng
+[Menu] track select: 31 tracks for race type 0 (40 TRACK_ICON objects)

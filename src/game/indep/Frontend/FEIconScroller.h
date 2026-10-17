@@ -48,4 +48,5 @@ private:
     float m_xCenter = 0, m_yCenter = 0;
     float m_scrollPos = 0, m_scrollTarget = 0;
     bool m_allowFade = false;
+    FEObject *m_focusObject = nullptr; // current button when it is not the selected option
 };

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "game/indep/Frontend/FEIconScroller.h"
+#include "game/indep/Frontend/FEWidgetMenu.h"
 #include "game/indep/Frontend/FENative.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
@@ -74,6 +75,8 @@ private:
     void HandleQRTrackSelectLoaded(FEPackage *pkg);
     void HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg);
     void RefreshTrackInfo(FEPackage *pkg);
+    void HandleQRModeOptionsLoaded(FEPackage *pkg);
+    void HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg);
     const char *QuickRaceNext(const char *screen) const;
     const char *QuickRaceBack(const char *screen) const;
     void SwitchFlow(const char *from, const char *to);
@@ -104,7 +107,15 @@ private:
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
-    std::vector<RaceInfo> m_tracks;   // tracks offered by the track select screen             // DAT_004f13b0: 0 circuit .. 10 street x
+    std::vector<RaceInfo> m_tracks;   // tracks offered by the track select screen
+    // Per race type settings (0x004f13b0 + 0x20 + type * 0x20), nfsmw RaceSettings::Default values.
+    struct RaceOptions {
+        int laps = 2, opponents = 3, difficulty = 1, traffic = 1;
+        bool lapKO = false, catchUp = true;
+    };
+    RaceOptions m_options[16];
+    FEWidgetMenu m_widgets;
+    uint32_t m_lastPad = 0;             // DAT_004f13b0: 0 circuit .. 10 street x
 
     // Menu navigation: screens to return to on Back, and a guard so one press acts once
     // (BUTTON_PRESSED and PAD_ACCEPT both arrive for the same press).
