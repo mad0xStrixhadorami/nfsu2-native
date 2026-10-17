@@ -222,7 +222,7 @@ int main(int argc, char **argv)
     struct ScriptedPress {
         Uint32 ms;
         u32 mask;
-        bool down = false, released = false;
+        bool sent = false;
     };
     std::vector<ScriptedPress> script;
     if (const char *in = getenv("NFSU2_INPUT")) {
@@ -254,27 +254,27 @@ int main(int argc, char **argv)
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
 
-        // Optional automated input injection for testing screen transitions (NFSU2_PRESS_MS / NFSU2_PAD_MASK).
+        bool releaseInjectedPadAfterUpdate = false;
+        // Optional one-update input tap for testing screen transitions (NFSU2_PRESS_MS / NFSU2_PAD_MASK).
         if (pressMs > 0 && !pressSent && elapsed >= pressMs) {
             fe.SetSimulatedPadMask(padMaskToInject);
             pressSent = true;
-        } else if (pressSent && elapsed >= pressMs + 100) {
-            fe.SetSimulatedPadMask(0);
+            releaseInjectedPadAfterUpdate = true;
         }
-        // NFSU2_INPUT="ms:button,..." scripted presses (100 ms each) for repeatable screen tests.
+        // NFSU2_INPUT="ms:button,..." emits one-update taps so a held press cannot cascade through screens.
         // Buttons: up down left right accept back start.
         for (ScriptedPress &p : script) {
-            if (!p.down && elapsed >= p.ms) {
+            if (!p.sent && elapsed >= p.ms) {
                 fe.SetSimulatedPadMask(p.mask);
-                p.down = true;
-            } else if (p.down && !p.released && elapsed >= p.ms + 100) {
-                fe.SetSimulatedPadMask(0);
-                p.released = true;
+                p.sent = true;
+                releaseInjectedPadAfterUpdate = true;
             }
         }
 
         startup.Tick(elapsed);
         engine->Update(static_cast<i32>(now - last), 0); // FEng ticks are milliseconds (cFEng::Service)
+        if (releaseInjectedPadAfterUpdate)
+            fe.SetSimulatedPadMask(0);
         last = now;
 
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
