@@ -79,7 +79,15 @@ public:
     //   0x00293df0 FEngGetSize   / 0x00293ee0 FEngSetSize
     static void SetObjectVisible(FEObject *obj, bool visible);
     static void SetVisible(FEPackage *pkg, uint32_t objHash, bool visible);
+    // 0x00292980 (FEngFindObject): searches the active packages, then the engine's libraries, so
+    // name-based lookups reach objects the screen package doesn't own.
+    FEObject *FindObject(uint32_t objHash) const;
+    void SetVisible(uint32_t objHash, bool visible);
+    void SetAlpha(uint32_t objHash, uint8_t alpha);
     static void SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash);
+    // Set the object's colour alpha (FEObjData::Col.a). UI_Options ships its OPTION_NAME_n /
+    // OPTION_DATA_n templates at alpha 18; the screen's row widgets clone them at full opacity.
+    static void SetAlpha(FEPackage *pkg, uint32_t objHash, uint8_t alpha);
     // FEPrintf-style: give a string object its own text instead of a language label.
     static void SetString(FEPackage *pkg, uint32_t objHash, const char *text);
     const std::vector<RaceInfo> &Races() const { return m_races; }

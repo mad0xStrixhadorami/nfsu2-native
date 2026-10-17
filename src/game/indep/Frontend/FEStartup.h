@@ -79,6 +79,9 @@ private:
     void HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
+    void HandleOptionsLoaded(FEPackage *pkg);
+    void HandleOptionsMessage(uint32_t msg, FEPackage *pkg);
+    void ApplyOptionsPreamble();
     const char *QuickRaceNext(const char *screen) const;
     const char *QuickRaceBack(const char *screen) const;
     void SwitchFlow(const char *from, const char *to);
@@ -111,6 +114,11 @@ private:
     size_t m_optionsMainLastSelection = 0;
     std::vector<int> m_optionCategories;
     int m_optionCategory = 0;
+    // UI_Options audio settings (0x004f12f4, 0x004f12f8, 0x004f12fc, 0x004f1300, 0x004f1304,
+    // 0x004f1308, 0x004f130c) and audio mode (0x004f131c: 0 Mono, 1 Stereo, 2 Dolby Pro Logic II).
+    // Template init 0x002006d8 etc. clamps to [0,1] with a per-row step (uGpffff9644..).
+    float m_audioVolume[7] = {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f};
+    int m_audioMode = 1;
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)

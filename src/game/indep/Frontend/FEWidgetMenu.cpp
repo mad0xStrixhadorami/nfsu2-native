@@ -21,7 +21,7 @@ uint32_t RowHash(const char *prefix, size_t row)
 
 constexpr float kRowHeight = 24.0f; // 0x41c00000
 constexpr float kRowGap = 4.0f;     // 0x40800000
-constexpr size_t kMaxRows = 11;     // OPTION_NAME_1..11 in the packages
+constexpr size_t kMaxRows = 16;     // OPTION_NAME_1..16 in the packages
 } // namespace
 
 void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
@@ -32,12 +32,29 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
     m_highlighted = SIZE_MAX;
 
     float nameX = 0, nameY = 0, dataX = 0, dataY = 0;
+    float rowStep = kRowHeight + kRowGap;
     FEObject *titleMaster = pkg->FindObjectByHash(bStringHash("TITLE_MASTER"));
     FEObject *dataMaster = pkg->FindObjectByHash(bStringHash("DATA_MASTER"));
-    if (titleMaster)
+    FEObject *name1 = pkg->FindObjectByHash(RowHash("OPTION_NAME_", 0));
+    FEObject *data1 = pkg->FindObjectByHash(RowHash("OPTION_DATA_", 0));
+    const bool haveMasters = titleMaster && dataMaster;
+    if (haveMasters) {
         FENativeInterface::GetCenter(titleMaster, nameX, nameY);
-    if (dataMaster)
         FENativeInterface::GetCenter(dataMaster, dataX, dataY);
+    } else {
+        // Fallback for packages with no TITLE_MASTER / DATA_MASTER (none seen yet): derive the
+        // anchor from OPTION_NAME_1 / OPTION_DATA_1 and the pitch from OPTION_NAME_2.
+        if (name1)
+            FENativeInterface::GetCenter(name1, nameX, nameY);
+        if (data1)
+            FENativeInterface::GetCenter(data1, dataX, dataY);
+        if (FEObject *name2 = pkg->FindObjectByHash(RowHash("OPTION_NAME_", 1))) {
+            float x2 = 0, y2 = 0;
+            FENativeInterface::GetCenter(name2, x2, y2);
+            if (y2 != nameY)
+                rowStep = y2 - nameY;
+        }
+    }
     FENativeInterface::SetObjectVisible(titleMaster, false);
     FENativeInterface::SetObjectVisible(dataMaster, false);
 
@@ -49,13 +66,18 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
             FENativeInterface::SetVisible(pkg, RowHash(prefix, row), used);
         if (!used)
             continue;
-        float y = row * (kRowHeight + kRowGap);
-        if (titleMaster)
-            if (FEObject *o = pkg->FindObjectByHash(RowHash("OPTION_NAME_", row)))
-                FENativeInterface::SetCenter(o, nameX, nameY + y);
-        if (dataMaster)
-            if (FEObject *o = pkg->FindObjectByHash(RowHash("OPTION_DATA_", row)))
-                FENativeInterface::SetCenter(o, dataX, dataY + y);
+        float y = row * rowStep;
+        if (FEObject *o = pkg->FindObjectByHash(RowHash("OPTION_NAME_", row))) {
+            FENativeInterface::SetCenter(o, nameX, nameY + y);
+            // The UI_Options templates ship at alpha 18; the row widgets draw at full opacity.
+            if (!haveMasters)
+                FENativeInterface::SetAlpha(pkg, RowHash("OPTION_NAME_", row), 255);
+        }
+        if (FEObject *o = pkg->FindObjectByHash(RowHash("OPTION_DATA_", row))) {
+            FENativeInterface::SetCenter(o, dataX, dataY + y);
+            if (!haveMasters)
+                FENativeInterface::SetAlpha(pkg, RowHash("OPTION_DATA_", row), 255);
+        }
         FENativeInterface::SetLanguageHash(pkg, RowHash("OPTION_NAME_", row), m_widgets[row].titleLabel);
     }
     if (getenv("NFSU2_FEDEBUG"))

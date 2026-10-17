@@ -554,6 +554,34 @@ void FENativeInterface::SetVisible(FEPackage *pkg, uint32_t objHash, bool visibl
     SetObjectVisible(pkg->FindObjectByHash(objHash), visible);
 }
 
+// 0x00292980 (FEngFindObject): search the active packages, then the engine's libraries.
+FEObject *FENativeInterface::FindObject(uint32_t objHash) const
+{
+    if (!m_engine)
+        return nullptr;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        if (FEObject *o = p->FindObjectByHash(objHash))
+            return o;
+    for (FEPackage *p = m_engine->GetFirstLibrary(); p; p = p->GetNext())
+        if (FEObject *o = p->FindObjectByHash(objHash))
+            return o;
+    return nullptr;
+}
+
+void FENativeInterface::SetVisible(uint32_t objHash, bool visible)
+{
+    SetObjectVisible(FindObject(objHash), visible);
+}
+
+void FENativeInterface::SetAlpha(uint32_t objHash, uint8_t alpha)
+{
+    FEObject *obj = FindObject(objHash);
+    if (!obj || !obj->GetObjData())
+        return;
+    obj->GetObjData()->Col.a = alpha;
+    obj->Flags |= 0x400000u;
+}
+
 // 0x00292a68 (FEngSetLanguageHash): set label hash and clear FENG_OBJECT_IGNORE_LABELHASH (0x2).
 void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash)
 {
@@ -585,6 +613,16 @@ void FENativeInterface::SetString(FEPackage *pkg, uint32_t objHash, const char *
     FEString *s = static_cast<FEString *>(obj);
     s->SetString(text);
     s->Flags |= 0x2u | 0x400000u; // use own text, dirty
+}
+
+// FEObjData::Col.a (FEDebug prints it as a=). UI_Options templates ship at alpha 18.
+void FENativeInterface::SetAlpha(FEPackage *pkg, uint32_t objHash, uint8_t alpha)
+{
+    FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr;
+    if (!obj || !obj->GetObjData())
+        return;
+    obj->GetObjData()->Col.a = alpha;
+    obj->Flags |= 0x400000u; // FF_DirtyCode
 }
 
 // 0x00292ee8 (FEngSetTextureHash): set image texture handle and mark FF_DirtyCode.

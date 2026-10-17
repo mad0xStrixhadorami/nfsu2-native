@@ -189,6 +189,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleOptionsMainLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_Options.fng") == 0) {
+        HandleOptionsLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -266,6 +270,13 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleOptionsMainMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_Options.fng") == 0) {
+        // Pad messages for this list come from the pad in Tick(); ignore FEng's copies.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleOptionsMessage(msg, pkg);
+        return;
+    }
     // Other quick race flow screens (contents not ported yet): Accept goes on, Back goes back.
     if (QuickRaceBack(name) && (msg == kMsgPadBack) && !m_navPending) {
         SwitchFlow(name, QuickRaceBack(name));
@@ -322,8 +333,12 @@ void FEStartupSequence::Tick(uint32_t nowMs)
                                                              {0x04, kMsgPadLeft},  {0x08, kMsgPadRight},
                                                              {0x10, kMsgPadAccept}, {0x20, kMsgPadBack}};
         for (auto &m : kMap)
-            if (pressed & m.bit)
-                HandleQRModeOptionsMessage(m.msg, list);
+            if (pressed & m.bit) {
+                if (strcasecmp(list->GetName(), "UI_Options.fng") == 0)
+                    HandleOptionsMessage(m.msg, list);
+                else
+                    HandleQRModeOptionsMessage(m.msg, list);
+            }
     }
 }
 
@@ -749,6 +764,122 @@ void FEStartupSequence::HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     m_scroller.HandleMessage(msg, TickSeconds());
+}
+
+// UI_Options (create 0x00202b30, ctor 0x00202b68, dispatch 0x00204160). The ctor sets the title
+// (0x42adb44c) to the category label and 0x00204160 hides the calibration screen
+// (ColorCal_Logo/ColorCal_Blurb/Colour_Calibration_Backing, the "Player Select"/"Player 1" texts
+// and the list's scroll arrows). The Audio list (0x002034c8) creates 7 volume sliders plus the
+// Audio Mode toggle (vtable 0x0046ebf8; 0 Mono / 1 Stereo / 2 Dolby Pro Logic II).
+// 0x00204160's prelude and the ctor's title step: hide the colour-calibration layer (the screen's
+// intro scripts fade the whole Options layer in, so this runs again on FEHASH_INITCOMPLETE).
+void FEStartupSequence::ApplyOptionsPreamble()
+{
+    // 0x00259ee8 / 0x00259f08 resolve through 0x00292980, which also searches library packages.
+    // Object names hash uppercase (0x00284610).
+    m_fe->SetVisible(0x010cba23, false);
+    m_fe->SetVisible(0x97b71dde, false); // JOY_EVENT_BUTTON1
+    m_fe->SetVisible(0x7326e44c, false); // Player 1
+    m_fe->SetVisible(0xc90dc4ab, false); // Player Select
+    m_fe->SetVisible(bStringHash("COLORCAL_LOGO"), false);
+    m_fe->SetVisible(bStringHash("COLORCAL_BLURB"), false);
+    m_fe->SetVisible(bStringHash("COLOUR_CALIBRATION_BACKING"), false);
+    m_fe->SetVisible(0x444969fd, false); // scroll up
+    m_fe->SetVisible(0x444969fe, false); // scroll down
+    m_fe->SetVisible(0x688a1551, false); // SCROLLBAR_BACKING (fits on one page)
+}
+
+void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
+{
+    ApplyOptionsPreamble();
+
+    static const uint32_t kTitles[] = {0xE76CD783, // Audio
+                                       0xE8E24508, // Video
+                                       0xD0CF6EE1, // Gameplay
+                                       0xF760EABE, // Player
+                                       0,          // Controls (title set elsewhere)
+                                       0xDCFB6B36, // EA GAMES TRAX
+                                       0xD10D7477, // Trailers / bonus
+                                       0,          // Online Options (PC)
+                                       0x0905101F}; // Credits
+    const int cat = m_optionCategory;
+    if (cat >= 0 && cat < int(sizeof(kTitles) / sizeof(kTitles[0])) && kTitles[cat])
+        FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, kTitles[cat]);
+
+    std::vector<FEWidgetMenu::Widget> w;
+    if (cat == 0) {
+        static const struct {
+            uint32_t label;
+            int index;
+        } kVolumes[] = {
+            {0x26782C3E, 0}, // Master Volume   (0x004f12f4)
+            {0x418E681D, 1}, // Menu Music      (0x004f12fc)
+            {0xDF21EAC2, 2}, // Game Music      (0x004f1300)
+            {0x9E5FB82A, 3}, // Speech & Movie  (0x004f12f8)
+            {0xFD487543, 4}, // Sound Effects   (0x004f1304)
+            {0x69B745C6, 5}, // Tire            (0x004f130c)
+            {0xA2B1F888, 6}, // Engine          (0x004f1308)
+        };
+        for (const auto &v : kVolumes) {
+            const int index = v.index;
+            w.push_back({v.label,
+                         [this, index](uint32_t &, std::string &text) {
+                             char buf[8];
+                             snprintf(buf, sizeof(buf), "%d%%", int(m_audioVolume[index] * 100.0f + 0.5f));
+                             text = buf;
+                         },
+                         [this, index](int dir) {
+                             // 0x002006d8: min 0, max 1, step uGpffff9644.. (10% in practice).
+                             constexpr float kStep = 0.1f;
+                             float value = m_audioVolume[index] + float(dir) * kStep;
+                             m_audioVolume[index] = value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value;
+                         }});
+        }
+        w.push_back({0x2881AB87, // Audio Mode
+                     [this](uint32_t &label, std::string &) {
+                         static const uint32_t kModes[] = {0xC50FA35F, 0x55DA8BF8, 0xF6FAFF24};
+                         label = kModes[m_audioMode % 3];
+                     },
+                     [this](int dir) { m_audioMode = (m_audioMode + (dir < 0 ? 2 : 1)) % 3; }});
+    }
+    printf("[Menu] Options: category %d, %zu rows\n", cat, w.size());
+    m_widgets.Setup(pkg, std::move(w));
+}
+
+void FEStartupSequence::HandleOptionsMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_widgets.Package() != pkg)
+        return;
+    if (msg == kMsgInitComplete) {
+        ApplyOptionsPreamble();
+        m_widgets.OnInitComplete();
+        return;
+    }
+    if (msg == kMsgScreenTick) {
+        // The list's scroll widgets re-show themselves each tick; keep the calibration layer and
+        // the (unneeded) scroll arrows hidden.
+        ApplyOptionsPreamble();
+        return;
+    }
+    if (msg == kMsgPadBack) {
+        // Leave via the screen stack (Back from UI_Options returns to the options carousel).
+        if (!m_navPending && !m_backStack.empty()) {
+            std::string prev = m_backStack.back();
+            m_backStack.pop_back();
+            printf("[Menu] %s -> back to %s\n", pkg->GetName(), prev.c_str());
+            m_navPending = true;
+            m_engine->QueuePackageSwitch(prev.c_str(), 0xff);
+        }
+        return;
+    }
+    if (msg == kMsgButtonPressed || msg == kMsgPadAccept) {
+        // Values apply immediately; Accept does not advance.
+        if (msg == kMsgButtonPressed)
+            printf("[Menu] Options: audio master %d%% mode %d\n", int(m_audioVolume[0] * 100.0f + 0.5f),
+                   m_audioMode);
+        return;
+    }
+    m_widgets.HandleMessage(msg);
 }
 
 void FEStartupSequence::SwitchFlow(const char *from, const char *to)
