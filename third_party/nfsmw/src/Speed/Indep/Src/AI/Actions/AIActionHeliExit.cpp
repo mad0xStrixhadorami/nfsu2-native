@@ -1,0 +1,161 @@
+#include "Speed/Indep/Libs/Support/Utility/UDefs.h"
+#include "Speed/Indep/Src/AI/AIAction.h"
+#include "Speed/Indep/Src/Interfaces/SimEntities/IPlayer.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IHelicopter.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IRigidBody.h"
+
+bool bDownVelTest = false;
+float Exit_Height = 25.0f;
+
+// total size: 0x48
+class AIActionHeliExit : public AIAction, public Debugable {
+  public:
+    enum kExitMode {
+        kSeekUp = 0,
+        kSeekCar = 1,
+        kFlyOut = 2,
+    };
+
+    AIActionHeliExit(AIActionParams *params, float score);
+    ~AIActionHeliExit() override {}
+
+    static AIAction *Construct(AIActionParams *params);
+
+    // AIAction
+    bool CanBeAttempted(float dT) override {
+        return true;
+    }
+
+    bool IsFinished() override;
+    void BeginAction(float dT) override;
+    void FinishAction(float dT) override;
+    void Update(float dT) override;
+
+    void OnBehaviorChange(const UCrc32 &mechanic) override {}
+
+    virtual void OnDebugDraw();
+
+  protected:
+    bool ShouldRestartWhenFinished() override {
+        return true;
+    }
+
+  private:
+    WRoadNav *GetPursuitNav() {
+        return this->mIVehicleAI->GetDriveToNav();
+    }
+
+    IVehicleAI *mIVehicleAI;                 // offset 0x4C, size 0x4
+    IVehicle *mIVehicle;                     // offset 0x50, size 0x4
+    IRigidBody *mIRigidBody;                 // offset 0x54, size 0x4
+    IAIHelicopter *mIAIHelicopter;           // offset 0x58, size 0x4
+    IPursuitAI *mIPursuitAI;                 // offset 0x5C, size 0x4
+    float mExitTime;                         // offset 0x60, size 0x4
+    bool mBuildingPath;                      // offset 0x64, size 0x1
+    PS2ALIGN16 UMath::Vector3 mSeekPosition; // offset 0x68, size 0xC
+    kExitMode mExitMode;                     // offset 0x74, size 0x4
+};
+
+BIND_AIACTION_FACTORY(AIActionHeliExit);
+
+AIActionHeliExit::AIActionHeliExit(AIActionParams *params, float score)
+    : AIAction(params, score), //
+      mExitTime(0.0f),         //
+      mExitMode(kSeekUp),      //
+      mBuildingPath(false) {
+    params->mOwner->QueryInterface(&this->mIVehicleAI);
+    params->mOwner->QueryInterface(&this->mIPursuitAI);
+    params->mOwner->QueryInterface(&this->mIVehicle);
+    params->mOwner->QueryInterface(&mIAIHelicopter);
+    this->mIRigidBody = params->mOwner->GetRigidBody();
+}
+
+AIAction *AIActionHeliExit::Construct(AIActionParams *params) {
+    return new AIActionHeliExit(params, AIACTION_SCORE_LOW);
+}
+
+bool AIActionHeliExit::IsFinished() {
+    IRigidBody *player_rigid_body = IPlayer::First(PLAYER_LOCAL)->GetSimable()->GetRigidBody();
+    const UMath::Vector3 &heliPosition = this->mIRigidBody->GetPosition();
+    const UMath::Vector3 &playerPosition = player_rigid_body->GetPosition();
+
+    if (this->mExitMode == kFlyOut && heliPosition.y - playerPosition.y > Exit_Height) {
+        UMath::Vector3 playerForward;
+        player_rigid_body->GetForwardVector(playerForward);
+
+        UMath::Vector3 player2heli;
+        UMath::Sub(heliPosition, playerPosition, player2heli);
+        float dotForward = UMath::Dot(player2heli, playerForward);
+
+        if (dotForward < 0.0f) {
+            float dSquared = DistanceSquare(heliPosition, playerPosition);
+            if (dSquared > 22500.0f) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void AIActionHeliExit::FinishAction(float dT) {
+    this->mExitTime = 0.0f;
+    this->mExitMode = kSeekUp;
+}
+
+void AIActionHeliExit::BeginAction(float dT) {
+    this->mExitMode = kSeekUp;
+    this->mSeekPosition = this->mIRigidBody->GetPosition();
+    mIAIHelicopter->RestrictPointToRoadNet(mSeekPosition);
+    this->mSeekPosition.y += Exit_Height;
+}
+
+void AIActionHeliExit::Update(float dT) {
+    this->mExitTime += dT;
+
+    IRigidBody *player_rigid_body = IPlayer::First(PLAYER_LOCAL)->GetSimable()->GetRigidBody();
+    UMath::Vector3 playerPosition = player_rigid_body->GetPosition();
+    UMath::Vector3 myPosition = this->mIRigidBody->GetPosition();
+
+    UMath::Vector3 direction;
+    player_rigid_body->GetForwardVector(direction);
+
+    float flySpeed = 100.0f;
+    switch (this->mExitMode) {
+        case kSeekUp:
+            if (myPosition.y - playerPosition.y > 15.0f) {
+                UMath::ScaleAdd(direction, 85.0f, playerPosition, this->mSeekPosition);
+                this->mSeekPosition.y += Exit_Height;
+                this->mExitMode = kSeekCar;
+            }
+            break;
+        case kSeekCar: {
+            float dSquared = UMath::DistanceSquare(this->mSeekPosition, myPosition);
+            if (dSquared < 25.0f) {
+                UMath::Vector3 playerRightVec;
+                player_rigid_body->GetRightVector(playerRightVec);
+                float rScale = 3.0f;
+                if (UMath::Dot(playerRightVec, this->mIRigidBody->GetLinearVelocity()) >= 0.0f) {
+                    rScale *= -3.0f;
+                }
+                UMath::ScaleAdd(playerRightVec, rScale, direction, direction);
+                UMath::ScaleAdd(direction, -200.0f, playerPosition, this->mSeekPosition);
+                this->mExitMode = kFlyOut;
+                this->mSeekPosition.y = playerPosition.y + Exit_Height + 5.0f;
+            }
+        } break;
+        case kFlyOut:
+            break;
+    }
+
+    mIAIHelicopter->SetLookAtPosition(mSeekPosition);
+    this->mIVehicleAI->SetDriveSpeed(flySpeed);
+
+    mIAIHelicopter->SetDestinationVelocity(mIRigidBody->GetLinearVelocity());
+
+    this->mIVehicleAI->SetDriveTarget(this->mSeekPosition);
+
+    this->mIVehicleAI->DoDriving(7);
+}
+
+void AIActionHeliExit::OnDebugDraw() {}

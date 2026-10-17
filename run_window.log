@@ -1,0 +1,7 @@
+Mounted disc archive: 1500 entries
+  GLOBAL\GLOBALB.LZC       ok  (ZZDATA2 sector 172212, 804492 bytes)
+  FRONTEND\FRONTB.LZC      ok  (ZZDATA2 sector 174610, 2306271 bytes)
+  global/globalb.lzc       ok  (ZZDATA2 sector 172212, 804492 bytes)
+  (missing file)           ok
+File system self-test: passed
+Front-end texture pack: 496 textures

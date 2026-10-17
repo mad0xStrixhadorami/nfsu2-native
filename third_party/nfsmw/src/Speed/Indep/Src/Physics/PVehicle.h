@@ -1,0 +1,58 @@
+#ifndef PHYSICS_PVEHICLE_H
+#define PHYSICS_PVEHICLE_H
+
+#include "Speed/Indep/Libs/Support/Utility/UCrc.h"
+#include "Speed/Indep/Src/Generated/Hash.hpp"
+#include "Speed/Indep/Src/Interfaces/SimActivities/IVehicleCache.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IVehicle.h"
+#include "Speed/Indep/Src/Sim/SimTypes.h"
+
+namespace VehicleClass {
+
+extern const UCrc32 CAR;
+extern const UCrc32 SUBMARINE;
+extern const UCrc32 CHOPPER;
+extern const UCrc32 BIKE;
+extern const UCrc32 BOAT;
+extern const UCrc32 SNOWMOBILE;
+extern const UCrc32 HOVER;
+extern const UCrc32 PLANE;
+extern const UCrc32 TANK;
+extern const UCrc32 TRAILER;
+extern const UCrc32 TRAIN;
+extern const UCrc32 TRANSPORT;
+extern const UCrc32 RC;
+extern const UCrc32 TRACTOR;
+
+}; // namespace VehicleClass
+
+// total size: 0x30
+struct VehicleParams : public Sim::Param {
+    VehicleParams(IVehicleCache *cache, DriverClass driver, unsigned int type, const UMath::Vector3 &dir, const UMath::Vector3 &pos,
+                  unsigned int flags, const FECustomizationRecord *upgrades, const Physics::Info::Performance *match)
+        : Sim::Param(UCrc32(UCRC32_BASE), this), //
+          carClass(driver),                      //
+          carType(type),                         //
+          initialVec(dir),                       //
+          initialPos(pos),                       //
+          customization(upgrades),               //
+          VehicleCache(cache),                   //
+          matched(match),                        //
+          Flags(flags) {}
+
+    static UCrc32 TypeName() {
+        static UCrc32 value = "VehicleParams";
+        return value;
+    }
+
+    DriverClass carClass;                       // offset 0x10, size 0x4
+    unsigned int carType;                       // offset 0x14, size 0x4
+    const UMath::Vector3 &initialVec;           // offset 0x18, size 0x4
+    const UMath::Vector3 &initialPos;           // offset 0x1C, size 0x4
+    const FECustomizationRecord *customization; // offset 0x20, size 0x4
+    IVehicleCache *VehicleCache;                // offset 0x24, size 0x4
+    const Physics::Info::Performance *matched;  // offset 0x28, size 0x4
+    unsigned int Flags;                         // offset 0x2C, size 0x4
+};
+
+#endif

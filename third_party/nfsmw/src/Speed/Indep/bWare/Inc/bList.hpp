@@ -1,0 +1,478 @@
+#ifndef BWARE_BLIST_H
+#define BWARE_BLIST_H
+
+#ifdef EA_PRAGMA_ONCE_SUPPORTED
+#pragma once
+#endif
+
+#include <cstddef>
+#include <types.h>
+
+class bNode {
+  public:
+    bNode *Next; // offset 0x0, size 0x4
+    bNode *Prev; // offset 0x4, size 0x4
+
+    bNode() {}
+
+    ~bNode() {}
+
+    bNode *GetNext() {
+        return Next;
+    }
+
+    bNode *GetPrev() {
+        return Prev;
+    }
+
+    bNode *AddBefore(bNode *insert_point) {
+        bNode *new_prev = insert_point->Prev;
+        bNode *new_next = insert_point->Next; // unused
+        new_prev->Next = this;
+        insert_point->Prev = this;
+        this->Prev = new_prev;
+        this->Next = insert_point;
+        return this;
+    }
+
+    bNode *AddAfter(bNode *insert_point) {
+        bNode *new_prev = this->Prev; // unused
+        bNode *new_next = insert_point->Next;
+        insert_point->Next = this;
+        new_next->Prev = this;
+        this->Prev = insert_point;
+        this->Next = new_next;
+        return this;
+    }
+
+    bNode *Remove() {
+        bNode *next_node = this->Next;
+        bNode *prev_node = this->Prev;
+        prev_node->Next = next_node;
+        next_node->Prev = prev_node;
+        return this;
+    }
+};
+
+template <typename T> class bTNode : public bNode {
+  public:
+    bTNode() {}
+
+    ~bTNode() {}
+
+    T *GetNext() {
+        return (T *)bNode::GetNext();
+    }
+
+    T *GetPrev() {
+        return (T *)bNode::GetPrev();
+    }
+
+    T *AddBefore(T *insert_point) {
+        return (T *)bNode::AddBefore(insert_point);
+    }
+
+    T *AddAfter(T *insert_point) {
+        return (T *)bNode::AddAfter(insert_point);
+    }
+
+    T *Remove() {
+        return (T *)bNode::Remove();
+    }
+};
+
+class bList {
+    bNode HeadNode; // offset 0x0, size 0x8
+
+  public:
+    typedef int (*SortFunc)(bNode *, bNode *);
+
+    bList() {
+        this->HeadNode.Next = &this->HeadNode;
+        this->HeadNode.Prev = &this->HeadNode;
+    }
+    ~bList() {}
+
+    bNode *GetNode(int ordinal_number);
+
+    void InitList() {
+        this->HeadNode.Next = &this->HeadNode;
+        this->HeadNode.Prev = &this->HeadNode;
+    }
+
+    int IsEmpty() {
+        return static_cast<int>(this->HeadNode.GetNext() == &this->HeadNode);
+    }
+
+    bNode *EndOfList() {
+        return &this->HeadNode;
+    }
+
+    bNode *GetHead() {
+        return this->HeadNode.GetNext();
+    }
+
+    bNode *GetTail() {
+        return this->HeadNode.GetPrev();
+    }
+
+    bNode *GetNextCircular(bNode *node) {
+        if (node->GetNext() == EndOfList()) {
+            return GetHead();
+        }
+        return node->Next;
+    }
+    bNode *GetPrevCircular(bNode *node) {
+        if (node->GetPrev() == EndOfList()) {
+            return GetTail();
+        }
+        return node->Prev;
+    }
+
+    bNode *AddHead(bNode *node) {
+        return node->AddAfter(&this->HeadNode);
+    }
+
+    bNode *AddTail(bNode *node) {
+        return node->AddBefore(&this->HeadNode);
+    }
+
+    bNode *AddBefore(bNode *insert_point, bNode *node) {
+        return node->AddBefore(insert_point);
+    }
+
+    bNode *AddAfter(bNode *insert_point, bNode *node) {
+        return node->AddAfter(insert_point);
+    }
+
+    bNode *Remove(bNode *node) {
+        return node->Remove();
+    }
+
+    bNode *RemoveHead() {
+        return this->GetHead()->Remove();
+    }
+    bNode *RemoveTail() {
+        return this->GetTail()->Remove();
+    }
+
+    int GetNodeNumber(bNode *node) {
+        return this->TraversebList(node);
+    }
+
+    int IsInList(bNode *node) {
+        return this->TraversebList(node);
+    }
+
+    int CountElements() {
+        return this->TraversebList(nullptr);
+    }
+
+    void Sort(long (*check_flip)(bNode *, bNode *)) {} // TODO
+
+    void Sort(SortFunc check_flip);
+
+    void AddTail(bList *list);
+
+    void AddHead(bList *list);
+
+    bNode *AddSorted(SortFunc check_flip) {}; // TODO
+
+    bNode *AddSorted(SortFunc check_flip, bNode *node);
+
+  private:
+    void MergeSort(SortFunc cmp);
+    int TraversebList(bNode *match_node);
+};
+
+template <typename T> class bTList : public bList {
+  public:
+    typedef T value_type;
+    typedef value_type *pointer;
+    typedef const value_type *const_pointer;
+
+    typedef int (*SortFuncT)(pointer, pointer);
+
+    bTList() {}
+
+    ~bTList() {
+        while (!this->IsEmpty()) {
+            delete this->RemoveHead();
+        }
+    }
+
+    pointer AddSorted(SortFuncT check_flip, pointer node);
+
+    pointer EndOfList() {
+        return (pointer)bList::EndOfList();
+    }
+
+    pointer GetHead() {
+        return (pointer)bList::GetHead();
+    }
+
+    pointer GetTail() {
+        return (pointer)bList::GetTail();
+    }
+
+    pointer GetNextCircular(bNode *node) {
+        return (pointer)bList::GetNextCircular(node);
+    }
+
+    pointer GetPrevCircular(bNode *node) {
+        return (pointer)bList::GetPrevCircular(node);
+    }
+
+    pointer AddHead(bNode *node) {
+        return (pointer)bList::AddHead(node);
+    }
+
+    pointer AddTail(bNode *node) {
+        return (pointer)bList::AddTail(node);
+    }
+
+    pointer AddBefore(bNode *insert_point, bNode *node) {
+        return (pointer)bList::AddBefore(insert_point, node);
+    }
+
+    pointer AddAfter(bNode *insert_point, bNode *node) {
+        return (pointer)bList::AddAfter(insert_point, node);
+    }
+
+    pointer Remove(bNode *node) {
+        return (pointer)bList::Remove(node);
+    }
+
+    pointer RemoveHead() {
+        return (pointer)bList::RemoveHead();
+    }
+
+    pointer RemoveTail() {
+        return (pointer)bList::RemoveTail();
+    }
+
+    pointer AddSorted(SortFuncT check_flip) {
+        // TODO
+    }
+
+    pointer GetNode(int ordinal_number) {
+        return (pointer)bList::GetNode(ordinal_number);
+    }
+
+    void Sort(SortFuncT check_flip) {
+        bList::Sort((SortFunc)check_flip);
+    }
+
+    void DeleteAllElements() {
+        while (!this->IsEmpty()) {
+            delete this->RemoveHead();
+        }
+    }
+
+    // total size: 0x8
+    class iterator {
+      private:
+        pointer _Ptr; // offset 0x0, size 0x4
+        bList *_Lst;  // offset 0x4, size 0x4
+
+        void validate() {
+            // TODO
+            // bAssert(_Ptr && _Lst && _Ptr != _Lst->EndOfList());
+        }
+
+      public:
+        iterator() {}
+
+        iterator(pointer ptr, bList *list) {
+            _Ptr = ptr;
+            _Lst = list;
+        }
+
+        iterator &operator--() {
+            validate();
+            _Ptr = _Ptr->GetPrev();
+            return *this;
+        }
+
+        iterator &operator--(int) {
+            validate();
+            iterator tmp;
+            tmp._Ptr = _Ptr;
+            _Ptr = _Ptr->GetPrev();
+            return tmp;
+        }
+
+        iterator &operator++() {
+            validate();
+            _Ptr = _Ptr->GetNext();
+            return *this;
+        }
+
+        iterator &operator++(int) {
+            validate();
+            iterator tmp;
+            tmp._Ptr = _Ptr;
+            _Ptr = _Ptr->GetNext();
+            return tmp;
+        }
+
+        pointer &operator*() {
+            validate();
+            return _Ptr;
+        }
+
+        bool operator==(const iterator &rhs) const {
+            return _Ptr == rhs._Ptr;
+        }
+
+        bool operator!=(const iterator &rhs) const {
+            return _Ptr != rhs._Ptr;
+        }
+    };
+
+    iterator begin() {
+        return iterator(GetHead(), this);
+    }
+
+    iterator end() {
+        return iterator(EndOfList(), this);
+    }
+};
+
+template <typename T> T *bTList<T>::AddSorted(SortFuncT check_flip, T *node) {
+    T *insert_point = GetHead();
+    while (insert_point != EndOfList()) {
+        if (check_flip(node, insert_point) == 0) {
+            return node->AddBefore(insert_point);
+        }
+        insert_point = insert_point->GetNext();
+    }
+    return AddTail(node);
+}
+
+// total size: 0xC
+class bPNode : public bTNode<bPNode> {
+  public:
+    static void *Malloc();
+    static void Free(void *ptr);
+
+    void *operator new(size_t size) {
+        return Malloc();
+    }
+
+    void operator delete(void *ptr) {
+        Free(ptr);
+    }
+
+    bPNode(void *object) {
+        this->Object = object;
+    }
+
+    ~bPNode() {}
+
+    void *GetObj() {
+        return Object;
+    }
+
+    void *GetObject() {
+        return Object;
+    }
+
+    void *GetpObject() {
+        return Object;
+    }
+
+  private:
+    void *Object; // offset 0x8, size 0x4
+};
+
+template <typename T> class bPList : public bTList<bPNode> {
+  public:
+    bPNode *AddHead(T *object) {
+        return (bPNode *)bList::AddHead(new bPNode(object));
+    }
+
+    bPNode *AddTail(T *object) {
+        return (bPNode *)bList::AddTail(new bPNode(object));
+    }
+
+    void Remove(bNode *node) {
+        bList::Remove(node);
+        delete reinterpret_cast<bPNode *>(node);
+    }
+
+    void RemoveHead() {
+        delete reinterpret_cast<bPNode *>(bList::RemoveHead());
+    }
+
+    void RemoveTail() {
+        delete reinterpret_cast<bPNode *>(bList::RemoveTail());
+    }
+};
+
+template <typename T> class bSList;
+
+template <typename T> class bSNode {
+  public:
+    friend class bSList<T>;
+
+    T *GetNext() {
+        return this->Next;
+    }
+
+  private:
+    T *Next;
+};
+
+template <typename T> class bSList {
+  public:
+    bSList() {
+        this->Head = reinterpret_cast<T *>(this);
+        this->Tail = reinterpret_cast<T *>(this);
+    }
+
+    ~bSList() {
+        while (!this->IsEmpty()) {
+            delete this->RemoveHead();
+        }
+    }
+
+    int IsEmpty() {
+        return static_cast<int>(this->Head == reinterpret_cast<T *>(this));
+    }
+
+    T *RemoveHead() {
+        T *remove_node = this->Head;
+        this->Head = remove_node->GetNext();
+
+        if (this->Tail == remove_node) {
+            this->Tail = reinterpret_cast<T *>(this);
+        }
+
+        return remove_node;
+    }
+
+    T *GetHead() {
+        return this->Head;
+    }
+
+    T *EndOfList() {
+        return reinterpret_cast<T *>(this);
+    }
+
+    T *AddTail(T *node) {
+        T *prev_tail = this->Tail;
+        this->Tail = node;
+        prev_tail->Next = node;
+        node->Next = this->EndOfList();
+        return node;
+    }
+
+  private:
+    T *Head; // offset 0x0, size 0x4
+    T *Tail; // offset 0x4, size 0x4
+};
+
+void bPListInit(int num_expected_bpnodes);
+
+#endif

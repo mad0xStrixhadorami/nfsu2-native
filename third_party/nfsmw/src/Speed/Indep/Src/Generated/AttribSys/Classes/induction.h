@@ -1,0 +1,253 @@
+#ifndef _attrib_gen_induction_h
+#define _attrib_gen_induction_h
+
+#include "Speed/Indep/Src/Misc/MWAttribUserTypes.h"
+
+namespace Attrib {
+namespace Gen {
+
+struct induction : Instance {
+    struct _LayoutStruct {
+        EA::Reflection::Float LOW_BOOST;       // offset 0x0, size 0x4
+        EA::Reflection::Float SPOOL_TIME_DOWN; // offset 0x4, size 0x4
+        EA::Reflection::Float VACUUM;          // offset 0x8, size 0x4
+        EA::Reflection::Float SPOOL;           // offset 0xc, size 0x4
+        EA::Reflection::Float SPOOL_TIME_UP;   // offset 0x10, size 0x4
+        EA::Reflection::Float PSI;             // offset 0x14, size 0x4
+        EA::Reflection::Float HIGH_BOOST;      // offset 0x18, size 0x4
+    };
+
+    typedef EA::Reflection::Float TypeOf_HIGH_BOOST;
+    typedef EA::Reflection::Float TypeOf_LOW_BOOST;
+    typedef EA::Reflection::Float TypeOf_PSI;
+    typedef EA::Reflection::Float TypeOf_SPOOL;
+    typedef EA::Reflection::Float TypeOf_SPOOL_TIME_DOWN;
+    typedef EA::Reflection::Float TypeOf_SPOOL_TIME_UP;
+    typedef EA::Reflection::Float TypeOf_VACUUM;
+
+    static Key ClassKey();
+    USE_ATTRIB_ALLOC("induction");
+    induction(Key collectionKey, unsigned int msgPort, UTL::COM::IUnknown *owner)
+        : Instance(FindCollection(ClassKey(), collectionKey), msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    induction(const Collection *collection, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(collection, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    induction(const Instance &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    induction(const induction &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    induction(const RefSpec &refspec, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(refspec, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    ~induction() {}
+    Instance &GetBase() {
+        return *this;
+    }
+    const Instance &GetBase() const {
+        return *this;
+    }
+    Key GetClass() {
+        return 0xc92a0142;
+    }
+    void Modify(Key dynamicCollectionKey, unsigned int spaceForAdditionalAttributes) {
+        ModifyInternal(ClassKey(), dynamicCollectionKey, LocalAttribCount() + spaceForAdditionalAttributes);
+    }
+    Key GenerateUniqueKey(const char *name, bool registerName) const {
+        return GUKeyInternal(ClassKey(), name, registerName);
+    }
+    void Change(const Collection *c) {
+        Instance::Change(c);
+    }
+    void Change(const RefSpec &refspec) {
+        Instance::Change(refspec);
+    }
+    void Change(Key collectionkey) {
+        Change(FindCollection(ClassKey(), collectionkey));
+    }
+    void ChangeWithDefault(const RefSpec &refspec) {
+        Instance::ChangeWithDefault(refspec);
+    }
+    void ChangeWithDefault(Key collectionkey) {
+        Change(FindCollectionWithDefault(ClassKey(), collectionkey));
+    }
+    const induction &operator=(const induction &rhs) {
+        operator=(rhs.GetBase());
+        return *this;
+    }
+    const induction &operator=(const Instance &rhs) {
+        Instance::operator=(rhs);
+        return *this;
+    }
+    bool HIGH_BOOST(TAttrib<EA::Reflection::Float> &result) const;
+    bool HIGH_BOOST(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &HIGH_BOOST() const;
+    bool Set_HIGH_BOOST(const EA::Reflection::Float &input);
+
+    bool LOW_BOOST(TAttrib<EA::Reflection::Float> &result) const;
+    bool LOW_BOOST(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &LOW_BOOST() const;
+    bool Set_LOW_BOOST(const EA::Reflection::Float &input);
+
+    bool PSI(TAttrib<EA::Reflection::Float> &result) const;
+    bool PSI(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &PSI() const;
+    bool Set_PSI(const EA::Reflection::Float &input);
+
+    bool SPOOL(TAttrib<EA::Reflection::Float> &result) const;
+    bool SPOOL(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &SPOOL() const;
+    bool Set_SPOOL(const EA::Reflection::Float &input);
+
+    bool SPOOL_TIME_DOWN(TAttrib<EA::Reflection::Float> &result) const;
+    bool SPOOL_TIME_DOWN(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &SPOOL_TIME_DOWN() const;
+    bool Set_SPOOL_TIME_DOWN(const EA::Reflection::Float &input);
+
+    bool SPOOL_TIME_UP(TAttrib<EA::Reflection::Float> &result) const;
+    bool SPOOL_TIME_UP(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &SPOOL_TIME_UP() const;
+    bool Set_SPOOL_TIME_UP(const EA::Reflection::Float &input);
+
+    bool VACUUM(TAttrib<EA::Reflection::Float> &result) const;
+    bool VACUUM(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &VACUUM() const;
+    bool Set_VACUUM(const EA::Reflection::Float &input);
+
+  private:
+    unsigned int GetLayoutSize() {
+        return sizeof(_LayoutStruct);
+    }
+    induction &ConvertFromInstance(Instance &src) {}
+    const induction &ConvertFromInstance(const Instance &src) {}
+};
+}; // namespace Gen
+
+namespace ClassName {
+
+static const Key induction = 0xc92a0142;
+
+}; // namespace ClassName
+
+namespace Hash {
+namespace induction {
+
+static const Key HIGH_BOOST = 0x7168ef58;
+static const Key LOW_BOOST = 0x7a3181c0;
+static const Key PSI = 0xba0a7d04;
+static const Key SPOOL = 0xcf11af87;
+static const Key SPOOL_TIME_DOWN = 0x1f158097;
+static const Key SPOOL_TIME_UP = 0xac1c0d2f;
+static const Key VACUUM = 0xee2c326f;
+
+}; // namespace induction
+}; // namespace Hash
+
+inline Key Gen::induction::ClassKey() {
+    return ClassName::induction;
+}
+
+inline bool Gen::induction::HIGH_BOOST(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x7168ef58);
+}
+inline const EA::Reflection::Float &Gen::induction::HIGH_BOOST() const {
+    ATTRIB_CODEGEN_GETLAYOUT(HIGH_BOOST);
+}
+inline bool Gen::induction::HIGH_BOOST(EA::Reflection::Float &result) const {
+    result = HIGH_BOOST();
+    return true;
+}
+inline bool Gen::induction::Set_HIGH_BOOST(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(HIGH_BOOST, input);
+}
+
+inline bool Gen::induction::LOW_BOOST(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x7a3181c0);
+}
+inline const EA::Reflection::Float &Gen::induction::LOW_BOOST() const {
+    ATTRIB_CODEGEN_GETLAYOUT(LOW_BOOST);
+}
+inline bool Gen::induction::LOW_BOOST(EA::Reflection::Float &result) const {
+    result = LOW_BOOST();
+    return true;
+}
+inline bool Gen::induction::Set_LOW_BOOST(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(LOW_BOOST, input);
+}
+
+inline bool Gen::induction::PSI(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xba0a7d04);
+}
+inline const EA::Reflection::Float &Gen::induction::PSI() const {
+    ATTRIB_CODEGEN_GETLAYOUT(PSI);
+}
+inline bool Gen::induction::PSI(EA::Reflection::Float &result) const {
+    result = PSI();
+    return true;
+}
+inline bool Gen::induction::Set_PSI(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(PSI, input);
+}
+
+inline bool Gen::induction::SPOOL(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xcf11af87);
+}
+inline const EA::Reflection::Float &Gen::induction::SPOOL() const {
+    ATTRIB_CODEGEN_GETLAYOUT(SPOOL);
+}
+inline bool Gen::induction::SPOOL(EA::Reflection::Float &result) const {
+    result = SPOOL();
+    return true;
+}
+inline bool Gen::induction::Set_SPOOL(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(SPOOL, input);
+}
+
+inline bool Gen::induction::SPOOL_TIME_DOWN(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x1f158097);
+}
+inline const EA::Reflection::Float &Gen::induction::SPOOL_TIME_DOWN() const {
+    ATTRIB_CODEGEN_GETLAYOUT(SPOOL_TIME_DOWN);
+}
+inline bool Gen::induction::SPOOL_TIME_DOWN(EA::Reflection::Float &result) const {
+    result = SPOOL_TIME_DOWN();
+    return true;
+}
+inline bool Gen::induction::Set_SPOOL_TIME_DOWN(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(SPOOL_TIME_DOWN, input);
+}
+
+inline bool Gen::induction::SPOOL_TIME_UP(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xac1c0d2f);
+}
+inline const EA::Reflection::Float &Gen::induction::SPOOL_TIME_UP() const {
+    ATTRIB_CODEGEN_GETLAYOUT(SPOOL_TIME_UP);
+}
+inline bool Gen::induction::SPOOL_TIME_UP(EA::Reflection::Float &result) const {
+    result = SPOOL_TIME_UP();
+    return true;
+}
+inline bool Gen::induction::Set_SPOOL_TIME_UP(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(SPOOL_TIME_UP, input);
+}
+
+inline bool Gen::induction::VACUUM(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xee2c326f);
+}
+inline const EA::Reflection::Float &Gen::induction::VACUUM() const {
+    ATTRIB_CODEGEN_GETLAYOUT(VACUUM);
+}
+inline bool Gen::induction::VACUUM(EA::Reflection::Float &result) const {
+    result = VACUUM();
+    return true;
+}
+inline bool Gen::induction::Set_VACUUM(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(VACUUM, input);
+}
+
+}; // namespace Attrib
+
+#endif

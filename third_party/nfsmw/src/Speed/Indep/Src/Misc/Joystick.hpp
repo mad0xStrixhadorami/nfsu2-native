@@ -1,0 +1,21 @@
+#ifndef JOYSTICK_HPP
+#define JOYSTICK_HPP
+
+// Decl: 18
+enum JoystickPort {
+    JOYSTICK_PORT_NONE = -1,
+    JOYSTICK_PORT1 = 0,
+    JOYSTICK_PORT2 = 1,
+    JOYSTICK_PORT3 = 2,
+    JOYSTICK_PORT4 = 3,
+    JOYSTICK_PORT_ALL = 4,
+};
+
+#ifdef EA_PLATFORM_WIN32
+#define NUM_JOYSTICK_PORTS 1 // :37
+#else
+#define NUM_JOYSTICK_PORTS 2 // :37
+#endif
+#define DEBUG_JOYSTICK_PORT 1 // :43
+
+#endif

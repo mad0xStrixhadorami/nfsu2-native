@@ -1,0 +1,455 @@
+//
+//
+//
+//
+//
+//
+#ifndef SNDO_H
+#define SNDO_H 1 // Decl: 8
+
+#include "Speed/Indep/Libs/snd/9/source/library/cmn/sndenum.h"
+#include "csis/csis.h"
+
+#define SND_PLAYLOC_MAINCPU 4 // Decl: 32
+#define SND_PLAYLOC_DEFAULT 0 // Decl: 33
+
+#define SND_DEFAULT -1    // Decl: 37
+#define SND_ALL_BANKS -1  // Decl: 38
+#define SND_AUTO_STOP -1  // Decl: 39
+#define SND_HOLD -1       // Decl: 40
+#define SND_CANCEL_HOLD 0 // Decl: 41
+
+#define SND_NEEDED 8 // Decl: 45
+#define SND_OK 0     // Decl: 46
+
+#define SNDERR_GENERAL -1         // Decl: 50
+#define SNDERR_HANDLE_EXPIRED -2  // Decl: 51
+#define SNDERR_UNUSED -3          // Decl: 52
+#define SNDERR_MEM -6             // Decl: 53
+#define SNDERR_FORMAT -7          // Decl: 54
+#define SNDERR_INV_PARAM -8       // Decl: 55
+#define SNDERR_ALLOCATE -9        // Decl: 56
+#define SNDERR_NO_DRIVER -10      // Decl: 57
+#define SNDERR_VER -11            // Decl: 58
+#define SNDERR_MODE -12           // Decl: 59
+#define SNDERR_TOO_MANY -13       // Decl: 60
+#define SNDERR_NOT_INITED -14     // Decl: 61
+#define SNDERR_UNSUPPORTED -15    // Decl: 62
+#define SNDERR_OUT_OF_ORDER -16   // Decl: 63
+#define SNDERR_TIMEOUT -17        // Decl: 64
+#define SNDERR_INUSE -18          // Decl: 65
+#define SNDERR_FILE_NOT_FOUND -19 // Decl: 66
+
+#define SND_REQUEST_QUEUED 0   // Decl: 70
+#define SND_REQUEST_READ 1     // Decl: 71
+#define SND_REQUEST_PLAYING 2  // Decl: 72
+#define SND_REQUEST_DEQUEUED 3 // Decl: 73
+
+#define SND_SR_SIGN16LIT_INT 0 // Decl: 78
+
+#define SND_SR_SIGN16BIG_INT 1 // Decl: 82
+
+#define SND_SR_EAXA_INT 3 // Decl: 86
+
+#define SND_SR_MT10_BLK 4 // Decl: 90
+
+#define SND_SR_SIGN16BIG_BLK 7 // Decl: 94
+
+#define SND_SR_SIGN16LIT_BLK 8 // Decl: 98
+
+#define SND_SR_SIGN8_BLK 9 // Decl: 102
+
+#define SND_SR_EAXA_BLK 10 // Decl: 106
+
+#define SND_SR_LAYER3 16 // Decl: 110
+
+#define SND_SR_SIGN24LIT_INT 19 // Decl: 114
+
+#define SND_SR_MT5_BLK 22 // Decl: 118
+
+#define SND_SR_EALAYER3 23 // Decl: 122
+
+#define SND_UD_BANK_LOADED 0   // Decl: 128
+#define SND_UD_BANK_PLAY 1     // Decl: 129
+#define SND_UD_BANK_UNLOADED 2 // Decl: 130
+#define SND_UD_STREAM_LOADED 3 // Decl: 131
+
+#define SND_MAX_USER_DATA 4 // Decl: 135
+
+#define SND_MAX_MULTI_CHAN 6 // Decl: 138
+
+// TODO remove and use SNDCALL per function
+#define SNDCALL // Decl: 143
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// total size: 0x18
+// Decl: 149
+typedef struct SNDPLAYOPTS {
+    signed char vol;               // offset 0x0, size 0x1
+    signed char bend;              // offset 0x1, size 0x1
+    signed char keynum;            // offset 0x2, size 0x1
+    signed char velocity;          // offset 0x3, size 0x1
+    signed char drylevel;          // offset 0x4, size 0x1
+    signed char fxlevel0;          // offset 0x5, size 0x1
+    char pad[2];                   // offset 0x6, size 0x2
+    unsigned short azimuth;        // offset 0x8, size 0x2
+    short elevation;               // offset 0xA, size 0x2
+    unsigned short pitchmult;      // offset 0xC, size 0x2
+    unsigned short timemult;       // offset 0xE, size 0x2
+    unsigned short tempomult;      // offset 0x10, size 0x2
+    unsigned short pad2;           // offset 0x12, size 0x2
+    unsigned short lowpasscutoff;  // offset 0x14, size 0x2
+    unsigned short highpasscutoff; // offset 0x16, size 0x2
+} SNDPLAYOPTS;
+
+// total size: 0x10
+// Decl: 169
+typedef struct SNDREQUESTSTATUS {
+    int state;        // offset 0x0, size 0x4, Decl: 170
+    int currenttime;  // offset 0x4, size 0x4, Decl: 171
+    int timetoend;    // offset 0x8, size 0x4, Decl: 172
+    int timebuffered; // offset 0xC, size 0x4, Decl: 173
+} SNDREQUESTSTATUS;
+
+// total size: 0xC
+// Decl: 179
+typedef struct SNDSTREAMSTATUS {
+    int outstandingrequests; // offset 0x0, size 0x4, Decl: 180
+    int currentrequest;      // offset 0x4, size 0x4, Decl: 181
+    int timebuffered;        // offset 0x8, size 0x4, Decl: 182
+} SNDSTREAMSTATUS;
+
+// total size: 0x68
+// Decl: 188
+typedef struct SNDSAMPLEATTR {
+    short detune;                        // offset 0x0, size 0x2
+    signed char priority;                // offset 0x2, size 0x1
+    signed char vol;                     // offset 0x3, size 0x1
+    signed char pan;                     // offset 0x4, size 0x1
+    signed char fxlevel0;                // offset 0x5, size 0x1
+    signed char bendrange;               // offset 0x6, size 0x1
+    unsigned char platformver;           // offset 0x7, size 0x1
+    unsigned short rendermode;           // offset 0x8, size 0x2
+    char padchar[2];                     // offset 0xA, size 0x2
+    unsigned short azimuth[6];           // offset 0xC, size 0xC
+    void *ptsdata[6];                    // offset 0x18, size 0x18
+    int tsdatasize[6];                   // offset 0x30, size 0x18
+    void *puserdata[SND_MAX_USER_DATA];  // offset 0x48, size 0x10
+    int userdatasize[SND_MAX_USER_DATA]; // offset 0x58, size 0x10
+} SNDSAMPLEATTR;
+
+// total size: 0x4
+// Decl: 210
+typedef struct SNDSAMPLEFORMAT {
+    unsigned short samplerate; // offset 0x0, size 0x2
+    unsigned char channels;    // offset 0x2, size 0x1
+    unsigned char samplerep;   // offset 0x3, size 0x1
+} SNDSAMPLEFORMAT;
+
+// total size: 0x1C
+// Decl: 221
+typedef struct SNDSAMPLEDESC {
+    unsigned int totalframes; // offset 0x0, size 0x4
+    void *psamples[6];        // offset 0x4, size 0x18
+} SNDSAMPLEDESC;
+
+// total size: 0x20
+typedef struct SNDPACKETENTRY {
+    int handle;           // offset 0x0, size 0x4
+    int numframes : 31;   // offset 0x4, size 0x4
+    int continuation : 1; // offset 0x4, size 0x4
+    void *psamples[6];    // offset 0x8, size 0x18
+} SNDPACKETENTRY;
+
+// total size: 0x24
+// Decl: 229
+typedef struct SNDPACKET {
+    SNDSAMPLEFORMAT ssf;           // offset 0x0, size 0x4, Decl: 230
+    unsigned int numframes : 31;   // offset 0x4, size 0x4
+    unsigned int continuation : 1; // offset 0x4, size 0x4
+    int sizeofsamples;             // offset 0x8, size 0x4, Decl: 233
+    void *psamples[6];             // offset 0xC, size 0x18, Decl: 234
+} SNDPACKET;
+
+// total size: 0x14
+// Decl: 240
+typedef struct SNDUSERDATACBINFO {
+    int type;           // offset 0x0, size 0x4
+    void *pdata;        // offset 0x4, size 0x4
+    int size;           // offset 0x8, size 0x4
+    int shandle;        // offset 0xC, size 0x4
+    int sndstrmrequest; // offset 0x10, size 0x4
+} SNDUSERDATACBINFO;
+
+// total size: 0x18
+// Decl: 259
+typedef struct SNDFILTERDEF {
+    int id;                                          // offset 0x0, size 0x4
+    int statesize;                                   // offset 0x4, size 0x4
+    int priority;                                    // offset 0x8, size 0x4
+    void (*filterinit)(void *, int, int);            // offset 0xC, size 0x4
+    int (*filter)(void *, int, void *, void *, int); // offset 0x10, size 0x4
+    void (*filterrestore)(void *);                   // offset 0x14, size 0x4
+} SNDFILTERDEF;
+
+// total size: 0x9C
+// TODO move this to sndcmn.h
+struct SNDPACKETCHAN {
+    volatile int shandle;                            // offset 0x0, size 0x4
+    volatile int lastpackethandle;                   // offset 0x4, size 0x4
+    volatile unsigned int masterReleasePacket;       // offset 0x8, size 0x4
+    volatile unsigned int masterCurrentPacket;       // offset 0xC, size 0x4
+    volatile unsigned int numPacketsProcessed[6];    // offset 0x10, size 0x18
+    volatile short playpacket[6];                    // offset 0x28, size 0xC
+    volatile short outstandingpackets[6];            // offset 0x34, size 0xC
+    volatile short maxpackets;                       // offset 0x40, size 0x2
+    volatile signed char masterpacketchan;           // offset 0x42, size 0x1
+    char pad;                                        // offset 0x43, size 0x1
+    volatile short releasepacket;                    // offset 0x44, size 0x2
+    volatile short submitpacket;                     // offset 0x46, size 0x2
+    volatile unsigned int outstandingframes;         // offset 0x48, size 0x4
+    volatile unsigned int outstandingplatformframes; // offset 0x4C, size 0x4
+    void *pplatformmem;                              // offset 0x50, size 0x4
+    void (*preleasefunc)(void *, void *);            // offset 0x54, size 0x4
+    void (*pframesfunc)(int, int, void *);           // offset 0x58, size 0x4
+    void *pclientdata;                               // offset 0x5C, size 0x4
+    SNDSAMPLEFORMAT sampleformat;                    // offset 0x60, size 0x4
+    void *ptsdata[6];                                // offset 0x64, size 0x18
+    SNDPACKETENTRY pe[1];                            // offset 0x7C, size 0x20
+};
+
+int SND3dpos(int shandle, int azimuth, int elevation);
+
+int SNDAEMS_addmodulebank(void *pBank, char *streamFileName, int streamFileNameOffset, void *(*mallocCb)(void *, int, int));
+
+int SNDAEMS_asyncloadmodulebank(char *moduleBankFileName, int moduleBankFileOffset, char *streamFileName, int streamFileOffset, void *pMem,
+                                int memSize, void *(*mallocCb)(int));
+int SNDAEMS_asyncloadmodulebankdone();
+
+int SNDAEMS_asyncloadmodulebankmem(void *pModuleBank, char *streamFileName, int streamFileOffset, void *(*mallocCb)(int));
+int SNDAEMS_asyncloadmodulebankmemdone();
+int SNDAEMS_removemodulebank(int mbhandle);
+
+int SND_attrsetdef(SNDSAMPLEATTR *pssa);
+
+int SNDbankadd(int *pbhandle, void *pbank);
+
+int SNDBANK_asyncload(char *filename, int fileoffset, void *pmem, int memsize, void *(*mallocfn)(int));
+int SNDBANK_asyncdone();
+
+int SNDBANK_asyncloadmem(int *pbhandle, void *pbank);
+int SNDBANK_asyncloadmemdone();
+
+int SNDbankheadercopy(void *pmem, int bhandle);
+
+int SNDbankheadersize(int bhandle);
+
+int SNDBANK_play(int bhandle, int patnum, SNDPLAYOPTS *pspo);
+
+int SNDbankremove(int bhandle);
+
+void SNDSYS_add100hzclient(void (*client)(void));
+void SNDSYS_remove100hzclient(void (*client)(void));
+
+int SNDCTRL_drylevel(int shandle, int level);
+
+int SNDfxlevel(int shandle, int bus, int level);
+
+int SNDBANK_patchinfo(int bhandle, int patnum, SNDSAMPLEFORMAT *pssf, SNDSAMPLEATTR *pssa, SNDSAMPLEDESC *pssd);
+
+int SNDCTRL_getprogvol(int shandle);
+
+int SNDCTRL_lowpass(int shandle, int lowpasscutoff);
+
+int SNDmemlimits(int startaddr, int endaddr);
+
+int SNDmemlargestunused(int *paddr);
+
+int SNDpitchmult(int shandle, int pitchmult);
+
+int SNDfxlevel(int shandle, int bus, int level);
+
+int SNDplaysetdef(SNDPLAYOPTS *pspo);
+
+int SNDPKTPLAY_overhead(int maxpackets);
+int SNDPKTPLAY_create(void (*preleasefunc)(void *, void *), void (*pframesfunc)(int, int, void *), void *pclientdata, void *pmem, int memsize);
+int SNDPKTPLAY_start(int packetinstancehandle, SNDSAMPLEFORMAT *pssf, SNDSAMPLEATTR *pssa, SNDPLAYOPTS *pspo);
+int SNDPKTPLAY_submit(int packetinstancehandle, SNDPACKET *psp);
+int SNDPKTPLAY_submitspace(int packetinstancehandle);
+int SNDPKTPLAY_framesoutstanding(int packetinstancehandle);
+int SNDPKTPLAY_hardwareframesoutstanding(int packetinstancehandle);
+int SNDPKTPLAY_purge(int packetinstancehandle, int starthandle, int endhandle);
+int SNDPKTPLAY_stop(int packetinstancehandle);
+int SNDPKTPLAY_destroy(int packetinstancehandle);
+
+int SNDSTRM_autovol(int sndStrmHandle, int time, int targetVol);
+int SNDSTRM_create(SNDPLAYOPTS *pspo, int maxrequests, int maxchunks, void *pmem, int memsize);
+int SNDSTRM_getprogvol(int sndstreamhandle);
+int SNDSTRM_lowpass(int sndstreamhandle, int lowpasscutoff);
+int SNDSTRM_modifyhold(int sndrequesthandle, int holdtime);
+int SNDSTRM_overhead(int maxrequests, int maxchunks);
+int SNDSTRM_queuemem(int sndstreamhandle, int holdtime, void *paddr, int offset);
+int SNDSTRM_purge(int sndStrmHandle);
+int SNDSTRM_queuefile(int sndstreamhandle, int holdtime, char *filename, int offset);
+int SNDSTRM_status(int sndstreamhandle, SNDSTREAMSTATUS *psss);
+int SNDSTRM_requeststatus(int sndrequesthandle, SNDREQUESTSTATUS *psrs);
+int SNDSTRM_setazimuth(int sndStrmHandle, Snd::Channel sourceChannel, float azimuth);
+int SNDSTRM_setvol(int sndStrmHandle, Snd::Channel sourceChannel, float volume);
+int SNDSTRM_pitchmult(int sndstreamhandle, int pitchmult);
+int SNDSTRM_destroy(int sndstreamhandle);
+
+void SNDSYS_entercritical();
+void SNDSYS_leavecritical();
+void SNDSYS_service();
+
+int SNDtimeremaining(int shandle);
+
+int SNDvol(int shandle, int vol);
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+
+namespace Snd {
+
+// Decl: 400
+enum Result {
+    RESULT_ERR_INVDATAFORMAT = -11,
+    RESULT_ERR_INVPARAM = -10,
+    RESULT_ERR_DRIVER = -9,
+    RESULT_ERR_UNSUPPORTEDOPT = -8,
+    RESULT_ERR_ALREADYINUSE = -7,
+    RESULT_ERR_GENERAL = -6,
+    RESULT_ERR_INVOPT = -5,
+    RESULT_ERR_NOTINIT = -4,
+    RESULT_ERR_INVPLAYERTYPE = -3,
+    RESULT_ERR_MEMERROR = -2,
+    RESULT_ERR_FILEERROR = -1,
+    RESULT_OK = 0,
+};
+
+// total size: 0x1
+// Decl: 638
+struct System {
+    static Result VectorToReal6();
+
+    static Result VectorToCsisMutex();
+
+    static Result Init(const int headerversion); // Decl: 724
+
+    static Result ReInit();
+
+    static Result Restore(); // Decl: 751
+
+    static bool IsInited(); // Decl: 770
+
+    static Result SetMaxBanks(int banks); // Decl: 790
+
+    static Result GetMaxBanks(int *pbanks); // Decl: 805
+
+    static Result SetMaxStreams(int maxstreams); // Decl: 827
+
+    static Result SetStealEqualPriorityVoices(bool stealequalpriority); // Decl: 853
+
+    static Result SetRandomSeed(unsigned int seed); // Decl: 885
+
+    static Result SetUpdateRate(float rate);
+
+    static Result GetUpdateRate(float *prate);
+
+    static Result CapOutputMode(OutputMode mode, bool *psupported);
+
+    static Result SetOutputMode(OutputMode mode);
+
+    static Result GetOutputMode(OutputMode *pmode);
+
+    static Result GetOutputModeName(OutputMode mode, const char **pmodename);
+
+    static Result CapOutputSampleRate(Device device, int requestedsamplerate, int *pclosestsamplerate);
+
+    static Result SetOutputSampleRate(Device device, int samplerate);
+
+    static Result GetOutputSampleRate(Device device, int *psamplerate);
+
+    static Result CapVoices(Device device, int *pvoices); // Decl: 908
+
+    static Result SetVoices(Device device, int voices); // Decl: 951
+
+    static Result GetVoices(Device device, int *pvoices); // Decl: 970
+
+    static Result SetCompatibilityLevel(CompatibilityMode mode);
+
+    static Result SetResampleQuality(Device device, float quality); // Decl: 1002
+
+    static Result GetResampleQuality(Device device, float *pQuality); // Decl: 1020
+
+    static Result SetSse(bool useSse); // Decl: 1051
+
+    static Result SetDtsQuality(float quality);
+
+    static Result SetRouteMainFxToIop(bool enable);
+
+    static Result SetRouteHardwareFxToIop(bool enable);
+
+    static Result SetSndLoadsIopModules(bool loadIopModules);
+
+    static Result SetIopModulePath(const char *iopModulePath);
+
+    static Result SetSndInitsAram(bool sndInitsAram);
+
+    static Result SetAbortHandler(void (*abortMessage)(const char *));
+};
+
+// total size: 0x1
+struct Memory {
+    static Result SetHeap(Device device, void *pmem, int size);
+
+    static Result GetHeap(Device device, void **ppmem, int *psize);
+
+    static Result SetHeapThreshold(Device device, float threshold);
+
+    static Result GetHeapThreshold(Device device, float *pthreshold);
+
+    static Result SetHeapFastRam(void *pmem, int size);
+};
+
+// total size: 0x1
+class GlobalFxProcessor {
+  public:
+    static Csis::Result GetMaxBuses(int *pBuses);
+
+    static Csis::Result SetMaxBuses(int buses);
+
+    static Csis::Result CreateInstance(Device device, int bus, GlobalFxProcessor **ppGlobalFxProcessor);
+
+    Csis::Result Release();
+
+    Csis::Result UpdatePreset(ExtendedFxPreset *pExtendedFxPreset);
+
+    Csis::Result SetCustom(void *pFxDefinition);
+
+    Csis::Result Reset();
+
+    Csis::Result SetOutputLevel(float level);
+
+  private:
+    GlobalFxProcessor();
+
+    ~GlobalFxProcessor();
+
+  public:
+    Csis::Result SetPreset(ExtendedFxPreset *pExtendedFxPreset);
+
+    Csis::Result SetPreset(FxPreset fxPreset);
+};
+
+} // namespace Snd
+
+#endif
+
+#endif

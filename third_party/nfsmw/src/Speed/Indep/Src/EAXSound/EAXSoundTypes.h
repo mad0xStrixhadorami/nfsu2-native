@@ -1,0 +1,172 @@
+#ifndef EAXSOUND_EAXSOUNDTYPES_H
+#define EAXSOUND_EAXSOUNDTYPES_H
+
+#include "Speed/Indep/Src/Physics/CarBasics.hpp"
+#include "Speed/Indep/Src/Interfaces/Simables/ISimable.h"
+
+extern void *NullPointer;
+
+namespace Speech {
+
+// total size: 0x8
+// Decl: 39
+struct Battalion {
+    // Decl: 40
+    Battalion(int nam, int num)
+        : name(nam), //
+          number(num) {}
+
+    int name;   // offset 0x0, size 0x4
+    int number; // offset 0x4, size 0x4
+};
+
+// Decl: 59
+enum SpeechValRtnType {
+    kKeepEvt = 0,
+    kIntEvt = 1,
+    kDitchEvt = 2,
+    kEvtNotFound = 3,
+    kDeferEvt = 4,
+    MAX_RETURN_TYPES = 5,
+};
+
+// Decl: unknown
+enum SpeakerID {
+    Dispatch = 1,
+    Heli = 2,
+    Primary1 = 3,
+    Primary2 = 4,
+    Primary3 = 5,
+    Secondary1 = 6,
+    Secondary2 = 7,
+    Secondary3 = 8,
+    Cross = 9,
+    NUM_SPEAKER_ID = 10,
+};
+
+}; // namespace Speech
+
+namespace Sound {
+
+// Decl: 85
+enum Context {
+    CONTEXT_PLAYER = 0,
+    CONTEXT_AIRACER = 1,
+    CONTEXT_COP = 2,
+    CONTEXT_TRAFFIC = 3,
+    CONTEXT_ONLINE = 4,
+    CONTEXT_TRACTOR = 5,
+    CONTEXT_TRAILER = 6,
+    CONTEXT_MAX = 7,
+};
+
+// Decl: 98
+enum SirenState {
+    SIREN_OFF = -1,
+    SIREN_WAIL = 0,
+    SIREN_YELP = 1,
+    SIREN_SCREAM = 2,
+    SIREN_DIE = 3,
+};
+
+// Decl: 108
+enum WheelConfig {
+    EAX4WD_FL = 0,
+    EAX4WD_FR = 1,
+    EAX4WD_RR = 2,
+    EAX4WD_RL = 3,
+};
+
+// Decl: 116
+enum ControlSource {
+    CONTROL_NONE = 0,
+    CONTROL_HUMAN = 1,
+    CONTROL_AI = 2,
+    CONTROL_NIS = 3,
+    CONTROL_ONLINE = 4,
+};
+
+// total size: 0x44
+// Decl: 126
+struct Wheel {
+    Wheel() {
+        this->Reset();
+    }
+
+    void Reset() {
+        this->mWheelOnGround = 1;
+        this->mWheelForceZ = 0.0f;
+        this->mWheelSlip = bVector2(0.0f, 0.0f);
+        this->mTerrainType = SimSurface::kNull;
+        this->mPercentFsFkTransfer = 0.0f;
+        this->mLoad = 0.0f;
+        this->mBlownState = 0;
+        this->mPrevBlownState = 0;
+    }
+
+    bVector2 mWheelSlip;         // offset 0x0, size 0x8
+    float mWheelForceZ;          // offset 0x8, size 0x4
+    float mPercentFsFkTransfer;  // offset 0xC, size 0x4
+    int mWheelOnGround;          // offset 0x10, size 0x4
+    SimSurface mTerrainType;     // offset 0x14, size 0x14
+    SimSurface mPrevTerrainType; // offset 0x28, size 0x14
+    float mLoad;                 // offset 0x3C, size 0x4
+    uint8 mBlownState;           // offset 0x40, size 0x1
+    uint8 mPrevBlownState;       // offset 0x41, size 0x1
+};
+
+// total size: 0x1C
+// Decl: 157
+struct Engine {
+    Engine() {
+        this->Reset();
+    }
+
+    void Reset() {
+        this->mBoostFlag = 0;
+        this->mNOSFlag = 0;
+        this->mNOS = 0.0f;
+        this->mRPMPct = 0.0f;
+        this->mThrottle = 0.0f;
+        this->mBoost = 0.0f;
+        this->mBlownFlag = 0;
+    }
+
+    int mBoostFlag;  // offset 0x0, size 0x4
+    int mNOSFlag;    // offset 0x4, size 0x4
+    float mNOS;      // offset 0x8, size 0x4
+    float mRPMPct;   // offset 0xC, size 0x4
+    float mThrottle; // offset 0x10, size 0x4
+    float mBoost;    // offset 0x14, size 0x4
+    int mBlownFlag;  // offset 0x18, size 0x4
+};
+
+// total size: 0x8
+// Decl: 184
+struct Driveline {
+    Driveline()
+        : mGearShiftFlag(0), //
+          mGear(NEUTRAL) {}
+
+    int mGearShiftFlag; // offset 0x0, size 0x4
+    Gear mGear;         // offset 0x4, size 0x4
+};
+
+// total size: 0x14
+// Decl: unknown
+struct stSongInfo {
+    char *SongName; // offset 0x0, size 0x4
+    char *Artist;   // offset 0x4, size 0x4
+    char *Album;    // offset 0x8, size 0x4
+    char *DefPlay;  // offset 0xC, size 0x4
+    int PathEvent;  // offset 0x10, size 0x4
+};
+
+// total size: 0x10
+class SongInfoList : public std::vector<stSongInfo *> {};
+
+}; // namespace Sound
+
+extern Sound::SongInfoList Songs;
+
+#endif

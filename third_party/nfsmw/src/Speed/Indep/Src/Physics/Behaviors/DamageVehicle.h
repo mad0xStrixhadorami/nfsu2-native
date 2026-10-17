@@ -1,0 +1,108 @@
+#ifndef DAMAGEVEHICLE_H
+#define DAMAGEVEHICLE_H
+
+#include "Speed/Indep/Libs/Support/Utility/UDefs.h"
+#include "Speed/Indep/Src/World/Damagezones.h"
+#include "Speed/Indep/Libs/Support/Utility/UStandard.h"
+#include "Speed/Indep/Src/Generated/AttribSys/Classes/damagespecs.h"
+#include "Speed/Indep/Src/Interfaces/IListener.h"
+#include "Speed/Indep/Src/Interfaces/Simables/ICollisionBody.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IDamageable.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IRenderable.h"
+#include "Speed/Indep/Src/Physics/VehicleBehaviors.h"
+#include "Speed/Indep/Src/Sim/SimTypes.h"
+
+// total size: 0xB8
+class DamageVehicle : public VehicleBehavior,
+                      public IDamageable,
+                      public Sim::Collision::IListener,
+                      public IDamageableVehicle,
+                      protected EventSequencer::IContext {
+  public:
+    static Behavior *Construct(const BehaviorParams &params);
+
+  protected:
+    DamageVehicle(const BehaviorParams &bp, const DamageParams &dp);
+    const DamageScaleRecord &GetDamageRecord(DamageZone::ID zone) const;
+
+    // Overrides
+    // IUnknown
+    ~DamageVehicle() override;
+
+    // Behavior
+    void OnBehaviorChange(const UCrc32 &mechanic) override;
+    void OnTaskSimulate(float dT) override;
+    void Reset() override;
+
+    // IContext
+    bool SetDynamicData(const EventSequencer::System *system, EventDynamicData *data) override;
+
+    // IListener
+    void OnCollision(const COLLISION_INFO &cinfo) override;
+
+    bool IsLightDamaged(VehicleFX::ID idx) const override {
+        if (IsDestroyed()) {
+            return true;
+        }
+        return (mLightDamage & idx) != VehicleFX::LIGHT_NONE;
+    }
+
+    void DamageLight(VehicleFX::ID idx, bool b) override {
+        if (CanDamageVisuals()) {
+            if (b) {
+                mLightDamage |= idx;
+            } else {
+                mLightDamage &= ~idx;
+            }
+        }
+    }
+
+    float GetHealth() const override {
+        return UMath::Clamp(1.0f - mDamageTotal, 0.0f, 1.0f);
+    }
+
+    DamageZone::Info GetZoneDamage() const override {
+        return mZoneDamage;
+    }
+
+    // IDamageable
+    void SetInShock(float scale) override;
+    void SetShockForce(float f) override;
+
+    float InShock() const override {
+        return mShockTimer;
+    }
+
+    void ResetDamage() override;
+
+    bool IsDestroyed() const override {
+        return mDamageTotal >= 1.0f;
+    }
+
+    void Destroy() override;
+
+    virtual void OnImpact(const UMath::Vector3 &arm, const UMath::Vector3 &normal, float force, float speed, const SimSurface &mysurface,
+                          ISimable *iother);
+
+    virtual bool CanDamageVisuals() const {
+        return true;
+    }
+
+  private:
+    void ResetParts();
+
+    float mShockTimer;                                 // offset 0x6C, size 0x4
+    int fTempInvincibilityTimer;                       // offset 0x70, size 0x4
+    BehaviorSpecsPtr<Attrib::Gen::damagespecs> mSpecs; // offset 0x74, size 0x14
+    float mOffScreenTimer;                             // offset 0x88, size 0x4
+    float mDamageTotal;                                // offset 0x8C, size 0x4
+    ICollisionBody *mIRBComplex;                       // offset 0x90, size 0x4
+    IRigidBody *mRB;                                   // offset 0x94, size 0x4
+    IRenderable *mRenderable;                          // offset 0x98, size 0x4
+    DamageZone::Info mZoneDamage;                      // offset 0x9C, size 0x4
+    PS2ALIGN16 UMath::Vector3 mLastImpactSpeed;        // offset 0xA0, size 0xC
+    UTL::Std::list<UCrc32, _type_list> mBrokenParts;   // offset 0xAC, size 0x8
+    unsigned int mLightDamage;                         // offset 0xB4, size 0x4
+};
+
+#endif

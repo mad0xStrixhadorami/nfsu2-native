@@ -1,0 +1,231 @@
+#ifndef _attrib_gen_explosion_h
+#define _attrib_gen_explosion_h
+
+#include "Speed/Indep/Src/Misc/MWAttribUserTypes.h"
+
+namespace Attrib {
+namespace Gen {
+
+struct explosion : Instance {
+    struct _LayoutStruct {
+        RefSpec BaseMaterial;                      // offset 0x0, size 0xc
+        EA::Reflection::Float triggerThreshold;    // offset 0xc, size 0x4
+        EA::Reflection::Float explosionForceLimit; // offset 0x10, size 0x4
+        EA::Reflection::Float fallOffUnit;         // offset 0x14, size 0x4
+        EA::Reflection::Float forceMultiplier;     // offset 0x18, size 0x4
+        EA::Reflection::Float damageMultiplier;    // offset 0x1c, size 0x4
+    };
+
+    typedef RefSpec TypeOf_BaseMaterial;
+    typedef EA::Reflection::Float TypeOf_damageMultiplier;
+    typedef EA::Reflection::Float TypeOf_explosionForceLimit;
+    typedef EA::Reflection::Float TypeOf_fallOffUnit;
+    typedef EA::Reflection::Float TypeOf_forceMultiplier;
+    typedef EA::Reflection::Float TypeOf_triggerThreshold;
+
+    static Key ClassKey();
+    USE_ATTRIB_ALLOC("explosion");
+    explosion(Key collectionKey, unsigned int msgPort, UTL::COM::IUnknown *owner)
+        : Instance(FindCollection(ClassKey(), collectionKey), msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    explosion(const Collection *collection, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(collection, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    explosion(const Instance &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    explosion(const explosion &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    explosion(const RefSpec &refspec, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(refspec, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    ~explosion() {}
+    Instance &GetBase() {
+        return *this;
+    }
+    const Instance &GetBase() const {
+        return *this;
+    }
+    Key GetClass() {
+        return 0x6434f1fb;
+    }
+    void Modify(Key dynamicCollectionKey, unsigned int spaceForAdditionalAttributes) {
+        ModifyInternal(ClassKey(), dynamicCollectionKey, LocalAttribCount() + spaceForAdditionalAttributes);
+    }
+    Key GenerateUniqueKey(const char *name, bool registerName) const {
+        return GUKeyInternal(ClassKey(), name, registerName);
+    }
+    void Change(const Collection *c) {
+        Instance::Change(c);
+    }
+    void Change(const RefSpec &refspec) {
+        Instance::Change(refspec);
+    }
+    void Change(Key collectionkey) {
+        Change(FindCollection(ClassKey(), collectionkey));
+    }
+    void ChangeWithDefault(const RefSpec &refspec) {
+        Instance::ChangeWithDefault(refspec);
+    }
+    void ChangeWithDefault(Key collectionkey) {
+        Change(FindCollectionWithDefault(ClassKey(), collectionkey));
+    }
+    const explosion &operator=(const explosion &rhs) {
+        operator=(rhs.GetBase());
+        return *this;
+    }
+    const explosion &operator=(const Instance &rhs) {
+        Instance::operator=(rhs);
+        return *this;
+    }
+    bool BaseMaterial(TAttrib<RefSpec> &result) const;
+    bool BaseMaterial(RefSpec &result) const;
+    const RefSpec &BaseMaterial() const;
+    bool Set_BaseMaterial(const RefSpec &input);
+
+    bool damageMultiplier(TAttrib<EA::Reflection::Float> &result) const;
+    bool damageMultiplier(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &damageMultiplier() const;
+    bool Set_damageMultiplier(const EA::Reflection::Float &input);
+
+    bool explosionForceLimit(TAttrib<EA::Reflection::Float> &result) const;
+    bool explosionForceLimit(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &explosionForceLimit() const;
+    bool Set_explosionForceLimit(const EA::Reflection::Float &input);
+
+    bool fallOffUnit(TAttrib<EA::Reflection::Float> &result) const;
+    bool fallOffUnit(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &fallOffUnit() const;
+    bool Set_fallOffUnit(const EA::Reflection::Float &input);
+
+    bool forceMultiplier(TAttrib<EA::Reflection::Float> &result) const;
+    bool forceMultiplier(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &forceMultiplier() const;
+    bool Set_forceMultiplier(const EA::Reflection::Float &input);
+
+    bool triggerThreshold(TAttrib<EA::Reflection::Float> &result) const;
+    bool triggerThreshold(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &triggerThreshold() const;
+    bool Set_triggerThreshold(const EA::Reflection::Float &input);
+
+  private:
+    unsigned int GetLayoutSize() {
+        return sizeof(_LayoutStruct);
+    }
+    explosion &ConvertFromInstance(Instance &src) {}
+    const explosion &ConvertFromInstance(const Instance &src) {}
+};
+}; // namespace Gen
+
+namespace ClassName {
+
+static const Key explosion = 0x6434f1fb;
+
+}; // namespace ClassName
+
+namespace Hash {
+namespace explosion {
+
+static const Key BaseMaterial = 0x5497a394;
+static const Key damageMultiplier = 0xa6f789cb;
+static const Key explosionForceLimit = 0x259021b6;
+static const Key fallOffUnit = 0x297cba80;
+static const Key forceMultiplier = 0x3a5970f4;
+static const Key triggerThreshold = 0xa6f45864;
+
+}; // namespace explosion
+}; // namespace Hash
+
+inline Key Gen::explosion::ClassKey() {
+    return ClassName::explosion;
+}
+
+inline bool Gen::explosion::BaseMaterial(TAttrib<RefSpec> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(RefSpec, 0x5497a394);
+}
+inline const RefSpec &Gen::explosion::BaseMaterial() const {
+    ATTRIB_CODEGEN_GETLAYOUT(BaseMaterial);
+}
+inline bool Gen::explosion::BaseMaterial(RefSpec &result) const {
+    result = BaseMaterial();
+    return true;
+}
+inline bool Gen::explosion::Set_BaseMaterial(const RefSpec &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(BaseMaterial, input);
+}
+
+inline bool Gen::explosion::damageMultiplier(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xa6f789cb);
+}
+inline const EA::Reflection::Float &Gen::explosion::damageMultiplier() const {
+    ATTRIB_CODEGEN_GETLAYOUT(damageMultiplier);
+}
+inline bool Gen::explosion::damageMultiplier(EA::Reflection::Float &result) const {
+    result = damageMultiplier();
+    return true;
+}
+inline bool Gen::explosion::Set_damageMultiplier(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(damageMultiplier, input);
+}
+
+inline bool Gen::explosion::explosionForceLimit(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x259021b6);
+}
+inline const EA::Reflection::Float &Gen::explosion::explosionForceLimit() const {
+    ATTRIB_CODEGEN_GETLAYOUT(explosionForceLimit);
+}
+inline bool Gen::explosion::explosionForceLimit(EA::Reflection::Float &result) const {
+    result = explosionForceLimit();
+    return true;
+}
+inline bool Gen::explosion::Set_explosionForceLimit(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(explosionForceLimit, input);
+}
+
+inline bool Gen::explosion::fallOffUnit(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x297cba80);
+}
+inline const EA::Reflection::Float &Gen::explosion::fallOffUnit() const {
+    ATTRIB_CODEGEN_GETLAYOUT(fallOffUnit);
+}
+inline bool Gen::explosion::fallOffUnit(EA::Reflection::Float &result) const {
+    result = fallOffUnit();
+    return true;
+}
+inline bool Gen::explosion::Set_fallOffUnit(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(fallOffUnit, input);
+}
+
+inline bool Gen::explosion::forceMultiplier(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x3a5970f4);
+}
+inline const EA::Reflection::Float &Gen::explosion::forceMultiplier() const {
+    ATTRIB_CODEGEN_GETLAYOUT(forceMultiplier);
+}
+inline bool Gen::explosion::forceMultiplier(EA::Reflection::Float &result) const {
+    result = forceMultiplier();
+    return true;
+}
+inline bool Gen::explosion::Set_forceMultiplier(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(forceMultiplier, input);
+}
+
+inline bool Gen::explosion::triggerThreshold(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xa6f45864);
+}
+inline const EA::Reflection::Float &Gen::explosion::triggerThreshold() const {
+    ATTRIB_CODEGEN_GETLAYOUT(triggerThreshold);
+}
+inline bool Gen::explosion::triggerThreshold(EA::Reflection::Float &result) const {
+    result = triggerThreshold();
+    return true;
+}
+inline bool Gen::explosion::Set_triggerThreshold(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(triggerThreshold, input);
+}
+
+}; // namespace Attrib
+
+#endif

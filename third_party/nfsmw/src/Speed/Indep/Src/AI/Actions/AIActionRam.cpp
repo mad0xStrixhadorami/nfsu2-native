@@ -1,0 +1,292 @@
+#include "Speed/Indep/Libs/Support/Utility/UMath.h"
+#include "Speed/Indep/Libs/Support/Utility/UTypes.h"
+#include "Speed/Indep/Src/AI/AIAction.h"
+#include "Speed/Indep/Src/AI/AISteer.h"
+#include "Speed/Indep/Src/AI/AITarget.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IINput.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IRigidBody.h"
+#include "Speed/Indep/Src/Interfaces/Simables/ITransmission.h"
+#include "Speed/Indep/Src/Physics/Behavior.h"
+#include "Speed/Indep/Src/World/WWorldMath.h"
+#include "Speed/Indep/Tools/Inc/ConversionUtil.hpp"
+
+// total size: 0x48
+class AIActionRam : public AIAction, public Debugable {
+  public:
+    AIActionRam(AIActionParams *params, float score);
+    ~AIActionRam() override {}
+
+    static AIAction *Construct(AIActionParams *params);
+
+    // AIAction
+    bool CanBeAttempted(float dT) override;
+    void BeginAction(float dT) override;
+    bool IsFinished() override;
+    void FinishAction(float dT) override;
+    void Update(float dT) override;
+    void OnBehaviorChange(const UCrc32 &mechanic) override;
+
+    virtual void OnDebugDraw();
+
+  private:
+    void GetSeekPosition(UMath::Vector3 &seekPosition, bool avoid);
+    void UpdateSeek(UMath::Vector3 &seek, UMath::Vector3 &seekPosition, bool pull_over);
+    bool ShouldDoIt();
+
+  private:
+    IVehicleAI *mIVehicleAI;       // offset 0x4C, size 0x4
+    IRigidBody *mIRigidBody;       // offset 0x50, size 0x4
+    IVehicle *mIVehicle;           // offset 0x54, size 0x4
+    IPursuitAI *mIPursuitAI;       // offset 0x58, size 0x4
+    ITransmission *mITransmission; // offset 0x5C, size 0x4
+    IInput *mIInput;               // offset 0x60, size 0x4
+    bool mBrakeLeft;               // offset 0x64, size 0x1
+    performance_limiter mLimiter;  // offset 0x68, size 0x4
+};
+
+BIND_AIACTION_FACTORY(AIActionRam);
+
+AIActionRam::AIActionRam(AIActionParams *params, float score) : AIAction(params, score) {
+    this->MakeDebugable(DBG_AI);
+    params->mOwner->QueryInterface(&this->mIInput);
+    params->mOwner->QueryInterface(&this->mIVehicleAI);
+    params->mOwner->QueryInterface(&this->mIPursuitAI);
+    params->mOwner->QueryInterface(&this->mIVehicle);
+    params->mOwner->QueryInterface(&this->mITransmission);
+    this->mIRigidBody = params->mOwner->GetRigidBody();
+
+    static int brakeLeft = 0;
+    brakeLeft++;
+    this->mBrakeLeft = (brakeLeft & 1) != 0;
+}
+
+void AIActionRam::OnBehaviorChange(const UCrc32 &mechanic) {
+    if (mechanic == BEHAVIOR_MECHANIC_INPUT) {
+        this->GetOwner()->QueryInterface(&this->mIInput);
+    }
+    if (mechanic == BEHAVIOR_MECHANIC_RIGIDBODY) {
+        this->GetOwner()->QueryInterface(&this->mIRigidBody);
+    }
+    if (mechanic == BEHAVIOR_MECHANIC_ENGINE) {
+        this->GetOwner()->QueryInterface(&this->mITransmission);
+    }
+}
+
+AIAction *AIActionRam::Construct(AIActionParams *params) {
+    return new AIActionRam(params, 0.1f);
+}
+
+bool AIActionRam::ShouldDoIt() {
+    if (!this->mIVehicleAI->GetDrivableToTargetPos()) {
+        return false;
+    }
+    if (!this->mIVehicleAI->GetDrivableToDriveToNav()) {
+        return false;
+    }
+    return true;
+}
+
+bool AIActionRam::CanBeAttempted(float dT) {
+    if (this->mIVehicleAI != nullptr && this->mIPursuitAI != nullptr && this->mITransmission != nullptr && this->mIRigidBody != nullptr) {
+        if (this->mIPursuitAI->GetChicken()) {
+            return false;
+        }
+        if (!this->ShouldDoIt()) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool AIActionRam::IsFinished() {
+    if (!this->mIVehicleAI->GetTarget()->IsValid()) {
+        return true;
+    } else {
+        return this->ShouldDoIt() == false;
+    }
+}
+
+void AIActionRam::BeginAction(float dT) {
+    if (this->mIVehicleAI->GetLastSpawnTime() <= 0.0f) {
+        float maxSpeed = MPH2MPS(60.0f);
+        this->mIVehicle->SetSpeed(maxSpeed);
+    }
+    this->mLimiter.init(this->mIVehicle->GetSpeed());
+}
+
+void AIActionRam::FinishAction(float dT) {}
+
+void AIActionRam::GetSeekPosition(UMath::Vector3 &seekPosition, bool avoid) {
+    AITarget *target = this->mIVehicleAI->GetTarget();
+    UMath::Vector3 targetPosition = target->GetPosition();
+    UMath::Vector3 targetVelocity = target->GetLinearVelocity();
+    UMath::Vector3 myPosition = this->mIRigidBody->GetPosition();
+
+    UMath::Vector3 targetForward;
+    if (target->GetSpeed() < KPH2MPS(5.0f)) {
+        target->GetForwardVector(targetForward);
+    } else {
+        targetForward = targetVelocity;
+    }
+    UMath::Normalize(targetForward);
+
+    UMath::Vector3 targetSide = UMath::Vector3Make(targetForward.z, 0.0f, -targetForward.x);
+    UMath::Normalize(targetSide);
+
+    UMath::Vector3 offset = this->mIPursuitAI->GetInPositionOffset();
+    UMath::Vector3 metotarget = targetPosition - myPosition;
+    UMath::Vector3 targettoseek;
+
+    UMath::Scale(targetForward, offset.z, targettoseek);
+    UMath::ScaleAdd(targetSide, offset.x, targettoseek, targettoseek);
+
+    UMath::Vector3 metoseek = metotarget + UVector3(targettoseek);
+
+    float targettoseekradius = UMath::Lengthxz(targettoseek);
+    float metotargetradius = UMath::Lengthxz(metotarget);
+    float metoseekradius = UMath::Lengthxz(metoseek);
+    float avoidradius = bMin(targettoseekradius, metotargetradius) - 0.2f;
+    float u1;
+    float u2;
+
+    if (!avoid || avoidradius <= 0.1f ||
+        !WWorldMath::IntersectCircle(-metotarget.x, -metotarget.z, targettoseek.x, targettoseek.z, 0.0f, 0.0f, avoidradius, u1, u2)) {
+        UMath::Add(targettoseek, targetPosition, seekPosition);
+        return;
+    }
+
+    UMath::Vector3 targettotangent = UMath::Vector3Make(-metotarget.z, 0.0f, metotarget.x);
+    UMath::Scale(targettotangent, targettoseekradius * 2.1f / UMath::Length(targettotangent));
+
+    UMath::Vector3 drive1 = metotarget + UVector3(targettotangent);
+    UMath::Vector3 drive2 = metotarget - targettotangent;
+
+    UMath::Scale(drive1, metoseekradius / UMath::Length(drive1));
+    UMath::Scale(drive2, metoseekradius / UMath::Length(drive2));
+
+    if (UMath::Distance(drive1, metoseek) > UMath::Distance(drive2, metoseek)) {
+        drive1 = drive2;
+    }
+
+    UMath::Add(drive1, targetPosition, seekPosition);
+}
+
+void AIActionRam::UpdateSeek(UMath::Vector3 &seek, UMath::Vector3 &seekPosition, bool pull_over) {
+    UMath::Vector3 position = this->mIRigidBody->GetPosition();
+    UMath::Vector3 forwardVector;
+    this->mIRigidBody->GetForwardVector(forwardVector);
+    UMath::Vector3 velocity = this->mIRigidBody->GetLinearVelocity();
+
+    AITarget *target = this->mIVehicleAI->GetTarget();
+    UMath::Vector3 targetVelocity = target->GetLinearVelocity();
+
+    if (UMath::Length(velocity) < 1.0f) {
+        velocity = forwardVector;
+    }
+    float tvl = UMath::Length(targetVelocity);
+    UMath::Vector3 newseek = seekPosition;
+    if (tvl > 0.01f) {
+        UMath::Vector3 seekoff;
+        UMath::Sub(seekPosition, position, seekoff);
+        float blah = UMath::Dot(seekoff, targetVelocity) / tvl * 0.7f;
+        UMath::ScaleAdd(targetVelocity, blah / tvl, seekoff, seekoff);
+        UMath::Add(position, seekoff, newseek);
+    }
+    AISteer::Pursuit(seek, position, velocity, newseek, targetVelocity);
+}
+
+void AIActionRam::Update(float dT) {
+    bool ispullover = this->mIVehicleAI->GetGoalName() == UCrc32("AIGoalPullOver");
+
+    UMath::Vector3 seekPosition;
+    this->GetSeekPosition(seekPosition, ispullover);
+    UMath::Vector3 seek;
+    this->UpdateSeek(seek, seekPosition, ispullover);
+
+    UMath::Vector3 steer = seek;
+    float aggression = 0.0f;
+    UMath::Vector3 separation = UMath::Vector3Make(0.0f, 0.0f, 0.0f);
+
+    if (ispullover) {
+        IPerpetrator *iperp;
+        AITarget *target = this->mIVehicleAI->GetTarget();
+        if (target->QueryInterface(&iperp)) {
+            Attrib::Gen::pursuitlevels *pursuitLevelAttrib = iperp->GetPursuitLevelAttrib();
+            aggression = pursuitLevelAttrib->CollapseAggression();
+        }
+
+        bool isajerk = false;
+        if (this->mIVehicleAI->GetPursuit() != nullptr && this->mIVehicleAI->GetPursuit()->GetIsAJerk()) {
+            isajerk = true;
+        }
+        if (isajerk) {
+            aggression = 1.0f;
+        }
+
+        float staticavoid = (1.0f - aggression) * 4.0f;
+        float dynamicavoid = staticavoid + 1.5f;
+
+        AISteer::VehicleSeperation(separation, this->mIVehicle, this->mIVehicleAI->GetAvoidableList(), staticavoid, dynamicavoid);
+
+        float steerdotseparation = UMath::Dot(steer, separation);
+        float steercounterseparation = (-steerdotseparation) / UMath::Length(steer);
+
+        if (steercounterseparation > 0.0001f) {
+            float longweight = bClamp((KPH2MPS(55.0f) - steercounterseparation) / KPH2MPS(55.0f), 0.0f, 1.0f);
+            UMath::Vector3 steerlong;
+            UMath::Vector3 steerlat;
+
+            float separationlength2 = UMath::Dot(separation, separation);
+            UMath::Scale(separation, steerdotseparation / separationlength2, steerlong);
+            UMath::Sub(steer, steerlong, steerlat);
+            UMath::Scale(steerlong, longweight, steer);
+            UMath::Add(steer, steerlat);
+        }
+
+        UMath::Add(steer, separation);
+    }
+
+    float desired_speed = UMath::Length(steer);
+    IVehicleAI *targetai;
+
+    if (this->mIVehicleAI->GetPursuit()->GetTarget()->QueryInterface(&targetai)) {
+        float speed = this->mIVehicle->GetSpeed();
+        float speedmult = this->mIVehicleAI->GetAttributes().TopSpeedMultiplier();
+        float accelmult = this->mIVehicleAI->GetAttributes().AccelerationMultiplier();
+        float max_speed = KPH2MPS(this->mIVehicleAI->GetAttributes().MAXIMUM_AI_SPEED());
+
+        if (this->mIVehicleAI->GetPursuit()->GetIsAJerk()) {
+            speedmult *= 1.2f;
+            accelmult *= 1.5f;
+            max_speed *= 1.1f;
+        }
+
+        max_speed = bMin(max_speed, targetai->GetTopSpeed() * speedmult);
+        float max_accel = targetai->GetAcceleration(speed) * accelmult;
+
+        this->mLimiter.update(speed, max_speed, max_accel, dT);
+        max_speed = this->mLimiter.get_speed_limit();
+        desired_speed = bMin(desired_speed, max_speed);
+    }
+
+    float closeenoughspeed = KPH2MPS(0.5f) + (1.0f - aggression) * KPH2MPS(0.2f);
+    if (ispullover && UMath::Length(seek) < closeenoughspeed) {
+        this->mIInput->SetControlGas(0.0f);
+        this->mIInput->SetControlBrake(1.0f);
+        this->mIInput->SetControlSteering(0.0f);
+        this->mIInput->SetControlSteeringVertical(0.0f);
+        this->mIInput->SetControlHandBrake(1.0f);
+        this->mIInput->SetControlNOS(false);
+        return;
+    }
+
+    this->mIVehicleAI->SetDriveSpeed(desired_speed);
+
+    UMath::Add(this->mIRigidBody->GetPosition(), steer, steer);
+    this->mIVehicleAI->SetDriveTarget(steer);
+    this->mIVehicleAI->DoDriving(7);
+    this->mIInput->SetControlNOS(false);
+}
+
+void AIActionRam::OnDebugDraw() {}

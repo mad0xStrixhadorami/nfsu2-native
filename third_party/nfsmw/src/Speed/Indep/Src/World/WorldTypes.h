@@ -1,0 +1,19 @@
+#ifndef WORLD_TYPES_H
+#define WORLD_TYPES_H
+
+#define WUID_INVALID 0x00000000
+#define WUID_SIMINSTANCE 0x01000000
+#define WUID_SCENERY 0x02000000
+#define WUID_GAMEELEMENT 0x03000000
+#define WUID_SCENERYINSTANCE 0x04000000
+#define WUID_PARKEDCAR 0x05000000
+#define WUID_TYPEMASK 0xFF00000
+#define WUID_USERMASK 0x00FFFFFF
+
+typedef unsigned int WUID;
+
+inline bool WUID_IsValid(WUID id) {
+    return id != 0;
+}
+
+#endif

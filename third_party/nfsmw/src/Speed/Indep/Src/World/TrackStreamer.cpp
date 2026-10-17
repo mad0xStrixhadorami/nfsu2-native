@@ -1,0 +1,2495 @@
+#include "TrackStreamer.hpp"
+
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+#include "TrackPath.hpp"
+#include "VisibleSection.hpp"
+#include "Speed/Indep/Src/Ecstasy/Ecstasy.hpp"
+#include "Speed/Indep/Src/Misc/Profiler.hpp"
+#include "Speed/Indep/Src/Misc/QueuedFile.hpp"
+#include "Speed/Indep/Src/Misc/ResourceLoader.hpp"
+#include "Speed/Indep/Src/Misc/Timer.hpp"
+#include "Speed/Indep/Tools/Inc/ConversionUtil.hpp"
+#include "Speed/Indep/Src/Misc/bFile.hpp"
+#include "Speed/Indep/Src/Misc/SpeedChunks.hpp"
+#include "Speed/Indep/bWare/Inc/bDebug.hpp"
+#include "Speed/Indep/bWare/Inc/Espresso.hpp"
+#include "Speed/Indep/bWare/Inc/bPrintf.hpp"
+#include "Speed/Indep/bWare/Inc/Strings.hpp"
+#include "Speed/Indep/bWare/Inc/bFunk.hpp"
+#include "Speed/Indep/bWare/Inc/bWare.hpp"
+
+#include <algorithm>
+
+// TODO move
+extern BOOL bMemoryTracing;
+extern int SeeulatorToolActive;
+extern int ScenerySectionToBlink;
+extern bool PostLoadFixupDisabled;
+int ForceHoleFillerMethod = -1;
+extern int ShowSectionBoarder;
+void NotifySkyLoader();
+
+int TrackStreamerRemoteCaffeinating = 0;
+
+int LoaderTrackStreamer(bChunk *chunk);
+int UnloaderTrackStreamer(bChunk *chunk);
+
+unsigned char CurrentVisibleSectionTableMem[350];
+TrackStreamer TheTrackStreamer;
+bChunkLoader bChunkLoaderTrackStreamingSection(BCHUNK_TRACK_STRAMING_SECTIONS, LoaderTrackStreamer, UnloaderTrackStreamer);
+bChunkLoader bChunkLoaderTrackStreamingDiscBundle(BCHUNK_TRACK_STRAMING_DISC_BUNDLE, LoaderTrackStreamer, UnloaderTrackStreamer);
+bChunkLoader bChunkLoaderTrackStreamingInfo(BCHUNK_TRACK_STRAMING_INFOS, LoaderTrackStreamer, UnloaderTrackStreamer);
+bChunkLoader bChunkLoaderTrackStreamingBarriers(BCHUNK_TRACK_STRAMING_BARRIERS, LoaderTrackStreamer, UnloaderTrackStreamer);
+
+unsigned int PlotLoadingMarker(const char *layer_name, const bVector2 *begin_position, const bVector2 *end_position, float load_time) {}
+
+// total size: 0x34
+class TSMemoryNode : public bTNode<TSMemoryNode> {
+  public:
+    bool IsFree() {
+        return !this->Allocated;
+    }
+
+    bool IsAllocated() {
+        return this->Allocated;
+    }
+
+    bool Contains(intptr_t address) {
+        return address >= this->Address && address < this->Address + this->Size;
+    }
+
+    int GetAddress(bool start_from_top, int size) {
+        if (start_from_top) {
+            return this->Address;
+        }
+        return this->Address + this->Size - size;
+    }
+
+    intptr_t Address;   // offset 0x8, size 0x4
+    int32 Size;         // offset 0xC, size 0x4
+    bool Allocated;     // offset 0x10, size 0x1
+    char DebugName[32]; // offset 0x14, size 0x20
+};
+
+// total size: 0x2754
+class TSMemoryPool {
+  public:
+    TSMemoryPool(intptr_t address, int size, const char *debug_name, int pool_num);
+    void *Malloc(int32 size, const char *debug_name, bool best_fit, bool allocate_from_top, intptr_t address);
+    void Free(void *ptr);
+    int GetAmountFree();
+    int GetLargestFreeBlock();
+    TSMemoryNode *GetNextNode(bool start_from_top, TSMemoryNode *node);
+
+    TSMemoryNode *GetFirstNode(bool start_from_top) {
+        return this->GetNextNode(start_from_top, nullptr);
+    }
+
+    TSMemoryNode *GetNextFreeNode(bool start_from_top, TSMemoryNode *node);
+
+    TSMemoryNode *GetFirstFreeNode(bool start_from_top) {
+        return this->GetNextFreeNode(start_from_top, nullptr);
+    }
+
+    TSMemoryNode *GetNextAllocatedNode(bool start_from_top, TSMemoryNode *node);
+
+    TSMemoryNode *GetFirstAllocatedNode(bool start_from_top) {
+        return this->GetNextAllocatedNode(start_from_top, 0);
+    }
+
+    bool IsUpdated() {
+        bool updated = this->Updated;
+        this->Updated = false;
+        return updated;
+    }
+
+    uint32 GetPoolChecksum();
+    void DebugPrint();
+
+    void EnableTracing(bool enabled) {
+        this->TracingEnabled = enabled;
+    }
+
+  private:
+    static void *OverrideMalloc(void *pool, int size, const char *debug_text, int debug_line, int allocation_params) {
+        int user_alignment_offset = bMemoryGetAlignmentOffset(allocation_params);
+
+        if (user_alignment_offset != 0) {
+            char *p = reinterpret_cast<char *>(static_cast<TSMemoryPool *>(pool)->Malloc(
+                size + 0x80, debug_text, bMemoryGetBestFit(allocation_params) != 0, bMemoryGetTopBit(allocation_params) != 0, 0));
+            return &p[0x80 - user_alignment_offset];
+        }
+
+        return static_cast<TSMemoryPool *>(pool)->Malloc(size, debug_text, bMemoryGetBestFit(allocation_params) != 0,
+                                                         bMemoryGetTopBit(allocation_params) != 0, 0);
+    }
+
+    static void OverrideFree(void *pool, void *ptr) {
+        static_cast<TSMemoryPool *>(pool)->Free(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(ptr) & ~static_cast<uintptr_t>(0x7F)));
+    }
+
+    static int OverrideGetAmountFree(void *pool) {
+        return static_cast<TSMemoryPool *>(pool)->GetAmountFree();
+    }
+
+    static int OverrideGetLargestFreeBlock(void *pool) {
+        return static_cast<TSMemoryPool *>(pool)->GetLargestFreeBlock();
+    }
+
+    TSMemoryNode *GetNewNode(intptr_t address, int32 size, bool allocated, const char *debug_name);
+    void RemoveNode(TSMemoryNode *node);
+
+    int PoolNum;                         // offset 0x0, size 0x4
+    const char *DebugName;               // offset 0x4, size 0x4
+    int TotalSize;                       // offset 0x8, size 0x4
+    bool TracingEnabled;                 // offset 0xC, size 0x1
+    bool Updated;                        // offset 0x10, size 0x1
+    int AllocationNumber;                // offset 0x14, size 0x4
+    int AmountFree;                      // offset 0x18, size 0x4
+    int LargestFree;                     // offset 0x1C, size 0x4
+    bool NeedToRecalcLargestFree;        // offset 0x20, size 0x1
+    bTList<TSMemoryNode> UnusedNodeList; // offset 0x24, size 0x8
+    bTList<TSMemoryNode> NodeList;       // offset 0x2C, size 0x8
+    TSMemoryNode MemoryNodes[192];       // offset 0x34, size 0x2700
+    MemoryPoolOverrideInfo OverrideInfo; // offset 0x2734, size 0x20
+};
+
+TSMemoryPool::TSMemoryPool(intptr_t address, int size, const char *debug_name, int pool_num) {
+    this->PoolNum = pool_num;
+    this->DebugName = debug_name;
+    this->TotalSize = size;
+    this->TracingEnabled = true;
+    this->AllocationNumber = 0;
+    this->Updated = false;
+    this->AmountFree = size;
+    this->LargestFree = size;
+    this->NeedToRecalcLargestFree = false;
+
+    for (int n = 0; n < 192; n++) {
+        TSMemoryNode *node = &this->MemoryNodes[n];
+        this->UnusedNodeList.AddTail(node);
+    }
+
+    if (this->TracingEnabled && bMemoryTracing) {
+        bMemoryTraceNewPoolPacket packet;
+        packet.PoolID = reinterpret_cast<intptr_t>(this);
+        bMemSet(packet.Name, 0, sizeof(packet.Name));
+        bStrNCpy(packet.Name, debug_name, sizeof(packet.Name) - 1);
+        bFunkCallASync("CODEINE", 0x19, &packet, sizeof(packet));
+    }
+
+    TSMemoryNode *node = this->GetNewNode(address, size, false, nullptr);
+    this->NodeList.AddTail(node);
+
+    if (this->TracingEnabled && bMemoryTracing) {
+        bMemoryTraceFreePacket packet = {};
+        packet.PoolID = reinterpret_cast<intptr_t>(this);
+        packet.MemoryAddress = static_cast<intptr_t>(address);
+        packet.Size = size;
+        bFunkCallASync("CODEINE", 0x1b, &packet, sizeof(packet));
+    }
+
+    MemoryPoolOverrideInfo *override_info = &this->OverrideInfo;
+    bMemSet(&this->OverrideInfo, 0, sizeof(this->OverrideInfo));
+#ifndef EA_BUILD_A124
+    this->OverrideInfo.Name = this->DebugName;
+#endif
+    this->OverrideInfo.Pool = this;
+    this->OverrideInfo.Address = address;
+    this->OverrideInfo.Size = size;
+    this->OverrideInfo.Malloc = OverrideMalloc;
+    this->OverrideInfo.Free = OverrideFree;
+    this->OverrideInfo.GetAmountFree = OverrideGetAmountFree;
+    this->OverrideInfo.GetLargestFreeBlock = OverrideGetLargestFreeBlock;
+    bSetMemoryPoolOverrideInfo(this->PoolNum, &this->OverrideInfo);
+}
+
+TSMemoryNode *TSMemoryPool::GetNewNode(intptr_t address, int size, bool allocated, const char *debug_name) {
+    TSMemoryNode *node = this->UnusedNodeList.RemoveHead();
+
+    node->Address = address;
+    node->Size = size;
+    node->Allocated = allocated;
+    bSafeStrCpy(node->DebugName, debug_name, sizeof(node->DebugName));
+    return node;
+}
+
+void TSMemoryPool::RemoveNode(TSMemoryNode *node) {
+    this->UnusedNodeList.AddTail(node);
+}
+
+void *TSMemoryPool::Malloc(int size, const char *debug_name, bool best_fit, bool allocate_from_top, intptr_t address) {
+    TSMemoryNode *found_node = nullptr;
+
+    size = (size + 0x7f) & ~0x7f;
+
+    if (address != 0) {
+        for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+            if (node->IsFree() && node->Size >= size && node->Contains(address)) {
+                found_node = node;
+                break;
+            }
+        }
+    } else if (best_fit) {
+        for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+            if (node->IsFree() && node->Size >= size && ((found_node == nullptr) || found_node->Size - size > node->Size - size)) {
+                found_node = node;
+            }
+        }
+    } else if (allocate_from_top) {
+        for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+            if (node->IsFree() && node->Size >= size) {
+                found_node = node;
+                break;
+            }
+        }
+    } else {
+        for (TSMemoryNode *node = this->NodeList.GetTail(); node != this->NodeList.EndOfList(); node = node->GetPrev()) {
+            if (node->IsFree() && node->Size >= size) {
+                found_node = node;
+                break;
+            }
+        }
+    }
+
+    if (found_node == nullptr) {
+        return nullptr;
+    }
+
+    if (address == 0) {
+        if (allocate_from_top) {
+            address = found_node->Address;
+        } else {
+            address = found_node->Address + found_node->Size - size;
+        }
+    }
+
+    this->AmountFree -= size;
+    if (found_node->Size == this->LargestFree) {
+        this->NeedToRecalcLargestFree = true;
+    }
+
+    TSMemoryNode *new_node = this->GetNewNode(address, size, true, debug_name);
+    new_node->AddAfter(found_node);
+
+    int new_bottom_size = address - found_node->Address;
+    int new_top_size = found_node->Address + found_node->Size - (address + size);
+    found_node->Size = new_bottom_size;
+    if (new_bottom_size == 0) {
+        this->NodeList.Remove(found_node);
+        this->RemoveNode(found_node);
+    }
+
+    if (new_top_size != 0) {
+        TSMemoryNode *top_node = this->GetNewNode(address + size, new_top_size, false, 0);
+        top_node->AddAfter(new_node);
+    }
+
+    if (this->TracingEnabled && bMemoryTracing) {
+        bMemoryTraceAllocatePacket packet = {reinterpret_cast<intptr_t>(this), address, size, 0, this->AllocationNumber};
+
+        bMemSet(packet.DebugText, 0, sizeof(packet.DebugText));
+        if (debug_name) {
+            bStrNCpy(packet.DebugText, debug_name, sizeof(packet.DebugText) - 1);
+        }
+        int extra_len = bStrLen(packet.DebugText) + 0x15;
+        bFunkCallASync("CODEINE", 0x1c, &packet, extra_len);
+    }
+
+    for (int n = 0; n < 0; n++) {
+        unsigned char *p;
+    }
+
+    this->Updated = true;
+    this->AllocationNumber++;
+    return reinterpret_cast<void *>(address);
+}
+
+void TSMemoryPool::Free(void *ptr) {
+    intptr_t address = reinterpret_cast<intptr_t>(ptr);
+    this->Updated = true;
+
+    for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+        if (node->Address == address) {
+            int size;
+            TSMemoryNode *prev_node = node->GetPrev();
+
+            size = node->Size;
+            node->Allocated = false;
+            node->DebugName[0] = 0;
+            if (prev_node != this->NodeList.EndOfList() && prev_node->IsFree()) {
+                node->Address = address - prev_node->Size;
+                node->Size = size + prev_node->Size;
+                this->NodeList.Remove(prev_node);
+                this->RemoveNode(prev_node);
+            }
+
+            TSMemoryNode *next_node = node->GetNext();
+            if (next_node != this->NodeList.EndOfList() && next_node->IsFree()) {
+                node->Size += next_node->Size;
+                this->NodeList.Remove(next_node);
+                this->RemoveNode(next_node);
+            }
+
+            this->AmountFree += size;
+            if (node->Size > this->LargestFree) {
+                this->LargestFree = node->Size;
+            }
+
+            if (this->TracingEnabled && bMemoryTracing) {
+                bMemoryTraceFreePacket packet = {};
+                packet.PoolID = reinterpret_cast<intptr_t>(this);
+                packet.MemoryAddress = reinterpret_cast<intptr_t>(ptr);
+                packet.Size = size;
+                bFunkCallASync("CODEINE", 0x1b, &packet, sizeof(packet));
+            }
+            return;
+        }
+    }
+}
+
+int TSMemoryPool::GetAmountFree() {
+    for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+        node->IsFree();
+    }
+    int amount_free = this->AmountFree;
+    return amount_free;
+}
+
+int TSMemoryPool::GetLargestFreeBlock() {
+    if (this->NeedToRecalcLargestFree) {
+        int largest_free = 0;
+        for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+            if (node->IsFree() && node->Size > largest_free) {
+                largest_free = node->Size;
+            }
+        }
+        this->LargestFree = largest_free;
+        this->NeedToRecalcLargestFree = false;
+    }
+
+    int largest_free = 0;
+    for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+        if (node->IsFree() && node->Size > largest_free) {
+            largest_free = node->Size;
+        }
+    }
+    return this->LargestFree;
+}
+
+TSMemoryNode *TSMemoryPool::GetNextNode(bool start_from_top, TSMemoryNode *node) {
+    if (start_from_top) {
+        if (node != nullptr) {
+            node = node->GetNext();
+        } else {
+            node = this->NodeList.GetHead();
+        }
+    } else {
+        if (node != nullptr) {
+            node = node->GetPrev();
+        } else {
+            node = this->NodeList.GetTail();
+        }
+    }
+
+    if (node == this->NodeList.EndOfList()) {
+        return nullptr;
+    }
+    return node;
+}
+
+TSMemoryNode *TSMemoryPool::GetNextFreeNode(bool start_from_top, TSMemoryNode *node) {
+    TSMemoryNode *next_node = node;
+    while (next_node = this->GetNextNode(start_from_top, next_node), next_node) {
+        if (next_node->IsFree()) {
+            return next_node;
+        }
+    }
+    // return nullptr; // TODO put behind SANE_CODE macro
+}
+
+TSMemoryNode *TSMemoryPool::GetNextAllocatedNode(bool start_from_top, TSMemoryNode *node) {
+    TSMemoryNode *next_node = node;
+    while (next_node = this->GetNextNode(start_from_top, next_node), next_node) {
+        if (next_node->IsAllocated()) {
+            return next_node;
+        }
+    }
+    // return nullptr; // TODO put behind SANE_CODE macro
+}
+
+unsigned int TSMemoryPool::GetPoolChecksum() {
+    unsigned int checksum = 0;
+    for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList() && false; node = node->GetNext()) {
+    }
+    return checksum;
+}
+
+void TSMemoryPool::DebugPrint() {
+    for (TSMemoryNode *node = this->NodeList.GetHead(); node != this->NodeList.EndOfList(); node = node->GetNext()) {
+        const char *name = node->DebugName;
+        node->IsAllocated();
+    }
+}
+
+int LoaderTrackStreamer(bChunk *chunk) {
+    return TheTrackStreamer.Loader(chunk);
+}
+
+int UnloaderTrackStreamer(bChunk *chunk) {
+    return TheTrackStreamer.Unloader(chunk);
+}
+
+void RefreshTrackStreamer() {
+    TheTrackStreamer.RefreshLoading();
+}
+
+// UNSOLVED, ClearTable shouldn't inline
+TrackStreamer::TrackStreamer() {
+    this->pTrackStreamingSections = nullptr;
+    this->NumTrackStreamingSections = 0;
+    this->pDiscBundleSections = nullptr;
+    this->pLastDiscBundleSection = nullptr;
+    this->NumSectionsLoaded = 0;
+    this->NumSectionsLoading = 0;
+    this->NumSectionsActivated = 0;
+    this->NumSectionsOutOfMemory = 0;
+    this->NumSectionsMoved = 0;
+    bMemSet(this->StreamFilenames, 0, sizeof(this->StreamFilenames));
+    this->SplitScreen = false;
+    this->PermFileLoading = false;
+    this->PermFilename = nullptr;
+    this->PermFileChunks = nullptr;
+    this->PermFileSize = 0;
+    this->NumBarriers = 0;
+    this->pBarriers = nullptr;
+    this->NumCurrentStreamingSections = 0;
+    this->NumHibernatingSections = 0;
+    this->CurrentZoneNeedsRefreshing = false;
+    this->ZoneSwitchingDisabled = false;
+    this->LastWaitUntilRenderingDoneFrameCount = 0;
+    this->LastPrintedFrameCount = 0;
+    this->SkipNextHandleLoad = false;
+
+    this->ClearCurrentZones();
+    this->ClearStreamingPositions();
+
+    this->pMemoryPoolMem = nullptr;
+    this->MemoryPoolSize = 0;
+    this->UserMemoryAllocationSize = 0;
+    this->pMemoryPool = nullptr;
+
+    this->CurrentVisibleSectionTable.Init(CurrentVisibleSectionTableMem, 0xAF0);
+    // TODO why doesn't this inline?
+    this->CurrentVisibleSectionTable.ClearTable();
+    bMemSet(this->KeepSectionTable, 0, sizeof(this->KeepSectionTable));
+    this->pCallback = nullptr;
+    this->CallbackParam = 0;
+    this->MakeSpaceInPoolCallback = nullptr;
+    this->MakeSpaceInPoolCallbackParam = 0;
+    this->MakeSpaceInPoolSize = 0;
+}
+
+int TrackStreamer::Loader(bChunk *chunk) {
+    if (chunk->GetID() == BCHUNK_TRACK_STRAMING_SECTIONS) {
+        int n;
+        this->pTrackStreamingSections = reinterpret_cast<TrackStreamingSection *>(chunk->GetData());
+        this->NumTrackStreamingSections = chunk->GetSize() / sizeof(TrackStreamingSection);
+        for (n = 0; n < this->NumTrackStreamingSections; n++) {
+            TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+            bPlatEndianSwap(&section->SectionNumber);
+            bPlatEndianSwap(reinterpret_cast<int *>(&section->FileType));
+            bPlatEndianSwap(reinterpret_cast<int *>(&section->Status));
+            bPlatEndianSwap(&section->FileOffset);
+            bPlatEndianSwap(&section->Size);
+            bPlatEndianSwap(&section->CompressedSize);
+            bPlatEndianSwap(&section->PermSize);
+            bPlatEndianSwap(&section->SectionPriority);
+            bPlatEndianSwap(&section->Centre);
+            bPlatEndianSwap(&section->Radius);
+            bPlatEndianSwap(&section->Checksum);
+        }
+
+        for (n = 0; n < this->NumHibernatingSections; n++) {
+            TrackStreamingSection *hibernating_section = &this->HibernatingSections[n];
+            TrackStreamingSection *section = this->FindSection(hibernating_section->SectionNumber);
+            bMemCpy(section, hibernating_section, sizeof(TrackStreamingSection));
+            this->NumSectionsLoaded++;
+            this->ActivateSection(section);
+            this->CurrentStreamingSections[this->NumCurrentStreamingSections++] = section;
+        }
+
+        this->NumHibernatingSections = 0;
+        return 1;
+    } else if (chunk->GetID() == BCHUNK_TRACK_STRAMING_DISC_BUNDLE) {
+        DiscBundleSection *disc_bundle;
+        this->pDiscBundleSections = reinterpret_cast<DiscBundleSection *>(chunk->GetData());
+        this->pLastDiscBundleSection = reinterpret_cast<DiscBundleSection *>(reinterpret_cast<char *>(chunk->GetData()) + chunk->GetSize());
+        for (disc_bundle = this->pDiscBundleSections; disc_bundle < this->pLastDiscBundleSection; disc_bundle = disc_bundle->GetMemoryImageNext()) {
+            bPlatEndianSwap(&disc_bundle->FileOffset);
+            bPlatEndianSwap(&disc_bundle->FileSize);
+            bPlatEndianSwap(&disc_bundle->NumMembers);
+            for (int i = 0; i < disc_bundle->NumMembers; i++) {
+                DiscBundleSectionMember *member = &disc_bundle->Members[i];
+                bPlatEndianSwap(&member->SectionNumber);
+                bPlatEndianSwap(&member->FileOffset);
+                TrackStreamingSection *section = this->FindSection(member->SectionNumber);
+                member->pSection = section;
+            }
+        }
+        return 1;
+    } else if (chunk->GetID() == BCHUNK_TRACK_STRAMING_INFOS) {
+        this->pInfo = reinterpret_cast<TrackStreamingInfo *>(chunk->GetData());
+        for (int n = 0; n < 2; n++) {
+            bPlatEndianSwap(n + this->pInfo->FileSize);
+        }
+        return 1;
+    } else if (chunk->GetID() == BCHUNK_TRACK_STRAMING_BARRIERS) {
+        this->pBarriers = reinterpret_cast<TrackStreamingBarrier *>(chunk->GetData());
+        this->NumBarriers = chunk->GetSize() / sizeof(TrackStreamingBarrier);
+        for (int n = 0; n < this->NumBarriers; n++) {
+            TrackStreamingBarrier *barrier = &this->pBarriers[n];
+            barrier->EndianSwap();
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int TrackStreamer::Unloader(bChunk *chunk) {
+    if (chunk->GetID() == BCHUNK_TRACK_STRAMING_SECTIONS) {
+        this->UnloadEverything();
+        this->pTrackStreamingSections = nullptr;
+        this->NumTrackStreamingSections = 0;
+        return 1;
+    }
+
+    if (chunk->GetID() == BCHUNK_TRACK_STRAMING_DISC_BUNDLE) {
+        this->pDiscBundleSections = nullptr;
+        this->pLastDiscBundleSection = nullptr;
+        return 1;
+    }
+
+    if (chunk->GetID() == BCHUNK_TRACK_STRAMING_INFOS) {
+        this->pInfo = nullptr;
+        return 1;
+    }
+
+    if (chunk->GetID() == BCHUNK_TRACK_STRAMING_BARRIERS) {
+        this->pBarriers = nullptr;
+        this->NumBarriers = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
+void TrackStreamer::ClearCurrentZones() {
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        position_entry->CurrentZone = 0;
+        position_entry->BeginLoadingTime = 0.0f;
+        position_entry->BeginLoadingPosition.x = 0.0f;
+        position_entry->BeginLoadingPosition.y = 0.0f;
+        position_entry->NumSectionsToLoad = 0;
+        position_entry->NumSectionsLoaded = 0;
+        position_entry->AmountToLoad = 0;
+        position_entry->AmountLoaded = 0;
+    }
+
+    this->LoadingPhase = LOADING_IDLE;
+    this->LoadingBacklog = 0.0f;
+    this->CurrentZoneOutOfMemory = false;
+    this->CurrentZoneAllocatedButIncomplete = false;
+    this->CurrentZoneNonReplayLoad = false;
+    this->CurrentZoneFarLoad = true;
+    this->StartLoadingTime = 0.0f;
+    this->CurrentZoneName[0] = 0;
+    this->MemorySafetyMargin = 0;
+    this->AmountJettisoned = 0;
+    this->NumJettisonedSections = 0;
+    bMemSet(this->JettisonedSections, 0, sizeof(this->JettisonedSections));
+    this->RemoveCurrentStreamingSections();
+}
+
+void TrackStreamer::InitMemoryPool(int size) {
+    this->MemoryPoolSize = size;
+    this->pMemoryPoolMem = bMalloc(size, "Track Streaming Buffer", 0, 0x2000);
+    this->pMemoryPool = new ("TSMemoryPool", 0) TSMemoryPool(reinterpret_cast<intptr_t>(this->pMemoryPoolMem), this->MemoryPoolSize, "Track Streaming", 7);
+}
+
+int TrackStreamer::GetMemoryPoolSize() {
+    if (this->pMemoryPool->IsUpdated()) {
+        this->UserMemoryAllocationSize = this->CountUserAllocations(nullptr);
+    }
+    return this->MemoryPoolSize - this->UserMemoryAllocationSize;
+}
+
+int TrackStreamer::CountUserAllocations(const char **pfragmented_user_allocation) {
+    if (pfragmented_user_allocation) {
+        *pfragmented_user_allocation = nullptr;
+    }
+
+    int num_fragmented_user_allocations = 0;
+    int user_allocation_size = 0;
+    bool start_from_top = false;
+    TSMemoryNode *node = this->pMemoryPool->GetFirstAllocatedNode(start_from_top);
+    while (node) {
+        TrackStreamingSection *section = this->FindSectionByAddress(node->Address);
+        if (section == nullptr) {
+            user_allocation_size += node->Size;
+            if (this->pMemoryPool->GetNextFreeNode(start_from_top, node) && this->pMemoryPool->GetNextFreeNode(!start_from_top, node) &&
+                pfragmented_user_allocation) {
+                *pfragmented_user_allocation = node->DebugName;
+                num_fragmented_user_allocations++;
+            }
+        }
+
+        node = this->pMemoryPool->GetNextAllocatedNode(start_from_top, node);
+    }
+
+    return user_allocation_size;
+}
+
+TrackStreamingSection *TrackStreamer::FindSection(int section_number) {
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        if (section->SectionNumber == static_cast<short>(section_number)) {
+            return section;
+        }
+    }
+    return nullptr;
+}
+
+TrackStreamingSection *TrackStreamer::FindSectionByAddress(intptr_t address) {
+    int n;
+    for (n = 0; n < this->NumCurrentStreamingSections; n++) {
+        TrackStreamingSection *section = this->CurrentStreamingSections[n];
+        if (section->pMemory == reinterpret_cast<void *>(address)) {
+            return section;
+        }
+    }
+
+    for (n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        if (section->pMemory == reinterpret_cast<void *>(address)) {
+            return section;
+        }
+    }
+
+    return nullptr;
+}
+
+int TrackStreamer::GetCombinedSectionNumber(int section_number) {
+    if (IsScenerySectionDrivable(section_number)) {
+        int lod_section_number = GetLODScenerySectionNumber(section_number);
+        if (!this->FindSection(section_number)) {
+            if (this->FindSection(lod_section_number)) {
+                return lod_section_number;
+            }
+        }
+    }
+
+    return section_number;
+}
+
+void TrackStreamer::InitRegion(const char *region_stream_filename, bool split_screen) {
+    bool flush_hibernating_sections = false;
+
+    if (this->SplitScreen != split_screen) {
+        this->SplitScreen = split_screen;
+        flush_hibernating_sections = true;
+    }
+    if (!bStrEqual(this->StreamFilenames[1], region_stream_filename)) {
+        flush_hibernating_sections = true;
+        bStrCpy(this->StreamFilenames[1], region_stream_filename);
+    }
+    if (flush_hibernating_sections) {
+        this->FlushHibernatingSections();
+    }
+    if (this->PermFileLoading) {
+        BlockWhileQueuedFileBusy();
+    }
+
+    this->ClearCurrentZones();
+    this->ClearStreamingPositions();
+
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+
+        position_entry->PredictedZone = 0;
+        position_entry->PredictedZoneValidTime = 0;
+        position_entry->AudioReading = false;
+        position_entry->AudioReadingTime = 0.0f;
+        position_entry->AudioReadingPosition.x = 0.0f;
+        position_entry->AudioReadingPosition.y = 0.0f;
+        position_entry->AudioBlocking = false;
+        position_entry->AudioBlockingTime = 0.0f;
+        position_entry->AudioBlockingPosition.x = 0.0f;
+        position_entry->AudioBlockingPosition.y = 0.0f;
+    }
+
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        int boundary_section_number = GetBoundarySectionNumber(section->SectionNumber, bGetPlatformName());
+        VisibleSectionBoundary *boundary = TheVisibleSectionManager.FindBoundary(boundary_section_number);
+#ifndef EA_BUILD_A124
+        section->pBoundary = boundary;
+#endif
+    }
+
+    this->EmptyCaffeineLayers();
+}
+
+// UNSOLVED because it's empty and the stack is too small
+void TrackStreamer::HibernateStreamingSections() {
+    int sections_to_hibernate[5];
+    // I made these up
+    GetScenerySectionNumber('A', 0);
+    GetScenerySectionNumber('B', 1);
+    GetScenerySectionNumber('C', 2);
+    GetScenerySectionNumber('D', 3);
+    GetScenerySectionNumber('E', 4);
+
+    for (int n = 0; n < 5 && false; n++) {
+        int section_number = sections_to_hibernate[n];
+        {
+            TrackStreamingSection *section;
+            {
+                TrackStreamingSection *hibernating_section;
+            }
+        }
+    }
+
+    return;
+}
+
+void TrackStreamer::FlushHibernatingSections() {
+    for (int n = 0; n < this->NumHibernatingSections; n++) {
+        TrackStreamingSection *section = &this->HibernatingSections[n];
+        bFree(section->pMemory);
+    }
+    this->NumHibernatingSections = 0;
+}
+
+void *TrackStreamer::AllocateMemory(TrackStreamingSection *section, int allocation_params) {
+    void *buf = bMalloc(section->Size, section->SectionName, 0, allocation_params | 0x2007);
+    if (buf == nullptr) {
+        bBreak();
+    }
+    return buf;
+}
+
+void TrackStreamer::LoadDiscBundle(DiscBundleSection *disc_bundle) {
+    void *memory = nullptr;
+    for (int i = 0; i < disc_bundle->NumMembers; i++) {
+        DiscBundleSectionMember *member = &disc_bundle->Members[i];
+        TrackStreamingSection *section = member->pSection;
+        if (i == 0) {
+            memory = section->pMemory;
+        }
+        section->Status = TrackStreamingSection::LOADING;
+    }
+
+    this->NumSectionsLoading++;
+    AddQueuedFile(memory, this->StreamFilenames[1], disc_bundle->FileOffset, disc_bundle->FileSize, DiscBundleLoadedCallback,
+                  reinterpret_cast<intptr_t>(disc_bundle), nullptr);
+}
+
+void TrackStreamer::DiscBundleLoadedCallback(intptr_t param, int error_status) {
+    TheTrackStreamer.DiscBundleLoadedCallback(reinterpret_cast<DiscBundleSection *>(param));
+}
+
+void TrackStreamer::DiscBundleLoadedCallback(DiscBundleSection *disc_bundle) {
+    this->NumSectionsLoading += disc_bundle->NumMembers - 1;
+    for (int i = 0; i < disc_bundle->NumMembers; i++) {
+        DiscBundleSectionMember *member = &disc_bundle->Members[i];
+        TrackStreamingSection *section = member->pSection;
+        section->pDiscBundle = nullptr;
+        this->SectionLoadedCallback(section);
+    }
+}
+
+void TrackStreamer::LoadSection(TrackStreamingSection *section) {
+    this->NumSectionsLoading++;
+    section->Status = TrackStreamingSection::LOADING;
+
+    if (section->CompressedSize == section->Size) {
+        AddQueuedFile(section->pMemory, this->StreamFilenames[section->FileType], section->FileOffset, section->CompressedSize, SectionLoadedCallback,
+                      reinterpret_cast<intptr_t>(section), nullptr);
+    } else {
+        QueuedFileParams params;
+        params.Compressed = true;
+        params.UncompressedSize = section->Size;
+        AddQueuedFile(section->pMemory, this->StreamFilenames[section->FileType], section->FileOffset, section->CompressedSize, SectionLoadedCallback,
+                      reinterpret_cast<intptr_t>(section), &params);
+    }
+}
+
+void TrackStreamer::ActivateSection(TrackStreamingSection *section) {
+    ProfileNode profile_node("TODO", 0);
+    int allocation_params = 0x2087;
+    this->NumSectionsActivated++;
+    eAllowDuplicateSolids(true);
+    SetDuplicateTextureWarning(false);
+
+    bChunk *chunks = reinterpret_cast<bChunk *>(section->pMemory);
+    int sizeof_chunks = section->LoadedSize;
+    LoadTempPermChunks(&chunks, &sizeof_chunks, allocation_params, section->SectionName);
+
+    section->pMemory = chunks;
+    section->LoadedSize = sizeof_chunks;
+    section->Status = TrackStreamingSection::ACTIVATED;
+    section->LoadedTime = 0;
+    eAllowDuplicateSolids(false);
+    SetDuplicateTextureWarning(true);
+}
+
+void TrackStreamer::UnactivateSection(TrackStreamingSection *section) {
+    ProfileNode profile_node("TODO", 0);
+    section->UnactivatedFrameCount = 0;
+    DisableWaitUntilRenderingDone();
+    section->UnactivatedFrameCount = eGetFrameCounter();
+    UnloadChunks(reinterpret_cast<bChunk *>(section->pMemory), section->LoadedSize, section->SectionName);
+    EnableWaitUntilRenderingDone();
+    this->NumSectionsActivated--;
+    section->Status = TrackStreamingSection::LOADED;
+}
+
+bool TrackStreamer::WillUnloadBlock(TrackStreamingSection *section) {
+    if ((section->UnactivatedFrameCount != 0) && (section->UnactivatedFrameCount == eGetFrameCounter())) {
+        if (this->LastWaitUntilRenderingDoneFrameCount != eGetFrameCounter()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void TrackStreamer::UnloadSection(TrackStreamingSection *section) {
+    ProfileNode profile_node("TODO", 0);
+    if (section->Status == TrackStreamingSection::ACTIVATED) {
+        this->UnactivateSection(section);
+    }
+
+    if (section->Status == TrackStreamingSection::LOADED) {
+        if (this->WillUnloadBlock(section)) {
+            DisableWaitForFrameBufferSwap();
+            eWaitUntilRenderingDone();
+            EnableWaitForFrameBufferSwap();
+            this->LastWaitUntilRenderingDoneFrameCount = eGetFrameCounter();
+        }
+
+        section->UnactivatedFrameCount = 0;
+        bFree(section->pMemory);
+        section->pMemory = nullptr;
+        section->Status = TrackStreamingSection::UNLOADED;
+        section->LoadedTime = 0;
+        this->NumSectionsLoaded--;
+    }
+}
+
+bool TrackStreamer::NeedsGameStateActivation(TrackStreamingSection *section) {
+    return false;
+
+    if (IsRegularScenerySection(section->SectionNumber) && IsLODScenerySectionNumber(section->SectionNumber)) {
+        return true;
+    }
+}
+
+void TrackStreamer::SectionLoadedCallback(intptr_t param, int error_status) {
+    TrackStreamingSection *section = reinterpret_cast<TrackStreamingSection *>(param);
+
+    TheTrackStreamer.SectionLoadedCallback(section);
+}
+
+void TrackStreamer::SectionLoadedCallback(TrackStreamingSection *section) {
+    section->Status = TrackStreamingSection::LOADED;
+    section->LoadedSize = section->Size;
+    EndianSwapChunkHeadersRecursive(reinterpret_cast<bChunk *>(section->pMemory), section->Size);
+    this->NumSectionsLoading--;
+    this->NumSectionsLoaded++;
+    section->LoadedTime = RealTimeFrames;
+
+    if (section->CurrentlyVisible && !this->NeedsGameStateActivation(section)) {
+        this->ActivateSection(section);
+    }
+
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        if ((section->CurrentlyVisible >> position_number) & 1) {
+            StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+            position_entry->NumSectionsLoaded++;
+            position_entry->AmountLoaded += section->Size;
+        }
+    }
+
+    this->CalculateLoadingBacklog();
+#ifdef EA_PLATFORM_GAMECUBE
+    DCStoreRange(section->pMemory, section->LoadedSize);
+#endif
+}
+
+void TrackStreamer::EmptyCaffeineLayers() {
+    TrackStreamerRemoteCaffeinating = 0;
+
+    espEmptyLayer("TrackStreamingTrail");
+    espEmptyLayer("TrackStreamingPredict");
+    espEmptyLayer("TrackStreamingLoadedZone");
+    espEmptyLayer("TrackStreamingAudioRead");
+    espEmptyLayer("TrackStreamingAudioBlock");
+    espEmptyLayer("TrackStreamingLoadingBar");
+
+    if (espGetLayerState("TrackStreamingLoadedZone") != 0) {
+        TrackStreamerRemoteCaffeinating = 1;
+        ShowSectionBoarder = 1;
+        return;
+    }
+    if (RemoteCaffeinating && TrackStreamerRemoteCaffeinating) {
+        extern int ShowSectionBoarder; //TODO: guessed, zero-length block
+        ShowSectionBoarder = 1;
+    }
+}
+
+void TrackStreamer::SetLoadingPhase(eLoadingPhase phase) {
+    this->LoadingPhase = phase;
+    if (phase == LOADING_IDLE || phase == LOADING_REGULAR_SECTIONS) {
+        SetQueuedFileMinPriority(0);
+    } else {
+        SetQueuedFileMinPriority(QueuedFileDefaultPriority);
+    }
+}
+
+int TrackStreamer::UnloadLeastRecentlyUsedSection() {
+    TrackStreamingSection *best_section = nullptr;
+
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        if (section->Status == TrackStreamingSection::LOADED && !section->CurrentlyVisible &&
+            (!best_section || section->LastNeededTimestamp < best_section->LastNeededTimestamp)) {
+            best_section = section;
+        }
+    }
+
+    if (!best_section) {
+        return 0;
+    }
+
+    this->UnloadSection(best_section);
+    return best_section->LoadedSize;
+}
+
+void TrackStreamer::JettisonSection(TrackStreamingSection *section) {
+    this->AmountJettisoned += section->Size;
+    this->JettisonedSections[this->NumJettisonedSections++] = section;
+
+    if (section->Status == TrackStreamingSection::ACTIVATED) {
+        this->UnactivateSection(section);
+    }
+    if (section->Status == TrackStreamingSection::LOADED) {
+        this->UnloadSection(section);
+    }
+
+    section->CurrentlyVisible = false;
+
+    int i = 0;
+    while (this->CurrentStreamingSections[i] != section) {
+        i++;
+    }
+
+    while (i < this->NumCurrentStreamingSections - 1) {
+        this->CurrentStreamingSections[i] = this->CurrentStreamingSections[i + 1];
+        i++;
+    }
+
+    this->NumCurrentStreamingSections--;
+}
+
+bool TrackStreamer::JettisonLeastImportantSection() {
+    TrackStreamingSection *best_section = this->ChooseSectionToJettison();
+    if (best_section) {
+        this->JettisonSection(best_section);
+        return true;
+    }
+    return false;
+}
+
+TrackStreamingSection *TrackStreamer::ChooseSectionToJettison() {
+    TrackStreamingSection *best_section = 0;
+    int best_discard_priority = 0;
+    static int last_jettison_print;
+    bool print_jettison_this_frame = false;
+
+    last_jettison_print = RealLoopCounter;
+
+    for (int i = 0; i < this->NumCurrentStreamingSections; i++) {
+        int discard_priority = 0;
+        TrackStreamingSection *section = this->CurrentStreamingSections[i];
+
+        if (IsTextureSection(section->SectionNumber) || IsLibrarySection(section->SectionNumber)) {
+            discard_priority = 2;
+            if (section->SectionNumber == GetScenerySectionNumber('Y', 0) || section->SectionNumber == GetScenerySectionNumber('W', 0) ||
+                section->SectionNumber == GetScenerySectionNumber('X', 0)) {
+                discard_priority = 1;
+            } else if (this->LoadingPhase == ALLOCATING_TEXTURE_SECTIONS && IsTextureSection(section->SectionNumber) &&
+                       section->Status == TrackStreamingSection::ACTIVATED && !this->SplitScreen) {
+                discard_priority = 10000;
+            } else if (this->LoadingPhase == ALLOCATING_GEOMETRY_SECTIONS && IsLibrarySection(section->SectionNumber) &&
+                       section->Status == TrackStreamingSection::ACTIVATED && !this->SplitScreen) {
+                discard_priority = 10000;
+            }
+        } else if (IsRegularScenerySection(section->SectionNumber)) {
+            int loading_priority = this->GetLoadingPriority(section, &this->StreamingPositionEntries[0], true);
+            if (this->SplitScreen) {
+                int loading_priority2 = this->GetLoadingPriority(section, &this->StreamingPositionEntries[1], true);
+                if (loading_priority2 < loading_priority) {
+                    loading_priority = loading_priority2;
+                }
+            }
+            discard_priority = loading_priority * 10 + 100;
+        }
+
+        if (discard_priority != 0) {
+            // TODO weird
+            if (static_cast<unsigned int>(section->Status - TrackStreamingSection::LOADED) > 1) {
+                discard_priority++;
+            }
+        }
+        if (discard_priority > best_discard_priority) {
+            best_section = section;
+            best_discard_priority = discard_priority;
+        }
+    }
+
+    return best_section;
+}
+
+void TrackStreamer::UnJettisonSections() {
+    for (int n = 0; n < this->NumJettisonedSections; n++) {
+        TrackStreamingSection *section = this->JettisonedSections[n];
+        this->CurrentStreamingSections[this->NumCurrentStreamingSections++] = section;
+        section->CurrentlyVisible = 1;
+    }
+    this->NumJettisonedSections = 0;
+    this->AmountJettisoned = 0;
+}
+
+// total size: 0x10
+struct HoleMovement {
+    intptr_t SourceAddress; // offset 0x0, size 0x4
+    intptr_t DestAddress;   // offset 0x4, size 0x4
+    int32 Size;          // offset 0x8, size 0x4
+    uint32 Checksum;     // offset 0xC, size 0x4
+};
+
+// UNSOLVED, TODO this is pretty wrong
+int TrackStreamer::BuildHoleMovements(HoleMovement *hole_movements, int max_movements, int filler_method, int largest_free, int *pamount_moved,
+                                      int max_amount_to_move) {
+    ProfileNode profile_node("TODO", 0);
+    int ticks = bGetTicker();
+    unsigned int checksum = this->pMemoryPool->GetPoolChecksum();
+    bool failed;
+    int num_movements;
+    int amount_moved;
+    int total_needing_allocation;
+
+    this->pMemoryPool->EnableTracing(false);
+    total_needing_allocation = -1;
+    failed = false;
+    num_movements = 0;
+    amount_moved = 0;
+    while (true) {
+        if (largest_free != 0) {
+            if (this->pMemoryPool->GetLargestFreeBlock() >= largest_free) {
+                break;
+            }
+        } else {
+            int out_of_memory_size = this->AllocateSectionMemory(&total_needing_allocation);
+            this->FreeSectionMemory();
+            if (out_of_memory_size == 0) {
+                break;
+            }
+        }
+
+        if (filler_method != 0) {
+            if (this->pMemoryPool->GetAmountFree() == this->pMemoryPool->GetLargestFreeBlock()) {
+                break;
+            }
+        }
+
+        if (num_movements == max_movements) {
+            failed = true;
+            break;
+        }
+
+        HoleMovement *movement = &hole_movements[num_movements];
+        movement->SourceAddress = 0;
+
+        if (filler_method == HOLE_FILLER_METHOD_LINEAR_BOTTOM || filler_method == HOLE_FILLER_METHOD_LINEAR_BOTTOM_ALL_THE_WAY ||
+            filler_method == HOLE_FILLER_METHOD_LINEAR_TOP) {
+            bool start_from_top = filler_method == HOLE_FILLER_METHOD_LINEAR_TOP;
+            TSMemoryNode *free_node = this->pMemoryPool->GetFirstFreeNode(start_from_top);
+            TSMemoryNode *node = this->pMemoryPool->GetNextAllocatedNode(start_from_top, free_node);
+            if (filler_method == HOLE_FILLER_METHOD_LINEAR_BOTTOM_ALL_THE_WAY && !node) {
+                break;
+            }
+
+            if (node != nullptr) {
+                movement->Size = node->Size;
+                movement->SourceAddress = node->Address;
+                movement->DestAddress = free_node->GetAddress(start_from_top, movement->Size);
+                if (filler_method == HOLE_FILLER_METHOD_LINEAR_BOTTOM_ALL_THE_WAY && !this->FindSectionByAddress(movement->SourceAddress)) {
+                    break;
+                }
+            }
+        } else if (filler_method == HOLE_FILLER_METHOD_BIGGEST_FIRST_BOTTOM || filler_method == HOLE_FILLER_METHOD_BIGGEST_FIRST_TOP) {
+            bool start_from_top = filler_method == HOLE_FILLER_METHOD_BIGGEST_FIRST_TOP;
+            TSMemoryNode *free_node = this->pMemoryPool->GetFirstFreeNode(start_from_top);
+            int best_hole_size = 0;
+            bool first = true;
+            TSMemoryNode *next_node = free_node;
+
+            while ((next_node = this->pMemoryPool->GetNextAllocatedNode(start_from_top, next_node)) != nullptr) {
+                if (this->pMemoryPool->GetNextFreeNode(start_from_top, next_node) == nullptr) {
+                    continue;
+                }
+                if (first || next_node->Size <= free_node->Size) {
+                    first = false;
+                    TSMemoryNode *node1 = this->pMemoryPool->GetNextNode(!start_from_top, next_node);
+                    TSMemoryNode *node2 = this->pMemoryPool->GetNextNode(start_from_top, next_node);
+                    int hole_size = next_node->Size;
+                    if (node1 && node1->IsFree()) {
+                        hole_size += node1->Size;
+                    }
+                    if (node2 && node2->IsFree()) {
+                        hole_size += node2->Size;
+                    }
+                    if (hole_size > best_hole_size) {
+                        best_hole_size = hole_size;
+                        movement->Size = next_node->Size;
+                        movement->SourceAddress = next_node->Address;
+                        movement->DestAddress = free_node->GetAddress(start_from_top, movement->Size);
+                    }
+                }
+            }
+        } else if (filler_method == HOLE_FILLER_METHOD_SUPER_SCOOPER) {
+            bool start_from_top;
+            bool done = false;
+            bool found_one = false;
+            bool skip_flag;
+            bool first_pass = true;
+            bool largest_flag = false;
+            bool found_big_enough = false;
+            TSMemoryNode *top_free_top;
+            TSMemoryNode *bottom_free_top;
+            TSMemoryNode *top_allocated;
+            TSMemoryNode *bottom_allocated;
+            TSMemoryNode *largest_allocated;
+            TSMemoryNode *cursor;
+            TSMemoryNode *evaluated_top_free;
+            TSMemoryNode *evaluated_bottom_free;
+            TSMemoryNode *evaluated_largest_allocated;
+            int top_free_memory;
+            int middle_allocated_memory;
+            int bottom_free_memory;
+            int total_free_memory;
+            int current_best = 0;
+            int position;
+            int best_nodes_to_move;
+            int largest_moves_here = 0;
+            int evaluated_largest_moves_here = 0;
+            int size_checking[32];
+            int found_nodes;
+            int nodes_to_move;
+            int current_best_middle_memory = 0x3E8000;
+
+            do {
+                if (first_pass) {
+                    first_pass = false;
+                    top_free_top = this->pMemoryPool->GetFirstNode(true);
+                } else {
+                    top_free_top = this->pMemoryPool->GetNextFreeNode(true, top_free_top);
+                }
+
+                if (top_free_top) {
+                    top_free_memory = top_free_top->Size;
+                    bottom_free_top = this->pMemoryPool->GetNextFreeNode(true, top_free_top);
+                    if (bottom_free_top) {
+                        bottom_free_memory = bottom_free_top->Size;
+                        total_free_memory = top_free_memory + bottom_free_memory;
+                        top_allocated = this->pMemoryPool->GetNextNode(true, top_free_top);
+                        bottom_allocated = this->pMemoryPool->GetNextNode(false, bottom_free_top);
+
+                        middle_allocated_memory = top_allocated->Size;
+                        for (int i = 0; i < 32; i++) {
+                            size_checking[i] = 0;
+                        }
+
+                        size_checking[0] = top_allocated->Size;
+                        largest_allocated = top_allocated;
+                        cursor = top_allocated;
+                        found_nodes = 1;
+                        while (this->pMemoryPool->GetNextNode(true, cursor) != bottom_free_top && cursor && found_nodes < 32) {
+                            cursor = this->pMemoryPool->GetNextNode(true, cursor);
+                            if (cursor != nullptr) {
+                                size_checking[found_nodes] = cursor->Size;
+                                middle_allocated_memory += cursor->Size;
+                                found_nodes++;
+                                if (cursor->Size > largest_allocated->Size) {
+                                    largest_allocated = cursor;
+                                }
+                            }
+                        }
+
+                        if ((!found_big_enough && total_free_memory - middle_allocated_memory > current_best) ||
+                            (found_big_enough && total_free_memory + middle_allocated_memory >= total_needing_allocation &&
+                             middle_allocated_memory < current_best_middle_memory)) {
+                            nodes_to_move = 0;
+                            std::sort(size_checking, size_checking + found_nodes + 1);
+                            largest_flag = false;
+                            evaluated_top_free = this->pMemoryPool->GetFirstFreeNode(true);
+                            position = 0;
+
+                            while (found_nodes > nodes_to_move && evaluated_top_free) {
+                                skip_flag = false;
+                                for (int i = 0; i < found_nodes; i++) {
+                                    if (size_checking[found_nodes - nodes_to_move] == position) {
+                                        skip_flag = true;
+                                    }
+                                }
+                                if (evaluated_top_free == top_free_top || evaluated_top_free == bottom_free_top) {
+                                    skip_flag = true;
+                                }
+                                if (!skip_flag && evaluated_top_free->Size >= size_checking[found_nodes - nodes_to_move]) {
+                                    size_checking[found_nodes - nodes_to_move] = position;
+                                    nodes_to_move++;
+                                    if (!largest_flag) {
+                                        largest_moves_here = evaluated_top_free->Address;
+                                        largest_flag = true;
+                                    }
+                                    evaluated_top_free = this->pMemoryPool->GetFirstFreeNode(true);
+                                }
+                                evaluated_top_free = this->pMemoryPool->GetNextFreeNode(true, evaluated_top_free);
+                                position++;
+                            }
+
+                            if (nodes_to_move >= found_nodes) {
+                                current_best = total_free_memory - middle_allocated_memory;
+                                evaluated_largest_moves_here = largest_moves_here;
+                                found_one = true;
+                                evaluated_largest_allocated = largest_allocated;
+                                if (total_needing_allocation <= total_free_memory + middle_allocated_memory) {
+                                    found_big_enough = true;
+                                    current_best_middle_memory = middle_allocated_memory;
+                                }
+                            }
+                        }
+                    } else {
+                        done = true;
+                    }
+                } else {
+                    done = true;
+                }
+            } while (!done);
+
+            if (found_one && evaluated_largest_allocated) {
+                TrackStreamingSection *section = this->FindSectionByAddress(evaluated_largest_allocated->Address);
+                if (section != nullptr) {
+                    movement->Size = evaluated_largest_allocated->Size;
+                    movement->SourceAddress = evaluated_largest_allocated->Address;
+                    movement->DestAddress = evaluated_largest_moves_here;
+                }
+            }
+        }
+
+        if (movement->SourceAddress == 0) {
+            failed = true;
+            break;
+        }
+
+        num_movements++;
+        movement->Checksum = this->pMemoryPool->GetPoolChecksum();
+        this->pMemoryPool->Free(reinterpret_cast<void *>(movement->SourceAddress));
+        this->pMemoryPool->Malloc(movement->Size, "HoleMovement", false, false, movement->DestAddress);
+        amount_moved += movement->Size;
+        if (amount_moved > max_amount_to_move) {
+            failed = true;
+            break;
+        }
+    }
+
+    for (int n = num_movements - 1; n >= 0; n--) {
+        HoleMovement *movement = &hole_movements[n];
+        this->pMemoryPool->Free(reinterpret_cast<void *>(movement->DestAddress));
+        char *debug_name = "UndoHoleMovement";
+        TrackStreamingSection *section = this->FindSectionByAddress(movement->SourceAddress);
+        if (section != nullptr) {
+            debug_name = section->SectionName;
+        }
+        this->pMemoryPool->Malloc(movement->Size, debug_name, false, false, movement->SourceAddress);
+    }
+
+    this->pMemoryPool->EnableTracing(true);
+    if (pamount_moved) {
+        *pamount_moved = amount_moved;
+    }
+    if (failed) {
+        return -1;
+    }
+    return num_movements;
+}
+
+int TrackStreamer::DoHoleFilling(int largest_free) {
+    ProfileNode profile_node("TODO", 0);
+    const char *fragmented_user_allocation;
+    HoleMovement hole_movement_table[128];
+
+    this->CountUserAllocations(&fragmented_user_allocation);
+    if (fragmented_user_allocation) {
+        this->pMemoryPool->DebugPrint();
+        bMilestonePrintf("WARNING:  TrackStreamer::DoHoleFilling() is aborting due to fragmented user alloc ation %s\n");
+        return 0;
+    }
+
+    int best_method = -1;
+    if (ForceHoleFillerMethod >= 0) {
+        int filler_method = ForceHoleFillerMethod;
+        int num_hole_movements = this->BuildHoleMovements(hole_movement_table, 0x80, filler_method, largest_free, 0, 0x7FFFFFFF);
+        if (num_hole_movements > 0) {
+            best_method = filler_method;
+        }
+    } else {
+        int best_amount_moved = 0x7FFFFFFF;
+        for (int filler_method = 1; filler_method < 6; filler_method++) {
+            int amount_moved;
+            int num_hole_movements = this->BuildHoleMovements(hole_movement_table, 0x80, filler_method, largest_free, &amount_moved, best_amount_moved);
+            if (num_hole_movements > 0 && amount_moved < best_amount_moved) {
+                best_method = filler_method;
+                best_amount_moved = amount_moved;
+            }
+        }
+    }
+
+    if (best_method < 0) {
+        return 0;
+    }
+
+    int num_hole_movements = this->BuildHoleMovements(hole_movement_table, 0x80, best_method, largest_free, 0, 0x7FFFFFFF);
+    for (int n = 0; n < num_hole_movements; n++) {
+        ProfileNode profile_node("TODO", 0);
+        HoleMovement *movement = &hole_movement_table[n];
+        TrackStreamingSection *section = this->FindSectionByAddress(movement->SourceAddress);
+        if (this->LastWaitUntilRenderingDoneFrameCount != eGetFrameCounter()) {
+            int start_ticks = bGetTicker();
+            DisableWaitForFrameBufferSwap();
+            eWaitUntilRenderingDone();
+            this->LastWaitUntilRenderingDoneFrameCount = eGetFrameCounter();
+            EnableWaitForFrameBufferSwap();
+            float time = bGetTickerDifference(start_ticks);
+        }
+
+        int start_ticks = bGetTicker();
+        void *new_memory = reinterpret_cast<void *>(movement->DestAddress);
+        this->pMemoryPool->Free(reinterpret_cast<void *>(movement->SourceAddress));
+        this->pMemoryPool->Malloc(movement->Size, section->SectionName, false, false, movement->DestAddress);
+        if (section->Status == TrackStreamingSection::ACTIVATED) {
+            eAllowDuplicateSolids(true);
+            SetDuplicateTextureWarning(false);
+            MoveChunks(reinterpret_cast<bChunk *>(new_memory), reinterpret_cast<bChunk *>(section->pMemory), section->LoadedSize,
+                       section->SectionName);
+#ifdef EA_PLATFORM_GAMECUBE
+            DCStoreRangeNoSync(new_memory, section->LoadedSize);
+#endif
+            eAllowDuplicateSolids(false);
+            SetDuplicateTextureWarning(true);
+        } else {
+            eWaitUntilRenderingDone();
+            bOverlappedMemCpy(new_memory, section->pMemory, section->LoadedSize);
+        }
+        section->pMemory = new_memory;
+        float move_time = bGetTickerDifference(start_ticks);
+        this->NumSectionsMoved++;
+#ifdef EA_PLATFORM_GAMECUBE
+        PPCSync();
+#endif
+    }
+
+    return 1;
+}
+
+void TrackStreamer::SetStreamingPosition(int position_number, const bVector3 *position) {
+    StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+    position_entry->Position.x = position->x;
+    position_entry->Position.y = position->y;
+    position_entry->Elevation = position->z;
+    position_entry->Velocity.x = 0.0f;
+    position_entry->Velocity.y = 0.0f;
+    position_entry->Direction.x = 0.0f;
+    position_entry->Direction.y = 0.0f;
+    position_entry->PredictedZoneValidTime = -1;
+    position_entry->PositionSet = true;
+#ifndef EA_BUILD_A124
+    position_entry->FollowingCar = false;
+#endif
+    position_entry->PredictedZone = 0;
+    this->CurrentZoneNeedsRefreshing = true;
+
+    {
+        // TODO
+        float dist = bDistBetween(&position_entry->Position, &position_entry->Position);
+    }
+}
+
+void TrackStreamer::PredictStreamingPosition(int position_number, const bVector3 *position, const bVector3 *velocity, const bVector3 *direction,
+                                             bool following_car) {
+    StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+    position_entry->Position.x = position->x;
+    position_entry->Position.y = position->y;
+    position_entry->Elevation = position->z;
+    position_entry->Velocity.x = velocity->x;
+    position_entry->Velocity.y = velocity->y;
+    position_entry->Direction.x = direction->x;
+    position_entry->Direction.y = direction->y;
+    position_entry->PositionSet = true;
+#ifndef EA_BUILD_A124
+    position_entry->FollowingCar = following_car;
+#endif
+
+    {
+        // TODO
+        float dist = bDistBetween(&position_entry->Position, &position_entry->Position);
+    }
+}
+
+// UNSOLVED regswap, branching and it uses a different MPH2MPS function...
+short TrackStreamer::GetPredictedZone(StreamingPositionEntry *position_entry) {
+    int predict_zone_number = 0;
+    bVector2 predict_position;
+    bool predict_position_used = false;
+    float speed = bLength(&position_entry->Velocity);
+    TrackPathZone *zone = nullptr;
+    char predict_debug_name[64];
+
+    while ((zone = TheTrackPathManager.FindZone(&position_entry->Position, TRACK_PATH_ZONE_STREAMER_PREDICTION, zone))) {
+        float elevation = zone->GetElevation();
+        // TODO branch targets
+        if (((elevation <= 0.0f) || (position_entry->Elevation >= elevation)) &&
+            (elevation >= 0.0f || (position_entry->Elevation > bAbs(elevation)))) {
+            continue;
+        }
+
+        // TODO this MPH2MPS inline is in CarBasics.hpp
+        float max_speed = MPH2MPS(400.0f);
+        float distance = speed * 1.5f;
+        DrivableScenerySection *scenery_section;
+        if (speed > max_speed) {
+            predict_position = position_entry->Position;
+        } else if (100.0f < distance) {
+            bScaleAdd(&predict_position, &position_entry->Position, &position_entry->Velocity, 100.0f / speed);
+        } else {
+            bScaleAdd(&predict_position, &position_entry->Position, &position_entry->Velocity, 1.5f);
+        }
+
+        scenery_section = TheVisibleSectionManager.FindDrivableSection(&predict_position);
+        if (scenery_section) {
+            for (int n = 0; n < 4; n++) {
+                if (zone->Data[n] == 0) {
+                    break;
+                }
+                if (scenery_section->SectionNumber == zone->Data[n]) {
+                    predict_position_used = true;
+                    predict_zone_number = scenery_section->SectionNumber;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (predict_position_used) {
+        if (!bEqual(&predict_position, &position_entry->Position, 0.001f)) {
+            for (int barrier_num = 0; barrier_num < this->NumBarriers; barrier_num++) {
+                TrackStreamingBarrier *barrier = &this->pBarriers[barrier_num];
+                if (barrier->Intersects(&position_entry->Position, &predict_position)) {
+                    predict_position_used = false;
+                    predict_zone_number = 0;
+                }
+            }
+        }
+
+        if (predict_position_used) {
+            return predict_zone_number;
+        }
+    }
+
+    {
+        DrivableScenerySection *scenery_section = TheVisibleSectionManager.FindDrivableSection(&position_entry->Position);
+        if (scenery_section) {
+            predict_zone_number = scenery_section->SectionNumber;
+        }
+    }
+
+    {
+        unsigned int obj = 0;
+        espCreateObjectAsync("TrackStreamingTrail", "TrackStreamingTrailPoint", nullptr);
+        FloatVector pos;
+        espSetObjectPosition(1, &pos);
+        char text[40];
+        MPS2MPH(speed);
+        espSetAttributeString(1, "PredictZones", text);
+        espLinkObject(obj, 1);
+    }
+
+    {
+        FloatVector pos1;
+        FloatVector pos2;
+        espCreateObjectAsync("TrackStreamingPredict", "TrackStreamingPredictPoint", &pos1);
+        espCreateObjectAsync("TrackStreamingPredict", "TrackStreamingPredictPoint", &pos2);
+        espLinkObject(0, 1);
+    }
+
+    return predict_zone_number;
+}
+
+void TrackStreamer::ClearStreamingPositions() {
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        position_entry->PositionSet = false;
+#ifndef EA_BUILD_A124
+        position_entry->FollowingCar = false;
+#endif
+    }
+}
+
+void TrackStreamer::RemoveCurrentStreamingSections() {
+    for (int i = 0; i < this->NumCurrentStreamingSections; i++) {
+        this->CurrentStreamingSections[i]->CurrentlyVisible = 0;
+    }
+
+    this->NumCurrentStreamingSections = 0;
+    this->CurrentVisibleSectionTable.ClearTable();
+}
+
+void TrackStreamer::AddCurrentStreamingSections(short *sections_to_load, int num_sections_to_load, int position_number) {
+    for (int i = 0; i < num_sections_to_load; i++) {
+        this->CurrentVisibleSectionTable.Set(sections_to_load[i]);
+
+        if (this->SplitScreen) {
+            sections_to_load[i] = static_cast<short>(Get2PlayerSectionNumber(sections_to_load[i]));
+        }
+
+        TrackStreamingSection *section = this->FindSection(sections_to_load[i]);
+        if (section == nullptr) {
+            continue;
+        }
+
+        section->LastNeededTimestamp = RealTimeFrames;
+        if (!section->CurrentlyVisible) {
+            this->CurrentStreamingSections[this->NumCurrentStreamingSections++] = section;
+        }
+
+        // can this be simplified?
+        if (((section->CurrentlyVisible >> position_number) ^ 1U) & 1) {
+            section->CurrentlyVisible |= static_cast<unsigned char>(1 << position_number);
+            if (section->Status < TrackStreamingSection::LOADED) {
+                StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+                position_entry->NumSectionsToLoad++;
+                position_entry->AmountToLoad += section->Size;
+            }
+        }
+    }
+}
+
+// UNSOLVED
+void TrackStreamer::DetermineStreamingSections() {
+    const int max_sections_to_load = 0x180;
+    short sections_to_load[384];
+    int num_sections_to_load = 0;
+
+    this->RemoveCurrentStreamingSections();
+    sections_to_load[num_sections_to_load++] = GetScenerySectionNumber('Y', 0);
+    sections_to_load[num_sections_to_load++] = GetScenerySectionNumber('X', 0);
+    sections_to_load[num_sections_to_load++] = GetScenerySectionNumber('Z', 0);
+
+    if (SeeulatorToolActive && ScenerySectionToBlink != 0) {
+        sections_to_load[num_sections_to_load++] = static_cast<short>(ScenerySectionToBlink);
+    }
+
+    short section_number;
+    for (int n = 0; n < 4; n++) {
+        section_number = this->KeepSectionTable[n];
+        if (section_number != 0) {
+            sections_to_load[num_sections_to_load] = section_number;
+            num_sections_to_load++;
+        }
+    }
+
+    this->AddCurrentStreamingSections(sections_to_load, num_sections_to_load, 0);
+    this->AddCurrentStreamingSections(sections_to_load, num_sections_to_load, 1);
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        if (position_entry->CurrentZone > 0) {
+            LoadingSection *loading_section = TheVisibleSectionManager.FindLoadingSection(position_entry->CurrentZone);
+            if (!loading_section) {
+                DrivableScenerySection *drivable_section = TheVisibleSectionManager.FindDrivableSection(position_entry->CurrentZone);
+                num_sections_to_load = 0;
+                for (int i = 0; i < drivable_section->GetNumVisibleSections(); i++) {
+                    int section_number = drivable_section->GetVisibleSection(i);
+                    sections_to_load[num_sections_to_load] = section_number;
+                    num_sections_to_load++;
+                }
+            } else {
+                num_sections_to_load = TheVisibleSectionManager.GetSectionsToLoad(loading_section, sections_to_load, max_sections_to_load);
+            }
+
+            this->AddCurrentStreamingSections(sections_to_load, num_sections_to_load, position_number);
+        }
+    }
+}
+
+int TrackStreamer::AllocateSectionMemory(int *ptotal_needing_allocation) {
+    ProfileNode profile_node("TODO", 0);
+    int out_of_memory_size = 0;
+    int total_needing_allocation = 0;
+    int num_sections_allocated = 0;
+
+    if (this->LoadingPhase == ALLOCATING_REGULAR_SECTIONS) {
+        for (DiscBundleSection *disc_bundle = this->pDiscBundleSections; disc_bundle < this->pLastDiscBundleSection;) {
+            int i;
+            for (i = 0; i < disc_bundle->NumMembers; i++) {
+                DiscBundleSectionMember *member = &disc_bundle->Members[i];
+                TrackStreamingSection *section = member->pSection;
+                if (!section->CurrentlyVisible || section->Status != TrackStreamingSection::UNLOADED) {
+                    break;
+                }
+            }
+
+            if (i == disc_bundle->NumMembers) {
+                if (disc_bundle->FileSize <= this->pMemoryPool->GetLargestFreeBlock()) {
+                    unsigned char *pmemory =
+                        static_cast<unsigned char *>(this->pMemoryPool->Malloc(disc_bundle->FileSize, disc_bundle->SectionName, true, false, 0));
+                    this->pMemoryPool->Free(pmemory);
+
+                    for (i = 0; i < disc_bundle->NumMembers; i++) {
+                        DiscBundleSectionMember *member = &disc_bundle->Members[i];
+                        TrackStreamingSection *section = member->pSection;
+
+                        num_sections_allocated++;
+                        section->pDiscBundle = disc_bundle;
+
+                        void *realloc_mem = pmemory + member->FileOffset * 0x80;
+                        section->Status = TrackStreamingSection::ALLOCATED;
+                        section->pMemory = realloc_mem;
+                        this->pMemoryPool->Malloc(section->Size, disc_bundle->SectionName, false, false, reinterpret_cast<intptr_t>(realloc_mem));
+                    }
+
+                    total_needing_allocation += disc_bundle->FileSize;
+                }
+            }
+
+            disc_bundle = disc_bundle->GetMemoryImageNext();
+        }
+    }
+
+    for (int i = 0; i < this->NumCurrentStreamingSections; i++) {
+        TrackStreamingSection *section = this->CurrentStreamingSections[i];
+        if (section->Status != TrackStreamingSection::UNLOADED) {
+            continue;
+        }
+
+        if (section->SectionNumber != GetScenerySectionNumber('Y', 0) && section->SectionNumber != GetScenerySectionNumber('X', 0) &&
+            section->SectionNumber != GetScenerySectionNumber('W', 0) && section->SectionNumber != GetScenerySectionNumber('U', 0) &&
+            section->SectionNumber != GetScenerySectionNumber('Z', 0)) {
+            if (this->LoadingPhase == ALLOCATING_TEXTURE_SECTIONS) {
+                if (!IsTextureSection(section->SectionNumber)) {
+                    continue;
+                }
+            }
+
+            if (this->LoadingPhase == ALLOCATING_GEOMETRY_SECTIONS) {
+                if (!IsLibrarySection(section->SectionNumber)) {
+                    continue;
+                }
+            }
+        }
+
+        total_needing_allocation += section->Size;
+        if (section->Size > bLargestMalloc(7)) {
+            out_of_memory_size += section->Size;
+            this->NumSectionsOutOfMemory++;
+        } else {
+            num_sections_allocated++;
+            section->pMemory = this->AllocateMemory(section, 0x80);
+            section->Status = TrackStreamingSection::ALLOCATED;
+            if (num_sections_allocated > 99999) {
+                this->CurrentZoneAllocatedButIncomplete = true;
+                return out_of_memory_size;
+            }
+        }
+    }
+
+    this->CurrentZoneAllocatedButIncomplete = false;
+    *ptotal_needing_allocation = total_needing_allocation;
+    return out_of_memory_size;
+}
+
+void TrackStreamer::FreeSectionMemory() {
+    this->NumSectionsOutOfMemory = 0;
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        if (section->Status == TrackStreamingSection::ALLOCATED) {
+            bFree(section->pMemory);
+            section->pDiscBundle = nullptr;
+            section->pMemory = nullptr;
+            section->Status = TrackStreamingSection::UNLOADED;
+        }
+    }
+}
+
+bool TrackStreamer::HandleMemoryAllocation() {
+    int out_of_memory_size;
+    int total_amount_unloaded = 0;
+    int total_amount_hole_filled = 0;
+
+    {
+        int total_needing_allocation;
+        int amount_unloaded;
+
+        do {
+            amount_unloaded = this->UnloadLeastRecentlyUsedSection();
+        } while (amount_unloaded != 0);
+
+        this->NumSectionsMoved = 0;
+
+        while (true) {
+            this->FreeSectionMemory();
+            out_of_memory_size = this->AllocateSectionMemory(&total_needing_allocation);
+            if (out_of_memory_size == 0) {
+                break;
+            }
+            if (total_amount_unloaded > 0x7FFFFFFF || total_amount_hole_filled > 0x200000) {
+                return false;
+            }
+            if (this->NumSectionsMoved > 15) {
+                return false;
+            }
+
+            this->FreeSectionMemory();
+            amount_unloaded = this->UnloadLeastRecentlyUsedSection();
+            total_amount_unloaded += amount_unloaded;
+            if (amount_unloaded > 0) {
+                continue;
+            }
+
+            while (total_needing_allocation + 0x4000 > bCountFreeMemory(7)) {
+                this->CurrentZoneOutOfMemory = true;
+                if (!this->JettisonLeastImportantSection()) {
+                    break;
+                }
+                this->AllocateSectionMemory(&total_needing_allocation);
+                this->FreeSectionMemory();
+            }
+
+            {
+                int amount_hole_filled = this->DoHoleFilling(0);
+                total_amount_hole_filled += amount_hole_filled;
+                if (amount_hole_filled != 0) {
+                    continue;
+                }
+            }
+
+            this->CurrentZoneOutOfMemory = true;
+            if (!this->JettisonLeastImportantSection()) {
+                this->AllocateSectionMemory(&total_needing_allocation);
+                break;
+            }
+        }
+    }
+
+    this->MemorySafetyMargin = 0;
+    out_of_memory_size += this->AmountJettisoned;
+
+    {
+        int free_memory = bCountFreeMemory(7) - out_of_memory_size;
+
+        for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+            TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+            if (!section->CurrentlyVisible && section->Status != TrackStreamingSection::UNLOADED) {
+                free_memory += section->PermSize;
+            }
+        }
+        this->MemorySafetyMargin = free_memory;
+    }
+
+    if (out_of_memory_size != 0) {
+        for (int n = 0; n < this->NumJettisonedSections; n++) {
+        }
+
+        if (this->LoadingPhase == LOADING_REGULAR_SECTIONS) {
+            for (int i = 0; i < this->NumCurrentStreamingSections; i++) {
+                TrackStreamingSection *section;
+            }
+        }
+    }
+
+    return true;
+}
+
+void *TrackStreamer::AllocateUserMemory(int size, const char *debug_name, int offset) {
+    if (size > bLargestMalloc(7)) {
+        void *mem = bMalloc(size, debug_name, 0, (offset & 0x1FFC) << 17 | 0x2000);
+        return mem;
+    } else {
+        void *mem = bMalloc(size, debug_name, 0, (offset & 0x1FFC) << 17 | 0x2047);
+        return mem;
+    }
+}
+
+void TrackStreamer::FreeUserMemory(void *mem) {
+    int free_before = this->pMemoryPool->GetAmountFree();
+    bFree(mem);
+    int size = this->pMemoryPool->GetAmountFree();
+}
+
+bool TrackStreamer::IsUserMemory(void *mem) {
+    int pos = static_cast<char *>(mem) - static_cast<char *>(this->pMemoryPoolMem);
+    return this->pMemoryPoolMem && pos >= 0 && pos < this->MemoryPoolSize;
+}
+
+bool TrackStreamer::MakeSpaceInPool(int size, bool force_unloading) {
+    this->WaitForCurrentLoadingToComplete();
+    while (size > bCountFreeMemory(7)) {
+        if (this->UnloadLeastRecentlyUsedSection() == 0 && (!force_unloading || !this->JettisonLeastImportantSection())) {
+            break;
+        }
+    }
+
+    ForceHoleFillerMethod = 0;
+    this->DoHoleFilling(0x7FFFFFFF);
+    ForceHoleFillerMethod = -1;
+    return size <= bLargestMalloc(7);
+}
+
+void TrackStreamer::MakeSpaceInPool(int size, void (*callback)(intptr_t), intptr_t param) {
+    if (this->LoadingPhase == LOADING_IDLE) {
+        this->IsLoadingInProgress();
+    }
+
+    if (!this->IsLoadingInProgress()) {
+        this->MakeSpaceInPool(size, true);
+        callback(param);
+    } else {
+        this->MakeSpaceInPoolSize = size;
+        this->MakeSpaceInPoolCallback = callback;
+        this->MakeSpaceInPoolCallbackParam = param;
+        this->pCallback = ReadyToMakeSpaceInPoolBridge;
+        this->CallbackParam = reinterpret_cast<int>(this);
+    }
+}
+
+void TrackStreamer::ReadyToMakeSpaceInPool() {
+    this->MakeSpaceInPool(this->MakeSpaceInPoolSize, true);
+
+    void (*callback)(intptr_t) = this->MakeSpaceInPoolCallback;
+    intptr_t param = this->MakeSpaceInPoolCallbackParam;
+    this->MakeSpaceInPoolCallback = nullptr;
+    this->MakeSpaceInPoolCallbackParam = 0;
+    this->MakeSpaceInPoolSize = 0;
+    callback(param);
+}
+
+bool TrackStreamer::DetermineCurrentZones(short *current_zones) {
+    bool current_zones_different = false;
+    int position_number;
+    for (position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        short predict_zone_number = -1;
+        if (position_entry->PositionSet) {
+            predict_zone_number = this->GetPredictedZone(position_entry);
+        }
+        short zone_number = predict_zone_number;
+
+        if (zone_number == position_entry->PredictedZone) {
+            position_entry->PredictedZoneValidTime++;
+        } else if (position_entry->PredictedZoneValidTime == -1) {
+            position_entry->PredictedZone = zone_number;
+            position_entry->PredictedZoneValidTime = 1000;
+        } else {
+            position_entry->PredictedZone = zone_number;
+            position_entry->PredictedZoneValidTime = 1;
+        }
+
+        if (zone_number != position_entry->CurrentZone) {
+            if (position_entry->PredictedZoneValidTime < 0) {
+                zone_number = position_entry->CurrentZone;
+            }
+            if (zone_number != position_entry->CurrentZone) {
+                current_zones_different = true;
+            }
+        }
+
+        current_zones[position_number] = zone_number;
+    }
+
+    return current_zones_different | this->CurrentZoneNeedsRefreshing;
+}
+
+void TrackStreamer::ServiceGameState() {
+    float start_time = GetDebugRealTime();
+    this->HandleZoneSwitching();
+    this->HandleSectionActivation();
+    float time = GetDebugRealTime();
+
+    this->AmountNotRendered = 0;
+    for (int n = 0; n < this->NumCurrentStreamingSections; n++) {
+        TrackStreamingSection *section = this->CurrentStreamingSections[n];
+        if (!section->WasRendered && IsRegularScenerySection(section->SectionNumber)) {
+            this->AmountNotRendered += section->Size;
+        }
+        section->WasRendered = 0;
+    }
+}
+
+void TrackStreamer::ServiceNonGameState() {
+    ProfileNode profile_node("TODO", 0);
+    float start_time = GetDebugRealTime();
+    this->HandleLoading();
+    float time = GetDebugRealTime();
+}
+
+void TrackStreamer::BlockUntilLoadingComplete() {
+    this->RefreshLoading();
+    this->WaitForCurrentLoadingToComplete();
+}
+
+void TrackStreamer::WaitForCurrentLoadingToComplete() {
+    while (!this->AreAllSectionsActivated()) {
+        this->HandleLoading();
+        short section_to_activate = static_cast<short>(this->GetSectionToActivate(0));
+        if (section_to_activate != 0) {
+            this->ActivateSection(this->FindSection(section_to_activate));
+        }
+        ServiceResourceLoading();
+        bThreadYield(8);
+    }
+}
+
+bool TrackStreamer::IsLoadingInProgress() {
+    bool loading_in_progress = !this->AreAllSectionsActivated();
+
+    if (!loading_in_progress && !this->AreAllSectionsActivated()) {
+        while (!this->AreAllSectionsActivated()) {
+            ServiceResourceLoading();
+            this->ServiceNonGameState();
+        }
+    }
+
+    return loading_in_progress;
+}
+
+bool TrackStreamer::AreAllSectionsActivated() {
+    return this->LoadingPhase == LOADING_IDLE && this->NumSectionsActivated + this->NumSectionsOutOfMemory >= this->NumCurrentStreamingSections;
+}
+
+void TrackStreamer::RefreshLoading() {
+    this->CurrentZoneNeedsRefreshing = true;
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        position_entry->PredictedZoneValidTime = -1;
+    }
+    this->HandleZoneSwitching();
+}
+
+void TrackStreamer::HandleZoneSwitching() {
+    ProfileNode profile_node("TODO", 0);
+    short current_zones[2];
+    bool current_zones_different;
+    if (!this->ZoneSwitchingDisabled && this->pMemoryPoolMem) {
+        current_zones_different = this->DetermineCurrentZones(current_zones);
+        if (current_zones_different) {
+            this->SwitchZones(current_zones);
+        }
+    }
+}
+
+void TrackStreamer::SwitchZones(short *current_zones) {
+    this->StartLoadingTime = GetDebugRealTime();
+    this->CurrentZoneNeedsRefreshing = false;
+
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        int zone_number = current_zones[position_number];
+        if (position_entry->CurrentZone != zone_number) {
+            this->PlotLoadingMarker(position_entry);
+
+            VisibleSectionBoundary *boundary1 = TheVisibleSectionManager.FindBoundary(position_entry->CurrentZone);
+            VisibleSectionBoundary *boundary2 = TheVisibleSectionManager.FindBoundary(zone_number);
+            float best_distance = 10000.0f;
+            if (boundary1 && boundary2) {
+                for (int n = 0; n < boundary1->GetNumPoints(); n++) {
+                    float distance = boundary2->GetDistanceOutside(boundary1->GetPoint(n), 999.0f);
+                    best_distance = bMin(best_distance, distance);
+                }
+            }
+
+            if (0.1f < best_distance) {
+                this->CurrentZoneFarLoad = true;
+            }
+
+            position_entry->CurrentZone = zone_number;
+            position_entry->BeginLoadingPosition = position_entry->Position;
+            position_entry->BeginLoadingTime = GetDebugRealTime();
+            position_entry->NumSectionsToLoad = 0;
+            position_entry->NumSectionsLoaded = 0;
+            position_entry->AmountToLoad = 0;
+            position_entry->AmountLoaded = 0;
+        }
+
+        if (position_number == 0) {
+            GetScenerySectionName(this->CurrentZoneName, zone_number);
+        } else if (zone_number > 0) {
+            bSPrintf(this->CurrentZoneName, "%s - %s", this->CurrentZoneName, GetScenerySectionName(zone_number));
+        }
+    }
+
+    int num_sections_unactivated = 0;
+    this->DetermineStreamingSections();
+    PostLoadFixupDisabled = true;
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        if (section->Status == TrackStreamingSection::ACTIVATED && !section->CurrentlyVisible) {
+            if (!IsTextureSection(section->SectionNumber) && !IsLibrarySection(section->SectionNumber)) {
+                this->UnactivateSection(section);
+                num_sections_unactivated++;
+            }
+        }
+    }
+    PostLoadFixupDisabled = false;
+
+    if (num_sections_unactivated > 0) {
+        PostLoadFixup();
+        this->SkipNextHandleLoad = true;
+    }
+
+    this->FreeSectionMemory();
+    this->SetLoadingPhase(ALLOCATING_TEXTURE_SECTIONS);
+    this->CurrentZoneOutOfMemory = false;
+    this->CurrentZoneAllocatedButIncomplete = false;
+    this->MemorySafetyMargin = 0;
+    this->AmountJettisoned = 0;
+    this->NumJettisonedSections = 0;
+    bMemSet(this->JettisonedSections, 0, sizeof(this->JettisonedSections));
+    this->AssignLoadingPriority();
+    this->CalculateLoadingBacklog();
+}
+
+// UNSOLVED regswaps
+void TrackStreamer::HandleLoading() {
+    if (this->SkipNextHandleLoad) {
+        this->SkipNextHandleLoad = false;
+        return;
+    }
+    if (this->LoadingPhase == LOADING_IDLE) {
+        return;
+    }
+
+    if ((this->LoadingPhase == LOADING_TEXTURE_SECTIONS || this->LoadingPhase == LOADING_GEOMETRY_SECTIONS || this->LoadingPhase == LOADING_REGULAR_SECTIONS)) {
+        this->StartLoadingSections();
+        if (this->NumSectionsLoading == 0) {
+            if (this->CurrentZoneAllocatedButIncomplete) {
+                this->SetLoadingPhase(static_cast<eLoadingPhase>(this->LoadingPhase - 1));
+            } else {
+                if (this->LoadingPhase == LOADING_REGULAR_SECTIONS) {
+                    this->FinishedLoading();
+                    return;
+                }
+                this->SetLoadingPhase(static_cast<eLoadingPhase>(this->LoadingPhase + 1));
+            }
+        }
+    }
+
+    if ((this->LoadingPhase == ALLOCATING_TEXTURE_SECTIONS || this->LoadingPhase == ALLOCATING_GEOMETRY_SECTIONS ||
+         this->LoadingPhase == ALLOCATING_REGULAR_SECTIONS) &&
+        this->NumSectionsLoading < 1) {
+        int num_sections_unactivated = 0;
+        for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+            TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+            if (section->Status == TrackStreamingSection::ACTIVATED && !section->CurrentlyVisible) {
+                // TODO writing this as two different branches switches byteswaps, but messes with the instructions
+                if ((this->LoadingPhase == ALLOCATING_GEOMETRY_SECTIONS && IsTextureSection(section->SectionNumber)) ||
+                    (this->LoadingPhase == ALLOCATING_REGULAR_SECTIONS && IsLibrarySection(section->SectionNumber))) {
+                    this->UnactivateSection(section);
+                    num_sections_unactivated++;
+                }
+            }
+        }
+
+        if (num_sections_unactivated > 0) {
+            this->SkipNextHandleLoad = true;
+            return;
+        }
+        PostLoadFixupDisabled = true;
+        bool complete = this->HandleMemoryAllocation();
+        PostLoadFixupDisabled = false;
+        if (this->NumSectionsMoved > 0) {
+            PostLoadFixup();
+        }
+        if (complete != 0) {
+            this->SetLoadingPhase(static_cast<eLoadingPhase>(this->LoadingPhase + 1));
+            if (this->LoadingPhase == LOADING_TEXTURE_SECTIONS || this->LoadingPhase == LOADING_GEOMETRY_SECTIONS) {
+                this->UnJettisonSections();
+            }
+            this->HandleLoading();
+        }
+    }
+}
+
+// UNSOLVED because of debug stuff
+int TrackStreamer::GetLoadingPriority(TrackStreamingSection *section, StreamingPositionEntry *position_entry, bool calculating_jettison) {
+#ifdef EA_BUILD_A124
+    return 0; // this entire function is different in A124
+#else
+    if (!section->pBoundary) {
+        return 0;
+    }
+
+    float speed = bLength(position_entry->Velocity);
+    if (calculating_jettison) {
+        speed = 100.0f;
+    }
+
+    if (speed < 1.0f) {
+        return 0;
+    }
+
+    bVector2 predict_pos = position_entry->Position + position_entry->Velocity * 1.0f;
+    VisibleSectionBoundary *boundary = section->pBoundary;
+    float distance = boundary->GetDistanceOutside(&predict_pos, 999.0f);
+
+    bVector2 direction;
+    if (calculating_jettison) {
+        bNormalize(&direction, &position_entry->Direction);
+    } else {
+        bNormalize(&direction, &position_entry->Velocity);
+    }
+
+    bVector2 v = section->Centre - predict_pos;
+    v = bNormalize(v);
+    float dot = bDot(&direction, &v);
+    float speed_factor = bMin(speed * 0.016666668f, 1.0f);
+    float angle = bAngToDeg(bACos(dot));
+    float angle_factor = bClamp(angle, 20.0f, 90.0f);
+    float adjusted_distance = distance * (1.0f - (90.0f - angle_factor) * 0.014285714f * speed_factor * 0.66999996f);
+    int priority = bClamp(static_cast<int>(adjusted_distance * 0.013333334f), 0, 2);
+
+    // TODO
+    if (RemoteCaffeinating && TrackStreamerRemoteCaffeinating) {
+        char layer_name[32];
+        if (section->Status == TrackStreamingSection::UNLOADED) {
+            bSPrintf(layer_name, "LoadingPriority%d", priority);
+        } else {
+            bSPrintf(layer_name, "LoadingPriorityLoaded");
+        }
+
+        FloatVector pos;
+        pos.x = section->Centre.x;
+        pos.y = section->Centre.y;
+        pos.z = 0.0f;
+        FloatVector face[4];
+        espCreateObjectAsync(layer_name, "LoadingPriorityPoint", &pos);
+        espSetAttributeString(1, "Section", section->SectionName);
+        espCreateUserMesh(1, boundary->GetNumPoints());
+
+        for (int n = 0; n < boundary->GetNumPoints(); n++) {
+            bVector2 *point1 = boundary->GetPoint(0);
+            bVector2 *point2 = boundary->GetPoint(n % boundary->GetNumPoints());
+            FloatVector face[4];
+            face[0].x = point1->x - section->Centre.x;
+            face[0].y = point1->y - section->Centre.y;
+            face[0].z = 0.0f;
+
+            face[1].x = point1->x - section->Centre.x;
+            face[1].y = point1->y - section->Centre.y;
+            face[1].z = 0.0f;
+
+            face[2].x = point2->x - section->Centre.x;
+            face[2].y = point2->y - section->Centre.y;
+            face[2].z = 0.0f;
+
+            face[3].x = point2->x - section->Centre.x;
+            face[3].y = point2->y - section->Centre.y;
+            face[3].z = 0.0f;
+
+            espSetUserMeshFace(1, n, face);
+        }
+        // TODO
+        // face[0].x = v32;
+        // face[0].y = v33;
+        face[0].z = 0.0f;
+
+        // TODO
+        // face[1].x = v32;
+        // face[1].y = v33;
+        face[1].z = 0.0f;
+
+        face[2].x = 0.0f;
+        face[2].y = 0.0f;
+        face[2].z = 0.0f;
+
+        face[3].x = 0.0f;
+        face[3].y = 0.0f;
+        face[3].z = 0.0f;
+
+        espSetUserMeshFace(1, boundary->GetNumPoints(), face);
+    }
+
+    return priority;
+#endif
+}
+
+// TODO move?
+static const int NumLoadingPriorities = 3;
+
+void TrackStreamer::AssignLoadingPriority() {
+    if (RemoteCaffeinating && TrackStreamerRemoteCaffeinating) {
+        espEmptyLayer("LoadingPriorityLoaded");
+        for (int priority = 0; priority < NumLoadingPriorities; priority++) {
+            char layer_name[32];
+            bSPrintf(layer_name, "LoadingPriority%d", priority);
+            espEmptyLayer(layer_name);
+        }
+    }
+
+    for (int n = 0; n < this->NumCurrentStreamingSections; n++) {
+        TrackStreamingSection *section = this->CurrentStreamingSections[n];
+        int best_priority = 99;
+        for (int position_number = 0; position_number < 2; position_number++) {
+            StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+            if ((section->CurrentlyVisible >> position_number) & 1) {
+                {
+                    int priority = this->GetLoadingPriority(section, position_entry, false);
+                    if (priority < best_priority) {
+                        best_priority = priority;
+                    }
+                }
+            }
+        }
+
+        section->LoadingPriority = best_priority * 100000 + section->SectionPriority;
+    }
+}
+
+void TrackStreamer::CalculateLoadingBacklog() {
+    float loading_backlog = 0.0f;
+    for (int n = 0; n < this->NumCurrentStreamingSections; n++) {
+        TrackStreamingSection *section = this->CurrentStreamingSections[n];
+        if (section->CurrentlyVisible && (section->Status - TrackStreamingSection::LOADED > 1U)) {
+            float time = static_cast<float>(section->Size / 1024) * 0.0004f + 0.15f;
+            if (section->BaseLoadingPriority == 1) {
+                time *= 0.4f;
+            }
+            if (section->BaseLoadingPriority == 2) {
+                time *= 0.2f;
+            }
+            loading_backlog += time;
+        }
+    }
+
+    this->LoadingBacklog = loading_backlog;
+}
+
+void TrackStreamer::StartLoadingSections() {
+    bool something_to_load = true;
+    while (this->NumSectionsLoading < 2 && something_to_load) {
+        int best_priority = 0x7FFFFFFF;
+        TrackStreamingSection *best_section = nullptr;
+        for (int i = 0; i < this->NumCurrentStreamingSections; i++) {
+            TrackStreamingSection *section = this->CurrentStreamingSections[i];
+            if (section->Status == TrackStreamingSection::ALLOCATED) {
+                int priority = section->LoadingPriority;
+                if (section->pDiscBundle) {
+                    priority = -1;
+                }
+                if (priority < best_priority) {
+                    best_priority = priority;
+                    best_section = section;
+                }
+            } else if (section->Status == TrackStreamingSection::LOADED && !this->NeedsGameStateActivation(section)) {
+                TheTrackStreamer.ActivateSection(section);
+            }
+        }
+
+        if (!best_section) {
+            something_to_load = false;
+        } else {
+            if (best_section->pDiscBundle) {
+                DiscBundleSection *disc_bundle = best_section->pDiscBundle;
+                this->LoadDiscBundle(disc_bundle);
+            } else {
+                this->LoadSection(best_section);
+            }
+        }
+    }
+}
+
+void TrackStreamer::FinishedLoading() {
+    {
+        float load_time;
+        int position_number;
+        StreamingPositionEntry *position_entry;
+    }
+
+    this->LoadingPhase = LOADING_IDLE;
+    this->CurrentZoneNonReplayLoad = false;
+    this->CurrentZoneFarLoad = false;
+    NotifySkyLoader();
+
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        if (position_entry->BeginLoadingTime != 0.0f) {
+            this->PlotLoadingMarker(position_entry);
+        }
+        position_entry->BeginLoadingTime = 0.0f;
+    }
+
+    if (this->pCallback != nullptr) {
+        SetDelayedResourceCallback(this->pCallback, this->CallbackParam);
+        this->pCallback = nullptr;
+        this->CallbackParam = 0;
+    }
+}
+
+void TrackStreamer::PlotLoadingMarker(StreamingPositionEntry *position_entry) {
+    if (RemoteCaffeinating && TrackStreamerRemoteCaffeinating && position_entry->CurrentZone > 0 &&
+        position_entry->BeginLoadingTime != 0.0f) {
+        float load_time = GetDebugRealTime();
+        unsigned int obj =
+            ::PlotLoadingMarker("TrackStreamingLoadedZone", &position_entry->BeginLoadingPosition, &position_entry->Position, load_time);
+        char text[32];
+        bSPrintf(text, "%d/%d", position_entry->NumSectionsLoaded, position_entry->NumSectionsToLoad);
+        espSetAttributeString(obj, "NumSectionsLoaded", text);
+        bSPrintf(text, "%d/%d", position_entry->AmountLoaded / 1024, position_entry->AmountToLoad / 1024);
+        espSetAttributeString(obj, "AmountLoaded", text);
+    }
+}
+
+#ifdef EA_BUILD_A124
+void TrackStreamer::CheckLoadingBar() {}
+#else
+// UNSOLVED regswap
+bool TrackStreamer::CheckLoadingBar() {
+    ProfileNode profile_node("TODO", 0);
+    float closest_distance = 999.0f;
+    TrackStreamingSection *closest_section;
+    StreamingPositionEntry *closest_position_entry;
+    float closest_approach_speed;
+
+    for (int position_number = 0; position_number < 2; position_number++) {
+        StreamingPositionEntry *position_entry = &this->StreamingPositionEntries[position_number];
+        float speed;
+        float max_speed;
+        if (!this->IsLoadingInProgress()) {
+            break;
+        }
+
+        if (this->IsFarLoadingInProgress() || !position_entry->PositionSet || !position_entry->FollowingCar) {
+            break;
+        }
+
+        speed = bLength(&position_entry->Velocity);
+        max_speed = MPH2MPS(400.0f);
+        if (speed > max_speed) {
+            break;
+        }
+
+        for (int n = 0; n < this->NumCurrentStreamingSections; n++) {
+            TrackStreamingSection *section = this->CurrentStreamingSections[n];
+            VisibleSectionBoundary *boundary = section->pBoundary;
+
+            if (boundary != nullptr) {
+                bool may_contain_road = false;
+                if (IsRegularScenerySection(section->SectionNumber)) {
+                    if (IsScenerySectionDrivable(section->SectionNumber) || IsLODScenerySectionNumber(section->SectionNumber)) {
+                        may_contain_road = true;
+                    }
+                }
+
+                if (may_contain_road && section->Status != TrackStreamingSection::ACTIVATED) {
+                    // TODO make const somehow
+                    float small_test_time = 0.2f;
+                    bVector2 test_pos = position_entry->Position + position_entry->Velocity * 0.01f;
+                    float distance1 = boundary->GetDistanceOutside(&position_entry->Position, 999.0f);
+                    float distance2 = boundary->GetDistanceOutside(&test_pos, 999.0f);
+                    float approach_speed = small_test_time * (distance1 - distance2) * 100.0f;
+                    float distance = distance1 - approach_speed;
+                    if (distance < closest_distance) {
+                        closest_distance = distance;
+                        closest_section = section;
+                        closest_position_entry = position_entry;
+                        closest_approach_speed = approach_speed;
+                    }
+                }
+            }
+        }
+    }
+
+    bool need_loading_bar = closest_distance < 5.0f;
+
+    static bool prev_need_loading_bar = false;
+
+    prev_need_loading_bar = need_loading_bar;
+    return need_loading_bar;
+}
+#endif
+
+int TrackStreamer::GetSectionToActivate(int activation_delay) {
+    if (this->NumSectionsActivated < this->NumCurrentStreamingSections) {
+        for (int n = 0; n < this->NumCurrentStreamingSections; n++) {
+            TrackStreamingSection *section = this->CurrentStreamingSections[n];
+            if (section->Status == TrackStreamingSection::LOADED && TheTrackStreamer.NeedsGameStateActivation(section) &&
+                RealTimeFrames - section->LoadedTime >= activation_delay) {
+                return section->SectionNumber;
+            }
+        }
+    }
+
+    return 0;
+}
+
+void TrackStreamer::HandleSectionActivation() {
+    ProfileNode profile_node("TODO", 0);
+    int activation_delay;
+    short section_to_activate = static_cast<short>(this->GetSectionToActivate(0));
+    if (section_to_activate != 0) {
+        TrackStreamingSection *section = this->FindSection(section_to_activate);
+        if (section->Status != TrackStreamingSection::ACTIVATED) {
+            if (section->Status != TrackStreamingSection::LOADED) {
+                if (!section->CurrentlyVisible) {
+                    return;
+                }
+
+                do {
+                    this->HandleLoading();
+                    ServiceResourceLoading();
+                } while (section->Status != TrackStreamingSection::LOADED);
+            }
+            this->ActivateSection(section);
+        }
+    }
+}
+
+void TrackStreamer::UnloadEverything() {
+    while (this->NumSectionsLoading != 0) {
+        ServiceResourceLoading();
+    }
+
+    for (int n = 0; n < this->NumTrackStreamingSections; n++) {
+        TrackStreamingSection *section = &this->pTrackStreamingSections[n];
+        // TODO
+        if (section->Status >= TrackStreamingSection::LOADED && section->Status <= TrackStreamingSection::ACTIVATED) {
+            this->UnloadSection(section);
+        }
+    }
+
+    this->FreeSectionMemory();
+    this->ClearCurrentZones();
+}

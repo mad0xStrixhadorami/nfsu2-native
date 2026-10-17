@@ -1,0 +1,160 @@
+#ifndef _WTrigger_H_
+#define _WTrigger_H_
+
+#include "WTriggerList.h"
+#include "Speed/Indep/Libs/Support/Utility/FastMem.h"
+#include "Speed/Indep/Libs/Support/Miscellaneous/CARP.h"
+#include "Speed/Indep/Src/Interfaces/Simables/ISimable.h"
+
+// total size: 0x40
+class WTrigger : public CARP::Trigger {
+  public:
+    USE_FASTALLOC(WTrigger);
+
+    WTrigger();
+    WTrigger(const UMath::Matrix4 &boxMat, const UMath::Vector3 &center, CARP::EventList *events, unsigned int type);
+    WTrigger(const UMath::Matrix4 &mat, float radius, float height, CARP::EventList *eventList, unsigned int flags);
+    ~WTrigger();
+    void FireEvents(HSIMABLE hSimable);
+
+    void Enable() {
+        this->fFlags |= 1;
+    }
+
+    void Disable() {
+        this->fFlags &= ~1;
+    }
+
+    bool IsEnabled() const {
+        return (this->fFlags & 1) != 0;
+    }
+
+    bool IsEnabled(bool allowSilencables) const {
+        if ((this->fFlags & 1) == 0) {
+            return false;
+        } else {
+            if (this->fFlags & 0x400) {
+                if (allowSilencables) {
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+
+    bool UpdatePos(const UMath::Vector3 &newPos, uintptr_t triggerInd);
+    void UpdateBox(const UMath::Matrix4 &boxMat, const UMath::Vector3 &center);
+
+    void MakeMatrix(UMath::Matrix4 &m, bool addXLate, bool frombase) const {
+        m.v0.x = this->fMatRow0Width.x;
+        m.v0.y = this->fMatRow0Width.y;
+        m.v0.z = this->fMatRow0Width.z;
+        m.v0.w = 0.0f;
+        if ((this->fFlags & 0x1000) != 0) {
+            m[1][0] = this->fMatRow2Length.y * this->fMatRow0Width.z - this->fMatRow2Length.z * this->fMatRow0Width.y;
+            m[1][1] = this->fMatRow2Length.z * this->fMatRow0Width.x - this->fMatRow2Length.x * this->fMatRow0Width.z;
+            m[1][2] = this->fMatRow2Length.x * this->fMatRow0Width.y - this->fMatRow2Length.y * this->fMatRow0Width.x;
+        } else {
+            m[1][0] = 0.0f;
+            m[1][1] = 1.0f;
+            m[1][2] = 0.0f;
+        }
+        m[1][3] = 0.0f;
+        m[2][0] = this->fMatRow2Length.x;
+        m[2][1] = this->fMatRow2Length.y;
+        m[2][2] = this->fMatRow2Length.z;
+        m[2][3] = 0.0f;
+        if (addXLate) {
+            m[3][0] = this->fPosRadius.x;
+            m[3][2] = this->fPosRadius.z;
+            if (frombase) {
+                m[3][1] = this->fPosRadius.y - this->fHeight * 0.5f;
+            } else {
+                m[3][1] = this->fPosRadius.y;
+            }
+            m[3][3] = 1.0f;
+        } else {
+            m[3][0] = 0.0f;
+            m[3][1] = 0.0f;
+            m[3][2] = 0.0f;
+            m[3][3] = 1.0f;
+        }
+    }
+
+    bool HasEvent(unsigned int eventID, const CARP::EventStaticData **foundEvent) const;
+    bool TestDirection(const UMath::Vector3 &vec) const;
+};
+
+struct FireOnExitRec;
+class FireOnExitList;
+
+// total size: 0x10
+class WTriggerManager {
+  public:
+    USE_FASTALLOC(WTriggerManager);
+
+    WTriggerManager();
+    ~WTriggerManager();
+
+    static void Init();
+
+    static void Shutdown() {
+        delete fgTriggerManager;
+        fgTriggerManager = nullptr;
+    }
+
+    static void Restart();
+
+    static bool Exists() {
+        return fgTriggerManager != nullptr;
+    }
+
+    static WTriggerManager &Get() {
+        return *fgTriggerManager;
+    }
+
+    static void FindTriggers(unsigned int eventID, WTriggerList &triggerList);
+
+    void Update(float dT);
+
+    void EnableSilencables() {
+        this->fSilencableEnabled = true;
+    }
+
+    void DisableSilencables() {
+        this->fSilencableEnabled = false;
+    }
+
+    void ClearAllFireOnExit();
+
+    void SetTargetability(WTrigger *pTrigger, bool targetable);
+    void GetIntersectingTriggers(const UMath::Vector3 &pt, float radius, WTriggerList *triggerList) const;
+    void SubmitForFire(WTrigger &trig, HSIMABLE hSimable);
+
+    int GetCurrentStimulus() const {
+        return this->fProcessingStimulus;
+    }
+
+    void DeleteRefs(const WTrigger *trig);
+    void ProcessRB(IRigidBody *rBody, float dT);
+    void ProcessSRB(IRigidBody *srBody, float dT);
+
+  private:
+    bool CheckCollideRB(const IRigidBody *rBody, const WTrigger *trig, float dT) const;
+    bool CheckCollideSRB(const IRigidBody *srBody, const WTrigger *trig, float dT) const;
+    bool CheckCollide(const UMath::Vector4 *pts, float segRadius, const WTrigger *trig) const;
+    bool CheckCollide(const UMath::Vector3 &pos, float radius, const WTrigger *trig) const;
+    bool CheckCollide(const UMath::Vector3 &pos, float radius, float height, float depth, const WTrigger *trig) const;
+    void Process(int rayShellIndex);
+
+    bool fSilencableEnabled;          // offset 0x0, size 0x1
+    int fProcessingStimulus;          // offset 0x4, size 0x4
+    FireOnExitList *fgFireOnExitList; // offset 0x8, size 0x4
+    static WTriggerManager *fgTriggerManager;
+    mutable unsigned short fIterCount; // offset 0xC, size 0x2
+};
+
+#endif

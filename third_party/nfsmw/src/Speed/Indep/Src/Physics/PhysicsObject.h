@@ -1,0 +1,50 @@
+#ifndef __PHYSICSOBJECT_H__
+#define __PHYSICSOBJECT_H__
+
+#include "Speed/Indep/Src/Interfaces/IBody.h"
+#include "Speed/Indep/Src/Interfaces/Simables/ISimable.h"
+#include "Speed/Indep/Src/Sim/SimAttachable.h"
+#include "Speed/Indep/Src/Sim/SimObject.h"
+
+class Behavior;
+
+DECLARE_CONTAINER_TYPE(ID_POMechanics);
+DECLARE_CONTAINER_TYPE(ID_POBehaviors);
+
+// total size: 0xAC
+class PhysicsObject : public Sim::Object,
+                      public ISimable,
+                      public IBody,
+                      public IAttachable,
+                      public UTL::Collections::GarbageNode<PhysicsObject, 160>,
+                      protected UTL::Collections::Container<Behavior, _type_UContainer> {
+  public:
+    typedef UTL::Std::map<unsigned int, Behavior *, _type_ID_POMechanics> Mechanics;
+
+    struct Behaviors : protected UTL::Std::list<Behavior *, _type_ID_POBehaviors> {
+        // total size: 0x8
+    };
+
+    PhysicsObject(const Attrib::Instance &attribs, SimableType objType, WUID wuid, unsigned int num_interfaces);
+    PhysicsObject(const char *attributeClass, const char *attribName, SimableType objType, HSIMABLE owner, WUID wuid);
+
+    // Overrides
+    virtual ~PhysicsObject();
+
+  private:
+    WWorldPos *mWPos;               // offset 0x58, size 0x4
+    SimableType mObjType;           // offset 0x5C, size 0x4
+    HSIMABLE mOwner;                // offset 0x60, size 0x4
+    Attrib::Instance mAttributes;   // offset 0x64, size 0x14
+    IRigidBody *mRigidBody;         // offset 0x78, size 0x4
+    HSIMTASK mSimulateTask;         // offset 0x7C, size 0x4
+    Sim::IEntity *mEntity;          // offset 0x80, size 0x4
+    IPlayer *mPlayer;               // offset 0x84, size 0x4
+    HSIMSERVICE mBodyService;       // offset 0x88, size 0x4
+    WUID mWorldID;                  // offset 0x8C, size 0x4
+    Mechanics mMechanics;           // offset 0x90, size 0x10
+    Behaviors mBehaviors;           // offset 0xA0, size 0x8
+    Sim::Attachments *mAttachments; // offset 0xA8, size 0x4
+};
+
+#endif

@@ -1,0 +1,64 @@
+// TODO remove
+#ifdef _MSC_VER
+#pragma warning(disable : 4716)
+#endif
+
+#include "Speed/Indep/Src/Physics/Behaviors/BehaviorSpecs.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/RigidBody.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SimpleRigidBody.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/RBVehicle.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/RBTractor.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/RBCop.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/Effects.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DamageVehicle.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DamageRacer.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DamageDragster.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DamageHeli.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DamageCopCar.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/PInput.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/Chassis.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SuspensionRacer.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SuspensionTraffic.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SuspensionSimple.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SuspensionTrailer.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SuspensionSpline.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/EngineRacer.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/EngineSpline.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SimpleChopper.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/EngineTraffic.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DrawVehicle.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DrawHeli.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/DrawCar.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SoundCar.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/ResetCar.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SoundHeli.cpp"
+
+#include "Speed/Indep/Src/Physics/Behaviors/SpikeStrip.cpp"

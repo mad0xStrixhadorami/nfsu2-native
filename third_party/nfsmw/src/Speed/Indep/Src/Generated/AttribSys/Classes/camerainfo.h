@@ -1,0 +1,329 @@
+#ifndef _attrib_gen_camerainfo_h
+#define _attrib_gen_camerainfo_h
+
+#include "Speed/Indep/Src/Misc/MWAttribUserTypes.h"
+
+namespace Attrib {
+namespace Gen {
+
+struct camerainfo : Instance {
+    struct _LayoutStruct {
+        Private _Array_STIFFNESS;            // offset 0x0, size 0x8
+        EA::Reflection::Float STIFFNESS[2];  // offset 0x8, size 0x8
+        Private _Array_LATOFFSET;            // offset 0x10, size 0x8
+        EA::Reflection::Float LATOFFSET[2];  // offset 0x18, size 0x8
+        Private _Array_LAG;                  // offset 0x20, size 0x8
+        EA::Reflection::Float LAG[2];        // offset 0x28, size 0x8
+        Private _Array_FOV;                  // offset 0x30, size 0x8
+        EA::Reflection::Float FOV[2];        // offset 0x38, size 0x8
+        Private _Array_HEIGHT;               // offset 0x40, size 0x8
+        EA::Reflection::Float HEIGHT[2];     // offset 0x48, size 0x8
+        Private _Array_ANGLE;                // offset 0x50, size 0x8
+        EA::Reflection::Float ANGLE[2];      // offset 0x58, size 0x8
+        EA::Reflection::Text CollectionName; // offset 0x60, size 0x4
+        Private _Array_TILTING;              // offset 0x64, size 0x8
+        EA::Reflection::Bool TILTING[2];     // offset 0x6c, size 0x2
+        Private _Array_SELECTABLE;           // offset 0x6e, size 0x8
+        EA::Reflection::Bool SELECTABLE[2];  // offset 0x76, size 0x2
+    };
+
+    typedef EA::Reflection::Float TypeOf_ANGLE;
+    typedef EA::Reflection::Text TypeOf_CollectionName;
+    typedef EA::Reflection::Float TypeOf_FOV;
+    typedef EA::Reflection::Float TypeOf_HEIGHT;
+    typedef EA::Reflection::Float TypeOf_LAG;
+    typedef EA::Reflection::Float TypeOf_LATOFFSET;
+    typedef EA::Reflection::Bool TypeOf_SELECTABLE;
+    typedef EA::Reflection::Float TypeOf_STIFFNESS;
+    typedef EA::Reflection::Bool TypeOf_TILTING;
+
+    static Key ClassKey();
+    USE_ATTRIB_ALLOC("camerainfo");
+    camerainfo(Key collectionKey, unsigned int msgPort, UTL::COM::IUnknown *owner)
+        : Instance(FindCollection(ClassKey(), collectionKey), msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    camerainfo(const Collection *collection, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(collection, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    camerainfo(const Instance &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    camerainfo(const camerainfo &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    camerainfo(const RefSpec &refspec, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(refspec, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    ~camerainfo() {}
+    Instance &GetBase() {
+        return *this;
+    }
+    const Instance &GetBase() const {
+        return *this;
+    }
+    Key GetClass() {
+        return 0x93c171e4;
+    }
+    void Modify(Key dynamicCollectionKey, unsigned int spaceForAdditionalAttributes) {
+        ModifyInternal(ClassKey(), dynamicCollectionKey, LocalAttribCount() + spaceForAdditionalAttributes);
+    }
+    Key GenerateUniqueKey(const char *name, bool registerName) const {
+        return GUKeyInternal(ClassKey(), name, registerName);
+    }
+    void Change(const Collection *c) {
+        Instance::Change(c);
+    }
+    void Change(const RefSpec &refspec) {
+        Instance::Change(refspec);
+    }
+    void Change(Key collectionkey) {
+        Change(FindCollection(ClassKey(), collectionkey));
+    }
+    void ChangeWithDefault(const RefSpec &refspec) {
+        Instance::ChangeWithDefault(refspec);
+    }
+    void ChangeWithDefault(Key collectionkey) {
+        Change(FindCollectionWithDefault(ClassKey(), collectionkey));
+    }
+    const camerainfo &operator=(const camerainfo &rhs) {
+        operator=(rhs.GetBase());
+        return *this;
+    }
+    const camerainfo &operator=(const Instance &rhs) {
+        Instance::operator=(rhs);
+        return *this;
+    }
+    bool ANGLE(TAttrib<EA::Reflection::Float> &result) const;
+    bool ANGLE(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &ANGLE(unsigned int index) const;
+    unsigned int Num_ANGLE() const;
+    bool Set_ANGLE(const EA::Reflection::Float &input, unsigned int index);
+
+    bool CollectionName(TAttrib<EA::Reflection::Text> &result) const;
+    bool CollectionName(EA::Reflection::Text &result) const;
+    const EA::Reflection::Text &CollectionName() const;
+    bool Set_CollectionName(const EA::Reflection::Text &input);
+
+    bool FOV(TAttrib<EA::Reflection::Float> &result) const;
+    bool FOV(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &FOV(unsigned int index) const;
+    unsigned int Num_FOV() const;
+    bool Set_FOV(const EA::Reflection::Float &input, unsigned int index);
+
+    bool HEIGHT(TAttrib<EA::Reflection::Float> &result) const;
+    bool HEIGHT(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &HEIGHT(unsigned int index) const;
+    unsigned int Num_HEIGHT() const;
+    bool Set_HEIGHT(const EA::Reflection::Float &input, unsigned int index);
+
+    bool LAG(TAttrib<EA::Reflection::Float> &result) const;
+    bool LAG(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &LAG(unsigned int index) const;
+    unsigned int Num_LAG() const;
+    bool Set_LAG(const EA::Reflection::Float &input, unsigned int index);
+
+    bool LATOFFSET(TAttrib<EA::Reflection::Float> &result) const;
+    bool LATOFFSET(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &LATOFFSET(unsigned int index) const;
+    unsigned int Num_LATOFFSET() const;
+    bool Set_LATOFFSET(const EA::Reflection::Float &input, unsigned int index);
+
+    bool SELECTABLE(TAttrib<EA::Reflection::Bool> &result) const;
+    bool SELECTABLE(EA::Reflection::Bool &result, unsigned int index) const;
+    const EA::Reflection::Bool &SELECTABLE(unsigned int index) const;
+    unsigned int Num_SELECTABLE() const;
+    bool Set_SELECTABLE(const EA::Reflection::Bool &input, unsigned int index);
+
+    bool STIFFNESS(TAttrib<EA::Reflection::Float> &result) const;
+    bool STIFFNESS(EA::Reflection::Float &result, unsigned int index) const;
+    const EA::Reflection::Float &STIFFNESS(unsigned int index) const;
+    unsigned int Num_STIFFNESS() const;
+    bool Set_STIFFNESS(const EA::Reflection::Float &input, unsigned int index);
+
+    bool TILTING(TAttrib<EA::Reflection::Bool> &result) const;
+    bool TILTING(EA::Reflection::Bool &result, unsigned int index) const;
+    const EA::Reflection::Bool &TILTING(unsigned int index) const;
+    unsigned int Num_TILTING() const;
+    bool Set_TILTING(const EA::Reflection::Bool &input, unsigned int index);
+
+  private:
+    unsigned int GetLayoutSize() {
+        return sizeof(_LayoutStruct);
+    }
+    camerainfo &ConvertFromInstance(Instance &src) {}
+    const camerainfo &ConvertFromInstance(const Instance &src) {}
+};
+}; // namespace Gen
+
+namespace ClassName {
+
+static const Key camerainfo = 0x93c171e4;
+
+}; // namespace ClassName
+
+namespace Hash {
+namespace camerainfo {
+
+static const Key ANGLE = 0x7d1e620e;
+static const Key CollectionName = 0x9ca1c8f9;
+static const Key FOV = 0x263e9452;
+static const Key HEIGHT = 0x762b7718;
+static const Key LAG = 0xde0857e3;
+static const Key LATOFFSET = 0x2fc5f041;
+static const Key SELECTABLE = 0x40e94f86;
+static const Key STIFFNESS = 0x7f8eea1a;
+static const Key TILTING = 0x665f4d74;
+
+}; // namespace camerainfo
+}; // namespace Hash
+
+inline Key Gen::camerainfo::ClassKey() {
+    return ClassName::camerainfo;
+}
+
+inline bool Gen::camerainfo::ANGLE(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x7d1e620e);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::ANGLE(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, ANGLE, index);
+}
+inline bool Gen::camerainfo::ANGLE(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(ANGLE, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_ANGLE() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(ANGLE);
+}
+inline bool Gen::camerainfo::Set_ANGLE(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(ANGLE, input, index);
+}
+
+inline bool Gen::camerainfo::CollectionName(TAttrib<EA::Reflection::Text> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Text, 0x9ca1c8f9);
+}
+inline const EA::Reflection::Text &Gen::camerainfo::CollectionName() const {
+    ATTRIB_CODEGEN_GETLAYOUT(CollectionName);
+}
+inline bool Gen::camerainfo::CollectionName(EA::Reflection::Text &result) const {
+    result = CollectionName();
+    return true;
+}
+inline bool Gen::camerainfo::Set_CollectionName(const EA::Reflection::Text &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(CollectionName, input);
+}
+
+inline bool Gen::camerainfo::FOV(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x263e9452);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::FOV(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, FOV, index);
+}
+inline bool Gen::camerainfo::FOV(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(FOV, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_FOV() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(FOV);
+}
+inline bool Gen::camerainfo::Set_FOV(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(FOV, input, index);
+}
+
+inline bool Gen::camerainfo::HEIGHT(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x762b7718);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::HEIGHT(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, HEIGHT, index);
+}
+inline bool Gen::camerainfo::HEIGHT(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(HEIGHT, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_HEIGHT() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(HEIGHT);
+}
+inline bool Gen::camerainfo::Set_HEIGHT(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(HEIGHT, input, index);
+}
+
+inline bool Gen::camerainfo::LAG(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xde0857e3);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::LAG(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, LAG, index);
+}
+inline bool Gen::camerainfo::LAG(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(LAG, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_LAG() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(LAG);
+}
+inline bool Gen::camerainfo::Set_LAG(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(LAG, input, index);
+}
+
+inline bool Gen::camerainfo::LATOFFSET(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x2fc5f041);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::LATOFFSET(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, LATOFFSET, index);
+}
+inline bool Gen::camerainfo::LATOFFSET(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(LATOFFSET, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_LATOFFSET() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(LATOFFSET);
+}
+inline bool Gen::camerainfo::Set_LATOFFSET(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(LATOFFSET, input, index);
+}
+
+inline bool Gen::camerainfo::SELECTABLE(TAttrib<EA::Reflection::Bool> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Bool, 0x40e94f86);
+}
+inline const EA::Reflection::Bool &Gen::camerainfo::SELECTABLE(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Bool, SELECTABLE, index);
+}
+inline bool Gen::camerainfo::SELECTABLE(EA::Reflection::Bool &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(SELECTABLE, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_SELECTABLE() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(SELECTABLE);
+}
+inline bool Gen::camerainfo::Set_SELECTABLE(const EA::Reflection::Bool &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(SELECTABLE, input, index);
+}
+
+inline bool Gen::camerainfo::STIFFNESS(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x7f8eea1a);
+}
+inline const EA::Reflection::Float &Gen::camerainfo::STIFFNESS(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Float, STIFFNESS, index);
+}
+inline bool Gen::camerainfo::STIFFNESS(EA::Reflection::Float &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(STIFFNESS, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_STIFFNESS() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(STIFFNESS);
+}
+inline bool Gen::camerainfo::Set_STIFFNESS(const EA::Reflection::Float &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(STIFFNESS, input, index);
+}
+
+inline bool Gen::camerainfo::TILTING(TAttrib<EA::Reflection::Bool> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Bool, 0x665f4d74);
+}
+inline const EA::Reflection::Bool &Gen::camerainfo::TILTING(unsigned int index) const {
+    ATTRIB_CODEGEN_GETLAYOUTINDEXED(EA::Reflection::Bool, TILTING, index);
+}
+inline bool Gen::camerainfo::TILTING(EA::Reflection::Bool &result, unsigned int index) const {
+    ATTRIB_CODEGEN_CHECKEDGETLAYOUTINDEXED(TILTING, result, index);
+}
+inline unsigned int Gen::camerainfo::Num_TILTING() const {
+    ATTRIB_CODEGEN_GETLAYOUTLENGTH(TILTING);
+}
+inline bool Gen::camerainfo::Set_TILTING(const EA::Reflection::Bool &input, unsigned int index) {
+    ATTRIB_CODEGEN_SETLAYOUTINDEXED(TILTING, input, index);
+}
+
+}; // namespace Attrib
+
+#endif

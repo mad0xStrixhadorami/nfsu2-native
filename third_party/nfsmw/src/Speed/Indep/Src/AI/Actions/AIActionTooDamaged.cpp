@@ -1,0 +1,80 @@
+#include "Speed/Indep/Src/AI/AIAction.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IINput.h"
+#include "Speed/Indep/Src/Interfaces/Simables/IRigidBody.h"
+
+// total size: 0x48
+class AIActionTooDamaged : public AIAction, public Debugable {
+  public:
+    AIActionTooDamaged(AIActionParams *params, float score);
+    ~AIActionTooDamaged() override {}
+
+    static AIAction *Construct(AIActionParams *params);
+
+    // AIAction
+    bool CanBeAttempted(float dT) override;
+
+    bool IsFinished() override {
+        return false;
+    }
+
+    void BeginAction(float dT) override;
+    void FinishAction(float dT) override;
+    void Update(float dT) override;
+    void OnBehaviorChange(const UCrc32 &mechanic) override;
+
+    virtual void OnDebugDraw();
+
+  private:
+    IVehicle *mIVehicle; // offset 0x4C, size 0x4
+    IInput *mIInput;     // offset 0x50, size 0x4
+};
+
+BIND_AIACTION_FACTORY(AIActionTooDamaged);
+
+AIActionTooDamaged::AIActionTooDamaged(AIActionParams *params, float score) : AIAction(params, score) {
+    params->mOwner->QueryInterface(&this->mIVehicle);
+    params->mOwner->QueryInterface(&this->mIInput);
+
+    this->MakeDebugable(DBG_AI);
+}
+
+void AIActionTooDamaged::OnBehaviorChange(const UCrc32 &mechanic) {
+    if (mechanic == BEHAVIOR_MECHANIC_INPUT) {
+        this->GetOwner()->QueryInterface(&this->mIInput);
+    }
+}
+
+AIAction *AIActionTooDamaged::Construct(AIActionParams *params) {
+    return new AIActionTooDamaged(params, AIACTION_SCORE_HIGH);
+}
+
+bool AIActionTooDamaged::CanBeAttempted(float dT) {
+    if (this->mIVehicle != nullptr && this->mIInput != nullptr) {
+        return this->mIVehicle->IsDestroyed();
+    } else {
+        return false;
+    }
+}
+
+void AIActionTooDamaged::BeginAction(float dT) {
+    IPursuitAI *iPursuitAI;
+    if (this->GetOwner()->QueryInterface(&iPursuitAI)) {
+        return iPursuitAI->EndPursuit();
+    }
+}
+
+void AIActionTooDamaged::FinishAction(float dT) {}
+
+void AIActionTooDamaged::Update(float dT) {
+    this->mIInput->SetControlGas(0.0f);
+    this->mIInput->SetControlBrake(0.0f);
+    this->mIInput->SetControlSteering(0.0f);
+    this->mIInput->SetControlSteeringVertical(0.0f);
+    this->mIInput->SetControlHandBrake(0.0f);
+
+    if (!this->mIVehicle->InShock() && this->GetActionParams().mOwner->GetRigidBody()->GetSpeedXZ() >= 2.5f) {
+        this->mIInput->SetControlBrake(0.25f);
+    }
+}
+
+void AIActionTooDamaged::OnDebugDraw() {}

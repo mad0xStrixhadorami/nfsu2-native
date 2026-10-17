@@ -1,0 +1,66 @@
+//
+#ifndef AIMATH_H
+#define AIMATH_H
+
+#include "Speed/Indep/Libs/Support/Utility/UMath.h"
+
+namespace AI {
+
+namespace Math {
+
+// total size: 0x10
+// Decl: 10
+class FloatSpring {
+  public:
+    FloatSpring(float spring_k, float damper_k) : mX(0.0f), mV(0.0f), mC(spring_k), mD(damper_k) {}
+
+    float Integrate(float newvalue, float dT) {
+        // TODO these are in the opposite order and assigned wrong
+        float v = this->mV;
+        float dX = (-v * this->mD * dT);
+        dX += (newvalue - this->mX) * this->mC * dT + v;
+
+        this->mV = dX;
+        this->mX += dX * dT;
+
+        return dX;
+    }
+
+    float GetPosition() const {
+        return this->mX;
+    }
+
+    void SetPosition(float x) {
+        this->mX = x;
+        this->mV = 0.0f;
+    }
+
+  private:
+    float mX;       // offset 0x0, size 0x4
+    float mV;       // offset 0x4, size 0x4
+    const float mC; // offset 0x8, size 0x4
+    const float mD; // offset 0xC, size 0x4
+};
+
+float AngleTo(const UMath::Vector3 &p0, const UMath::Vector3 &n0, const UMath::Vector3 &p1);
+float TimeToIntercept(const UMath::Vector3 &p0, const UMath::Vector3 &v0, const UMath::Vector3 &p1, const UMath::Vector3 &v1);
+float TimeToImpactXZ(const UMath::Vector3 &pos0, const UMath::Vector3 &vel0, const float rad0, const UMath::Vector3 &pos1, const UMath::Vector3 &vel1,
+                     const float rad1);
+void PredictPosition(float predictTime, const UMath::Vector3 &position, const UMath::Vector3 &vfwd, float yaw, const UMath::Vector3 &linearVelocity,
+                     const float angularVelocity, UMath::Vector3 &result);
+
+// Decl: 87
+inline void PredictPosition(float dT, const UMath::Vector3 &position, const UMath::Matrix4 &mat, const UMath::Vector3 &linearVelocity,
+                            const UMath::Vector3 &angularVelocity, UMath::Vector3 &result) {
+    float yaw = UMath::Atan2r(mat.v2.x, mat.v2.z);
+    PredictPosition(dT, position, UMath::Vector4To3(mat.v2), yaw, linearVelocity, angularVelocity.y, result);
+}
+
+inline bool SegmentSphereIntersect(const UMath::Vector3 &p0, const UMath::Vector3 &p1, const UMath::Vector3 &cen, const float radius,
+                                   UMath::Vector3 &IntersectPoint);
+
+}; // namespace Math
+
+}; // namespace AI
+
+#endif

@@ -1,0 +1,196 @@
+#ifndef UCOM_H
+#define UCOM_H
+
+#include "Speed/Indep/Libs/Support/Utility/FastMem.h"
+#include "Speed/Indep/Libs/Support/Utility/UStandard.h"
+
+// TODO move into the UTL::COM namespace
+typedef void *HINTERFACE;
+
+DECLARE_CONTAINER_TYPE(UComObject);
+
+namespace UTL {
+namespace COM {
+
+class IUnknown;
+
+// total size: 0x10
+class Object {
+    struct _IPair {
+        void *handle;
+        IUnknown *ref;
+
+        _IPair(void *h, IUnknown *r) {
+            this->handle = h;
+            this->ref = r;
+        }
+        // bool operator<(const _IPair &rhs) {}
+    };
+
+    class _IList : public UTL::Std::vector<_IPair, _type_UComObject> {
+        // int pad;
+        // void *_M_start;
+        // void *_M_finish;
+        // void *_M_end_of_storage;
+
+      public:
+        _IList(unsigned int icount);
+        ~_IList();
+        void Add(HINTERFACE handle, IUnknown *ref);
+        IUnknown *Find(HINTERFACE handle);
+        void *Find(const IUnknown *pUnk) const;
+        void Remove(IUnknown *pUnk);
+    };
+
+  public:
+    _IList _mInterfaces; // offset 0x0, size 0x10
+
+  protected:
+    void *operator new(std::size_t size) {
+        return gFastMem.Alloc(size, nullptr);
+    }
+
+    Object(std::size_t icount) : _mInterfaces(icount) {}
+
+    ~Object() {}
+};
+
+// total size: 0x8
+class PS2ALIGN16 IUnknown {
+  public:
+    template <typename T> bool QueryInterface(T **out) {
+        HINTERFACE handle = T::_IHandle();
+
+        *out = static_cast<T *>(_mCOMObject->_mInterfaces.Find(handle));
+        return *out != nullptr;
+    }
+
+    // TODO is this a thing?
+    template <typename T> bool QueryInterface(const T **out) const {
+        HINTERFACE handle = T::_IHandle();
+
+        *out = static_cast<T *>(_mCOMObject->_mInterfaces.Find(handle));
+        return *out != nullptr;
+    }
+
+    friend bool ComparePtr(const IUnknown *pUnk1, const IUnknown *pUnk2);
+
+  protected:
+    IUnknown(Object *owner, void *handle) {
+        _mCOMObject = owner;
+        _mCOMObject->_mInterfaces.Add(handle, this);
+    }
+
+    virtual ~IUnknown() {
+        _mCOMObject->_mInterfaces.Remove(this);
+    }
+
+  private:
+    Object *_mCOMObject; // offset 0x0, size 0x4
+};
+
+// TODO move HINTERFACE into the UTL::COM namespace
+#define DECL_INTERFACE(_Interface_)                                                                                                                  \
+  public:                                                                                                                                            \
+    static HINTERFACE _IHandle() {                                                                                                                   \
+        return (HINTERFACE)_IHandle;                                                                                                                 \
+    }                                                                                                                                                \
+                                                                                                                                                     \
+  protected:                                                                                                                                         \
+    ~_Interface_() override {}                                                                                                                       \
+    _Interface_(UTL::COM::Object *owner) : IUnknown(owner, _Interface_::_IHandle()) {}                                                               \
+                                                                                                                                                     \
+  private:                                                                                                                                           \
+    _Interface_(const _Interface_ &);                                                                                                                \
+    const _Interface_ &operator=(const _Interface_ &);                                                                                               \
+                                                                                                                                                     \
+  public:
+
+template <typename T> inline T *QueryInterface(IUnknown *pUnk) {
+    T *ptr = nullptr;
+    if (pUnk) {
+        pUnk->QueryInterface(&ptr);
+    }
+
+    return ptr;
+}
+
+/**
+ * @brief Checks if two COM pointers are equal
+ *
+ * @param pUnk1 first pointer
+ * @param pUnk2 second pointer
+ * @return true if both pointers are either nullptr or if their corresponding objects are the same
+ * @return false otherwise
+ */
+inline bool ComparePtr(const IUnknown *pUnk1, const IUnknown *pUnk2) {
+    if ((pUnk1 != nullptr) && (pUnk2 != nullptr)) {
+        return pUnk1->_mCOMObject == pUnk2->_mCOMObject;
+    }
+    return (pUnk1 == nullptr) && (pUnk2 == nullptr);
+}
+
+inline void ValidatePtr(const IUnknown *pUnk) {}
+
+template <typename T> inline bool Is(const IUnknown *pUnk) {
+    const T *ptr;
+    return pUnk && pUnk->QueryInterface(&ptr);
+}
+
+template <typename T, typename U, typename V> class Factory {
+    typedef U *_PRODUCT;
+    typedef V _PRODUCT_SIGNATURE;
+    typedef T _BUILD_PARAMETERS;
+
+  public:
+    // total size: 0xC
+    struct Prototype {
+        typedef _PRODUCT (*_CONSTRUCTOR)(_BUILD_PARAMETERS);
+
+        friend class Factory;
+
+        Prototype(const _PRODUCT_SIGNATURE &classsig, _CONSTRUCTOR constructor)
+            : mSignature(classsig),      //
+              mConstructor(constructor), //
+              mTail(mHead) {
+            mHead = this;
+        }
+
+        static const Prototype *GetHead() {
+            return mHead;
+        }
+
+        const Prototype *GetNext() const {
+            return mTail;
+        }
+
+      private:
+        static Prototype *mHead; // size: 0x4
+
+        _PRODUCT_SIGNATURE mSignature; // offset 0x0, size 0x4
+        _CONSTRUCTOR mConstructor;     // offset 0x4, size 0x4
+        Prototype *mTail;              // offset 0x8, size 0x4
+    };
+
+    Factory() {}
+
+    ~Factory() {}
+
+    static _PRODUCT CreateInstance(_PRODUCT_SIGNATURE sig, _BUILD_PARAMETERS params);
+    // TODO
+    //  {
+    //     for (const Prototype *f = Prototype::GetHead(); f != nullptr; f = f->GetNext()) {
+    //         if (f->mSignature == sig) {
+    //             return f->mConstructor(params);
+    //         }
+    //     }
+    //     return nullptr;
+    // }
+};
+
+#define IMPLEMENT_FACTORY(_Factory_) template <> _Factory_::Prototype *_Factory_::Prototype::mHead = NULL;
+
+} // namespace COM
+} // namespace UTL
+
+#endif

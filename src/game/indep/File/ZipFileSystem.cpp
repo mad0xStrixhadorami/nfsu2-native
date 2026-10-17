@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "game/bWare/bString.h"
+#include "Speed/Indep/bWare/Inc/Strings.hpp"
 
 // 0x002eace8: upper-case ASCII letters, turn '/' into '\', then bStringHash.
 uint32_t ZipPathHash(const char *path)

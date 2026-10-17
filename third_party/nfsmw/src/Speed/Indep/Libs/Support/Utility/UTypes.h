@@ -1,0 +1,188 @@
+#ifndef UTYPES_H
+#define UTYPES_H
+
+#include "types.h"
+#include "UDefs.h"
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+
+namespace UMath {
+
+extern float Infinity;
+
+// total size: 0x8
+struct Vector2 {
+    float x; // offset 0x0, size 0x4
+    float y; // offset 0x4, size 0x4
+
+    static const Vector2 kZero;
+
+    float &operator[](int index) {
+        return (&x)[index];
+    }
+};
+
+// total size: 0xC
+struct Vector3 {
+    float x; // offset 0x0, size 0x4
+    float y; // offset 0x4, size 0x4
+    float z; // offset 0x8, size 0x4
+
+    static const Vector3 kZero;
+
+    operator const bVector3 &() const {
+        return *reinterpret_cast<const bVector3 *>(this);
+    }
+
+    const float &operator[](int index) const {
+        return (&x)[index];
+    }
+
+    float &operator[](int index) {
+        return (&x)[index];
+    }
+};
+
+// total size: 0x10
+struct ALIGNVEC Vector4 {
+    float x; // offset 0x0, size 0x4
+    float y; // offset 0x4, size 0x4
+    float z; // offset 0x8, size 0x4
+    float w; // offset 0xC, size 0x4
+
+    static const Vector4 kZero;
+    static const Vector4 kIdentity;
+
+    operator const bVector4 &() const {
+        return *reinterpret_cast<const bVector4 *>(this);
+    }
+
+    const float &operator[](int index) const {
+        return (&x)[index];
+    }
+
+    float &operator[](int index) {
+        return (&x)[index];
+    }
+};
+
+struct Matrix3 {
+    Vector3 v0, v1, v2;
+
+    static const Matrix3 kZero;
+    static const Matrix3 kIdentity;
+
+    // float *GetElements() {}
+
+    // const float *GetElements() const {}
+
+    const Vector3 &operator[](int index) const {
+        return (&v0)[index];
+    }
+
+    Vector3 &operator[](int index) {
+        return (&v0)[index];
+    }
+};
+
+struct PS2ALIGN16 Matrix4 {
+    Vector4 v0, v1, v2, v3;
+
+    static const Matrix4 kZero;
+    static const Matrix4 kIdentity;
+
+    float *GetElements() {
+        return &v0.x;
+    }
+
+    const float *GetElements() const {
+        return &v0.x;
+    }
+
+    const Vector4 &operator[](int index) const {
+        return (&v0)[index];
+    }
+
+    Vector4 &operator[](int index) {
+        return (&v0)[index];
+    }
+};
+
+inline Vector3 &Vector4To3(Vector4 &c4) {
+    return reinterpret_cast<Vector3 &>(c4);
+}
+
+inline Vector3 *Vector4To3(Vector4 *c4) {
+    return reinterpret_cast<Vector3 *>(c4);
+}
+
+inline const Vector3 &Vector4To3(const Vector4 &c4) {
+    return reinterpret_cast<const Vector3 &>(c4);
+}
+
+inline const Vector3 *Vector4To3(const Vector4 *c4) {
+    return reinterpret_cast<const Vector3 *>(c4);
+}
+
+inline Vector2 Vector2Make(float x, float y) {
+    Vector2 c;
+    c.x = x;
+    c.y = y;
+    return c;
+}
+
+inline UMath::Vector3 Vector3Make(float x, float y, float z) {
+    Vector3 c;
+
+    c.x = x;
+    c.y = y;
+    c.z = z;
+
+    return c;
+}
+
+inline Vector4 Vector4Make(float x, float y, float z, float w) {
+    Vector4 c;
+    c.x = x;
+    c.y = y;
+    c.z = z;
+    c.w = w;
+    return c;
+}
+
+// TODO PS2
+inline Vector4 Vector4Make(const Vector3 &c, float w) {
+    Vector4 res;
+    res.x = c.x;
+    res.y = c.y;
+    res.z = c.z;
+    res.w = w;
+    return res;
+}
+
+// TODO move?
+typedef Vector4 Quaternion;
+
+} // namespace UMath
+
+// TODO where should this go
+typedef UMath::Quaternion RQUAT;
+typedef unsigned char u_char;
+typedef short unsigned int u_short;
+typedef unsigned int u_int;
+typedef long unsigned int u_long;
+
+// TODO move?
+inline UMath::Vector3 &bConvertToBond(UMath::Vector3 &dest, const bVector3 &v) {
+    bConvertToBond(reinterpret_cast<bVector3 &>(dest), v);
+    return dest;
+}
+
+// TODO move?
+extern "C" {
+void v3crossprod(const UMath::Vector3 *p1, const UMath::Vector3 *p2, UMath::Vector3 *result);
+void v3unit(const UMath::Vector3 *v, UMath::Vector3 *result);
+void v3sub(int num, const UMath::Vector3 *src, const UMath::Vector3 *vtosub, UMath::Vector3 *results);
+void v3add(int num, const UMath::Vector3 *src, const UMath::Vector3 *vtosub, UMath::Vector3 *results);
+};
+
+#endif

@@ -1,0 +1,464 @@
+#include "Timer.hpp"
+#include "BuildRegion.hpp"
+#include "Joylog.hpp"
+#include "Speed/Indep/Src/Frontend/Localization/Localize.hpp"
+#include "Speed/Indep/Src/Sim/Simulation.h"
+#include "Speed/GameCube/Src/Ecstasy/DmaE.hpp" // TODO other platforms
+#include "Speed/Indep/Src/World/OnlineManager.hpp"
+#include "Speed/Indep/bWare/Inc/Strings.hpp"
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+
+// TODO where are these? Main.hpp or something?
+extern int CurrentLoopCounter;
+extern unsigned int TimeDifferenceInMicroseconds;
+extern float TimeDifferenceInMiliseconds;
+extern float TimeDifferenceInSeconds;
+extern float MilisecondsToSeconds;
+extern float MicrosecondsToMiliseconds;
+
+volatile int32 FrameCounter = 0;          // Decl: 34
+volatile uint32 LastFrameCounterTick = 0; // Decl: 35
+VIDEO_MODE CurrentVideoMode = MODE_NTSC;  // Decl: 44
+
+VIDEO_MODE GetVideoMode() {
+    return CurrentVideoMode;
+}
+
+VIDEO_MODE SetVideoMode(VIDEO_MODE video_mode) {
+    VIDEO_MODE old_video_mode = CurrentVideoMode;
+    CurrentVideoMode = video_mode;
+    return old_video_mode;
+}
+
+VIDEO_MODE GetBuildRegionVideoMode() {
+    VIDEO_MODE video_mode;
+    if (BuildRegion::IsPal()) {
+        video_mode = MODE_PAL;
+    } else {
+        video_mode = MODE_NTSC;
+    }
+    return video_mode;
+}
+
+Timer RealTimer;          // Decl: 103
+int32 RealTimeFrames = 1; // Decl: 104
+int32 RealTime = 1;       // Decl: 105
+
+int32 RealTimeFramesElapsed = 2;                       // Decl: 109
+float RealTimeElapsed = RealTimeFramesElapsed / 30.0f; // Decl: 110
+int RealTimeElapsedQuantized = 0;                      // Decl: 111
+float RealTimeElapsedFrame = 0;                        // Decl: 112
+float RealTimeElapsedError = 0;                        // Decl: 113
+int32 RealLoopCounter = 0;                             // Decl: 114
+
+float DefaultLimitMinimumVideoTimeElapsed = 1.0f / 60.0f;                 // Decl: 119
+float LimitMinimumVideoTimeElapsed = DefaultLimitMinimumVideoTimeElapsed; // Decl: 121
+
+// STRIPPED
+void SetFPSLimiter(float fps) {}
+
+// STRIPPED
+void ResetFPSLimiter() {}
+
+// STRIPPED
+float GetMaxFPS() {}
+
+float GetRealTimeElapsedFromQuantized(int real_time_elapsed_quantized) {
+    return static_cast<float>(real_time_elapsed_quantized) * (1.0f / 3600.0f);
+}
+
+int GetQuantizedRealTimeElapsed(float real_time_elapsed) {
+    return static_cast<int>(real_time_elapsed * 3600.0f + 0.5f);
+}
+
+float MaxTicksPerTimestep = 4.0f; // Decl: 148
+
+void PrepareRealTimestep(float video_time_elapsed) {
+    float start_video_time_elapsed = video_time_elapsed;
+    int current_loop_counter = RealLoopCounter & 0xf;
+    int quantized_video_time_elapsed;
+
+    if (Joylog::IsReplaying()) {
+        quantized_video_time_elapsed = Joylog::GetData(16, JOYLOG_CHANNEL_TIMESTEP);
+        int previous_loop_counter = Joylog::GetData(4, JOYLOG_CHANNEL_LOOP_COUNTER);
+    } else {
+        video_time_elapsed = video_time_elapsed + RealTimeElapsedError;
+        if (!TheOnlineManager.IsOnlineRace()) {
+            if (GetVideoMode() == MODE_PAL) {
+                video_time_elapsed = bMin(video_time_elapsed, MaxTicksPerTimestep * (1.0f / 50.0f));
+            } else {
+                video_time_elapsed = bMin(video_time_elapsed, MaxTicksPerTimestep * (1.0f / 60.0f));
+            }
+        }
+        quantized_video_time_elapsed = GetQuantizedRealTimeElapsed(video_time_elapsed);
+        RealTimeElapsedError = video_time_elapsed - Timer(GetRealTimeElapsedFromQuantized(quantized_video_time_elapsed)).GetSeconds();
+        Joylog::AddData(quantized_video_time_elapsed, 16, JOYLOG_CHANNEL_TIMESTEP);
+        Joylog::AddData(current_loop_counter, 4, JOYLOG_CHANNEL_LOOP_COUNTER);
+    }
+
+    RealTimeElapsedQuantized = quantized_video_time_elapsed;
+    RealTimeElapsed = GetRealTimeElapsedFromQuantized(quantized_video_time_elapsed);
+
+    static int SeenTimerProblem = 0;
+    if (TimeDifferenceInMiliseconds > 86400000.0f || TimeDifferenceInMiliseconds < 0.0f || TimeDifferenceInSeconds > 86400.0f ||
+        TimeDifferenceInSeconds < 0.0f || start_video_time_elapsed > 86400.0f || start_video_time_elapsed < 0.0f || video_time_elapsed > 86400.0f ||
+        video_time_elapsed < 0.0f) {
+        SeenTimerProblem = 1;
+    }
+
+    if (SeenTimerProblem != 0) {
+        int current_y;
+        static unsigned int SavedTimeDifferenceInMicroseconds = 0;
+        static float SavedTimeDifferenceInMiliseconds = 0.0f;
+        static float SavedTimeDifferenceInSeconds = 0.0f;
+        static float Saved_start_video_time_elapsed = 0.0f;
+        static int Saved_high_nibble = 0;
+        int high_nibble = CurrentLoopCounter & 0xf0000000;
+
+        if (high_nibble != Saved_high_nibble) {
+            SavedTimeDifferenceInMicroseconds = TimeDifferenceInMicroseconds;
+            SavedTimeDifferenceInMiliseconds = TimeDifferenceInMiliseconds;
+            SavedTimeDifferenceInSeconds = TimeDifferenceInSeconds;
+            Saved_start_video_time_elapsed = start_video_time_elapsed;
+            Saved_high_nibble = CurrentLoopCounter & 0xf0000000;
+        }
+
+        static int HadBadTimeDifferenceInMiliseconds = 0;
+        static int HadBadTimeDifferenceInSeconds = 0;
+        static int HadBad_start_video_time_elapsed = 0;
+        static int HadBad_video_time_elapsed = 0;
+        static int HadBad_MicrosecondsToMiliseconds = 0;
+        static int HadBad_MilisecondsToSeconds = 0;
+
+        if (TimeDifferenceInMiliseconds > 86400000.0f || TimeDifferenceInMiliseconds < 0.0f) {
+            HadBadTimeDifferenceInMiliseconds = 1;
+        }
+        if (TimeDifferenceInSeconds > 86400.0f || TimeDifferenceInSeconds < 0.0f) {
+            HadBadTimeDifferenceInSeconds = 1;
+        }
+        if (start_video_time_elapsed > 86400.0f || start_video_time_elapsed < 0.0f) {
+            HadBad_start_video_time_elapsed = 1;
+        }
+        if (video_time_elapsed > 86400.0f || video_time_elapsed < 0.0f) {
+            HadBad_video_time_elapsed = 1;
+        }
+        if (MicrosecondsToMiliseconds > 1.0f || MicrosecondsToMiliseconds < 0.0f) {
+            HadBad_MicrosecondsToMiliseconds = 1;
+        }
+        if (MilisecondsToSeconds > 10000.0f || MilisecondsToSeconds < 0.0f) {
+            HadBad_MilisecondsToSeconds = 1;
+        }
+    }
+}
+
+void AdvanceRealTime() {
+    int frames_elapsed_60hz = static_cast<int>((RealTimeElapsedFrame + RealTimeElapsed) * 60.0f);
+    RealTimeElapsedFrame = (RealTimeElapsedFrame + RealTimeElapsed) - static_cast<float>(frames_elapsed_60hz) * (1.0f / 60.0f);
+    if (frames_elapsed_60hz == 0) {
+        frames_elapsed_60hz = 1;
+    }
+    RealTimeFramesElapsed = frames_elapsed_60hz;
+    RealTimeFrames += frames_elapsed_60hz;
+    RealTime = RealTimeFrames;
+    RealTimer = RealTimer + RealTimeElapsed;
+    RealLoopCounter++;
+}
+
+Timer WorldTimer;                // Decl: 545
+float WorldTimeSeconds = 1.0f;   // Decl: 546
+int WorldTime = 1;               // Decl: 547
+int WorldTimeFrames = 1;         // Decl: 548
+int WorldTimeFramesElapsed = 0;  // Decl: 549
+float WorldTimeElapsed = 0;      // Decl: 550
+float WorldTimeElapsedFrame = 0; // Decl: 551
+int WorldLoopCounter = 100000;   // Decl: 552
+
+int NeedToPrepareWorldTimestep = 1; // Decl: 556
+
+void ResetWorldTime() {
+    WorldTimer.SetTime(Sim::GetTime());
+    WorldTimeSeconds = WorldTimer.GetSeconds();
+    WorldTime = 1;
+    WorldTimeFrames = 1;
+    WorldTimeFramesElapsed = 0;
+    WorldTimeElapsed = 0.0f;
+    WorldTimeElapsedFrame = 0.0f;
+    WorldLoopCounter = 0;
+}
+
+void PrepareWorldTimestep(float elapsed_time) {
+    if (!NeedToPrepareWorldTimestep) {
+        return;
+    }
+    NeedToPrepareWorldTimestep = 0;
+    WorldTimeElapsed = elapsed_time;
+}
+
+void AdvanceWorldTime() {
+    if (NeedToPrepareWorldTimestep == 0) {
+        NeedToPrepareWorldTimestep = 1;
+        if (WorldTimeElapsed != 0.0f) {
+            int frames_elapsed_60hz = static_cast<int>((WorldTimeElapsedFrame + WorldTimeElapsed) * 60.0f);
+            WorldTimeFramesElapsed = frames_elapsed_60hz;
+            WorldTimeFrames += frames_elapsed_60hz;
+            WorldTime = WorldTimeFrames;
+            WorldTimeElapsedFrame = WorldTimeElapsedFrame + WorldTimeElapsed - static_cast<float>(frames_elapsed_60hz) * (1.0f / 60.0f);
+            WorldTimer.SetTime(Sim::GetTime());
+            WorldTimeElapsed = 0.0f;
+            WorldLoopCounter++;
+            WorldTimeSeconds = WorldTimer.GetSeconds();
+        }
+    }
+}
+
+float GetDebugRealTime() {
+    float frame_counter_seconds = VideoFramesToSeconds(FrameCounter);
+    if (LastFrameCounterTick != 0) {
+        float fractional_time = bGetTickerDifference(LastFrameCounterTick, bGetTicker()) * 0.001f;
+        float max_fractional_time = GetVideoFrameTime(GetVideoMode());
+        if (fractional_time > max_fractional_time) {
+            fractional_time = max_fractional_time;
+        }
+        frame_counter_seconds = frame_counter_seconds + fractional_time;
+    }
+    return frame_counter_seconds;
+}
+
+static void IntToString2(char *dest, int value, int num_digits, bool bLeadZero) {
+    for (int n = 0; n < num_digits; n++) {
+        int digit = value % 10;
+        if (!bLeadZero && digit == 0 && value < 10) {
+            dest[num_digits - n - 1] = ' ';
+        } else {
+            dest[num_digits - n - 1] = static_cast<char>(digit) + '0';
+        }
+        value = value / 10;
+    }
+}
+
+static void PrintToString(char *string, int flags, int hours, int minutes, int seconds, int hundredths) {
+    bool keep_last_digit = (flags & TIMER_PRINT_FLAG_KEEP_LAST_DIGIT) != 0;
+
+    if (hours != 0) {
+        char *format;
+        int hours_offset = 0;
+        int minutes_offset = 4;
+        int seconds_offset = 7;
+
+        switch (GetCurrentLanguage()) {
+            default:
+            case eLANGUAGE_ENGLISH:
+            case eLANGUAGE_GERMAN:
+            case eLANGUAGE_ITALIAN:
+            case eLANGUAGE_SPANISH:
+            case eLANGUAGE_DUTCH:
+            case eLANGUAGE_POLISH:
+                minutes_offset = 3;
+                seconds_offset = 6;
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00:00:00" : "--:--:--");
+                break;
+            case eLANGUAGE_FRENCH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00h00'00" : "--h--'--");
+                break;
+            case eLANGUAGE_SWEDISH:
+            case eLANGUAGE_DANISH:
+            case eLANGUAGE_FINNISH:
+                minutes_offset = 3;
+                seconds_offset = 6;
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00.00.00" : "--.--.--");
+                break;
+        }
+
+        bStrCpy(string, format);
+        IntToString2(string + hours_offset, hours, 2, false);
+        IntToString2(string + minutes_offset, minutes, 2, true);
+        IntToString2(string + seconds_offset, seconds, 2, true);
+
+        if ((flags & (TIMER_PRINT_FLAG_NEGATIVE | TIMER_PRINT_FLAG_SHOW_PLUS_SIGN)) != 0 && hours > 9) {
+            char temp[TIMER_STRING_SIZE];
+            unsigned int numCharacters = bStrLen(string);
+            bStrCpy(temp, string);
+            if (!keep_last_digit) {
+                temp[numCharacters - 1] = '\0';
+            }
+            bStrCpy(string + 1, temp);
+        }
+    } else if (minutes != 0) {
+        char *format;
+        int minutes_offset = 0;
+        int seconds_offset = 3;
+        int hundred_offset = 6;
+
+        switch (GetCurrentLanguage()) {
+            default:;
+            case eLANGUAGE_ENGLISH:
+            case eLANGUAGE_ITALIAN:
+            case eLANGUAGE_SPANISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00:00.00" : "--:--.--");
+                break;
+            case eLANGUAGE_GERMAN:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00:00:00" : "--:--:--");
+                break;
+            case eLANGUAGE_FRENCH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00'00\"00" : "--'--\"--");
+                break;
+            case eLANGUAGE_DUTCH:
+            case eLANGUAGE_POLISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00:00,00" : "--:--,--");
+                break;
+            case eLANGUAGE_SWEDISH:
+            case eLANGUAGE_DANISH:
+            case eLANGUAGE_FINNISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00.00,00" : "--.--,--");
+                break;
+        }
+
+        bStrCpy(string, format);
+        IntToString2(string + minutes_offset, minutes, 2, false);
+        IntToString2(string + seconds_offset, seconds, 2, true);
+        IntToString2(string + hundred_offset, hundredths, 2, true);
+
+        if ((flags & (TIMER_PRINT_FLAG_NEGATIVE | TIMER_PRINT_FLAG_SHOW_PLUS_SIGN)) != 0 && minutes > 9) {
+            char temp[TIMER_STRING_SIZE];
+            unsigned int numCharacters = bStrLen(string);
+            bStrCpy(temp, string);
+            if (!keep_last_digit) {
+                temp[numCharacters - 1] = '\0';
+            }
+            bStrCpy(string + 1, temp);
+        }
+    } else if (seconds != 0) {
+        char *format;
+        int seconds_offset = 0;
+        int hundred_offset = 3;
+
+        switch (GetCurrentLanguage()) {
+            default:;
+            case eLANGUAGE_ENGLISH:
+            case eLANGUAGE_ITALIAN:
+            case eLANGUAGE_SPANISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00.00" : "--.--");
+                break;
+            case eLANGUAGE_FRENCH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00\"00" : "--\"--");
+                break;
+            case eLANGUAGE_GERMAN:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00:00" : "--:--");
+                break;
+            case eLANGUAGE_DUTCH:
+            case eLANGUAGE_SWEDISH:
+            case eLANGUAGE_DANISH:
+            case eLANGUAGE_POLISH:
+            case eLANGUAGE_FINNISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "00,00" : "--,--");
+                break;
+        }
+
+        bStrCpy(string, format);
+        IntToString2(string + seconds_offset, seconds, 2, false);
+        IntToString2(string + hundred_offset, hundredths, 2, true);
+
+        if ((flags & (TIMER_PRINT_FLAG_NEGATIVE | TIMER_PRINT_FLAG_SHOW_PLUS_SIGN)) != 0 && seconds > 9) {
+            char temp[TIMER_STRING_SIZE];
+            unsigned int numCharacters = bStrLen(string);
+            bStrCpy(temp, string);
+            if (!keep_last_digit) {
+                temp[numCharacters - 1] = '\0';
+            }
+            bStrCpy(string + 1, temp);
+        }
+    } else {
+        char *format;
+        int hundred_offset = 2;
+
+        switch (GetCurrentLanguage()) {
+            default:;
+            case eLANGUAGE_ENGLISH:
+            case eLANGUAGE_ITALIAN:
+            case eLANGUAGE_SPANISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "0.00" : "0.--");
+                break;
+            case eLANGUAGE_GERMAN:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "0:00" : "0:--");
+                break;
+            case eLANGUAGE_FRENCH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "0\"00" : "0\"--");
+                break;
+            case eLANGUAGE_DUTCH:
+            case eLANGUAGE_SWEDISH:
+            case eLANGUAGE_DANISH:
+            case eLANGUAGE_POLISH:
+            case eLANGUAGE_FINNISH:
+                format = const_cast<char *>((flags & TIMER_PRINT_FLAG_SHOW_UNUSED_DIGITS) ? "0,00" : "0,--");
+                break;
+        }
+
+        bStrCpy(string, format);
+        IntToString2(string + hundred_offset, hundredths, 2, true);
+
+        if ((flags & (TIMER_PRINT_FLAG_NEGATIVE | TIMER_PRINT_FLAG_SHOW_PLUS_SIGN)) != 0) {
+            char temp[TIMER_STRING_SIZE];
+            unsigned int numCharacters = bStrLen(string);
+            bStrCpy(temp, string);
+            if (!keep_last_digit) {
+                temp[numCharacters - 1] = '\0';
+            }
+            bStrCpy(string + 1, temp);
+        }
+    }
+
+    if (hours == 0 && (flags & TIMER_PRINT_FLAG_DONT_SHOW_MS) != 0) {
+        string[bStrLen(string) - 3] = '\0';
+    }
+
+    if ((flags & TIMER_PRINT_FLAG_NEGATIVE) != 0) {
+        string[0] = '-';
+    } else if ((flags & TIMER_PRINT_FLAG_SHOW_PLUS_SIGN) != 0) {
+        string[0] = '+';
+    }
+}
+
+void Timer::GetHoursMinsSeconds(int *hours, int *minutes, int *seconds, int *thousandths_seconds) {
+    int int_time = this->PackedTime / 4000;
+    int fractional_time = this->PackedTime;
+    fractional_time %= 4000;
+    *hours = int_time / 3600;
+    int_time %= 3600;
+    *minutes = int_time / 60;
+    *seconds = int_time % 60;
+    if (fractional_time < 0) {
+        fractional_time += 3;
+    }
+    *thousandths_seconds = fractional_time >> 2;
+}
+
+void Timer::PrintToString(char *string, int flags) {
+    if (IsSet() == 0) {
+        ::PrintToString(string, flags, 0, 0, 0, 0);
+    } else {
+        int hours, minutes, seconds, thousandths_seconds;
+        if (PackedTime < 0) {
+            PackedTime = -PackedTime;
+            GetHoursMinsSeconds(&hours, &minutes, &seconds, &thousandths_seconds);
+            PackedTime = -PackedTime;
+        } else {
+            GetHoursMinsSeconds(&hours, &minutes, &seconds, &thousandths_seconds);
+        }
+        if (PackedTime < 0) {
+            flags = flags | 1;
+        }
+        ::PrintToString(string, flags, hours, minutes, seconds, thousandths_seconds / 10);
+    }
+}
+
+// STRIPPED
+void Timer::PrintToString(char *string, float fIota, int flags) {}
+
+// STRIPPED
+int Timer::CountDown(float fSeconds) {}
+
+// STRIPPED
+float Timer::GetSecondsRounded(float fIotaSeconds) {}
+
+// STRIPPED
+void Timer::RoundTime(float fIotaSeconds) {}

@@ -1,0 +1,60 @@
+#ifndef SIM_SIM_ACTIVITY_H
+#define SIM_SIM_ACTIVITY_H
+
+#ifdef EA_PRAGMA_ONCE_SUPPORTED
+#pragma once
+#endif
+
+#include "SimAttachable.h"
+#include "SimObject.h"
+#include "Speed/Indep/Src/Interfaces/IAttachable.h"
+#include "Speed/Indep/Src/Interfaces/SimActivities/IActivity.h"
+
+namespace Sim {
+
+// total size: 0x4C
+class Activity : public Sim::Object, public UTL::Collections::GarbageNode<Sim::Activity, 40>, public IActivity, public IAttachable {
+  public:
+    Activity(unsigned int num_interfaces);
+    void DetachAll();
+
+    // Virtual overrides
+    // IUnknown
+    ~Activity() override;
+
+    // IActivity
+    void Release() override;
+    bool Attach(IUnknown *object) override {
+        if (mAttachments != nullptr) {
+            return mAttachments->Attach(object);
+        }
+        return false;
+    }
+
+    bool Detach(IUnknown *object) override {
+        if (mAttachments != nullptr) {
+            return mAttachments->Detach(object);
+        }
+        return false;
+    }
+
+    // IAttachable
+    bool IsAttached(const IUnknown *pOther) const override {
+        return mAttachments != nullptr ? mAttachments->IsAttached(pOther) : false;
+    }
+
+    void OnAttached(IAttachable *pOther) override {}
+
+    void OnDetached(IAttachable *pOther) override {}
+
+    const IAttachable::List *GetAttachments() const override {
+        return mAttachments != nullptr ? &mAttachments->GetList() : nullptr;
+    }
+
+  private:
+    Attachments *mAttachments; // offset 0x48, size 0x4
+};
+
+}; // namespace Sim
+
+#endif

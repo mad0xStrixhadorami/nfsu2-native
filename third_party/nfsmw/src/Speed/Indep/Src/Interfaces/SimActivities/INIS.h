@@ -1,0 +1,94 @@
+#ifndef INTERFACES_SIMACTIVITIES_INIS_H
+#define INTERFACES_SIMACTIVITIES_INIS_H
+
+#include "Speed/Indep/Libs/Support/Utility/UCOM.h"
+#include "Speed/Indep/Libs/Support/Utility/UCollections.h"
+#include "Speed/Indep/Libs/Support/Utility/UCrc.h"
+#include "Speed/Indep/Libs/Support/Utility/UTypes.h"
+#include "Speed/Indep/Src/Animation/AnimChooser.hpp"
+#include "Speed/Indep/Src/Animation/AnimScene.hpp"
+#include "Speed/Indep/Src/Camera/ICE/ICEAnimScene.hpp"
+#include "Speed/Indep/Src/Interfaces/Simables/IVehicle.h"
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+
+enum NIS_CAR_IDS {
+    NIS_PLAYER_CAR1 = 0,
+    NIS_PLAYER_CAR2 = 1,
+    NIS_PLAYER_CAR3 = 2,
+    NIS_PLAYER_CAR4 = 3,
+    NIS_PLAYER_CAR5 = 4,
+    NIS_PLAYER_CAR6 = 5,
+    NIS_PLAYER_CAR7 = 6,
+    NIS_PLAYER_CAR8 = 7,
+    NIS_COP_CAR1 = 8,
+    NIS_COP_CAR2 = 9,
+    NIS_COP_CAR3 = 10,
+    NIS_COP_CAR4 = 11,
+    NIS_COP_CAR5 = 12,
+    NIS_COP_CAR6 = 13,
+    NIS_COP_CAR7 = 14,
+    NIS_COP_CAR8 = 15,
+    NIS_MAX_CARS = 16,
+};
+
+static const int NIS_MAX_RACERS = 30; // size: 0x4, Decl: 171
+static const int NIS_MAX_COPS = 8;    // size: 0x4, Decl: 172
+
+// Decl: 27
+class INIS : public UTL::COM::IUnknown, public UTL::Collections::Singleton<INIS> {
+  public:
+    DECL_INTERFACE(INIS);
+
+    virtual void AddCar(UCrc32 channel, IVehicle *vehicle);
+    virtual IVehicle *GetCar(UCrc32 channelname);
+    virtual void StartLocation(const UMath::Vector3 &position, float direction);
+    virtual void StartLocationInRenderCoords(const bVector3 &position, unsigned short direction);
+    virtual const UMath::Vector3 *GetStartLocation();
+    virtual const UMath::Vector3 *GetStartCameraLocation();
+    virtual void SetPreMovie(const char *movieName);
+    virtual void SetPostMovie(const char *movieName);
+
+    virtual CAnimChooser::eType GetType() {
+        // TODO
+        return CAnimChooser::Intro;
+    }
+
+    virtual void Load(CAnimChooser::eType nisType, const char *scene, int cameratrack, bool PlayAsSoonAsLoaded);
+    virtual bool SkipOverNIS();
+    virtual void Pause();
+    virtual void UnPause();
+
+    virtual bool IsLoaded() const {
+        // TODO
+        return false;
+    }
+
+    virtual bool IsPlaying() const {
+        // TODO
+        return false;
+    }
+
+    virtual bool InMovie() const {
+        // TODO
+        return false;
+    }
+
+    virtual void ServiceLoads();
+    virtual ICEScene *GetScene() const;
+    virtual CAnimScene *GetAnimScene() const;
+    virtual void Release();
+    virtual void StartEvents();
+    virtual void FireEventTag(const char *tagName);
+    virtual void ResetEvents(float SetTime);
+    virtual void StartPlayingNow();
+    virtual bool IsWorldMomement() const;
+};
+
+class INISLISTENER : public UTL::COM::IUnknown {
+  public:
+    DECL_INTERFACE(INISLISTENER);
+
+    virtual void ArrestLevel(int level);
+};
+
+#endif

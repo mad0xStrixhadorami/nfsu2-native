@@ -1,0 +1,274 @@
+#ifndef _attrib_gen_nos_h
+#define _attrib_gen_nos_h
+
+#include "Speed/Indep/Src/Misc/MWAttribUserTypes.h"
+
+namespace Attrib {
+namespace Gen {
+
+struct nos : Instance {
+    struct _LayoutStruct {
+        EA::Reflection::Float NOS_DISENGAGE;      // offset 0x0, size 0x4
+        EA::Reflection::Float TORQUE_BOOST;       // offset 0x4, size 0x4
+        EA::Reflection::Float FLOW_RATE;          // offset 0x8, size 0x4
+        EA::Reflection::Float RECHARGE_MIN;       // offset 0xc, size 0x4
+        EA::Reflection::Float NOS_CAPACITY;       // offset 0x10, size 0x4
+        EA::Reflection::Float RECHARGE_MAX;       // offset 0x14, size 0x4
+        EA::Reflection::Float RECHARGE_MAX_SPEED; // offset 0x18, size 0x4
+        EA::Reflection::Float RECHARGE_MIN_SPEED; // offset 0x1c, size 0x4
+    };
+
+    typedef EA::Reflection::Float TypeOf_FLOW_RATE;
+    typedef EA::Reflection::Float TypeOf_NOS_CAPACITY;
+    typedef EA::Reflection::Float TypeOf_NOS_DISENGAGE;
+    typedef EA::Reflection::Float TypeOf_RECHARGE_MAX;
+    typedef EA::Reflection::Float TypeOf_RECHARGE_MAX_SPEED;
+    typedef EA::Reflection::Float TypeOf_RECHARGE_MIN;
+    typedef EA::Reflection::Float TypeOf_RECHARGE_MIN_SPEED;
+    typedef EA::Reflection::Float TypeOf_TORQUE_BOOST;
+
+    static Key ClassKey();
+    USE_ATTRIB_ALLOC("nos");
+    nos(Key collectionKey, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(FindCollection(ClassKey(), collectionKey), msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    nos(const Collection *collection, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(collection, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    nos(const Instance &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    nos(const nos &src) : Instance(src) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    nos(const RefSpec &refspec, unsigned int msgPort, UTL::COM::IUnknown *owner) : Instance(refspec, msgPort, owner) {
+        SetDefaultLayout(sizeof(_LayoutStruct));
+    }
+    ~nos() {}
+    Instance &GetBase() {
+        return *this;
+    }
+    const Instance &GetBase() const {
+        return *this;
+    }
+    Key GetClass() {
+        return 0xb1669f64;
+    }
+    void Modify(Key dynamicCollectionKey, unsigned int spaceForAdditionalAttributes) {
+        ModifyInternal(ClassKey(), dynamicCollectionKey, LocalAttribCount() + spaceForAdditionalAttributes);
+    }
+    Key GenerateUniqueKey(const char *name, bool registerName) const {
+        return GUKeyInternal(ClassKey(), name, registerName);
+    }
+    void Change(const Collection *c) {
+        Instance::Change(c);
+    }
+    void Change(const RefSpec &refspec) {
+        Instance::Change(refspec);
+    }
+    void Change(Key collectionkey) {
+        Change(FindCollection(ClassKey(), collectionkey));
+    }
+    void ChangeWithDefault(const RefSpec &refspec) {
+        Instance::ChangeWithDefault(refspec);
+    }
+    void ChangeWithDefault(Key collectionkey) {
+        Change(FindCollectionWithDefault(ClassKey(), collectionkey));
+    }
+    const nos &operator=(const nos &rhs) {
+        operator=(rhs.GetBase());
+        return *this;
+    }
+    const nos &operator=(const Instance &rhs) {
+        Instance::operator=(rhs);
+        return *this;
+    }
+    bool FLOW_RATE(TAttrib<EA::Reflection::Float> &result) const;
+    bool FLOW_RATE(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &FLOW_RATE() const;
+    bool Set_FLOW_RATE(const EA::Reflection::Float &input);
+
+    bool NOS_CAPACITY(TAttrib<EA::Reflection::Float> &result) const;
+    bool NOS_CAPACITY(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &NOS_CAPACITY() const;
+    bool Set_NOS_CAPACITY(const EA::Reflection::Float &input);
+
+    bool NOS_DISENGAGE(TAttrib<EA::Reflection::Float> &result) const;
+    bool NOS_DISENGAGE(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &NOS_DISENGAGE() const;
+    bool Set_NOS_DISENGAGE(const EA::Reflection::Float &input);
+
+    bool RECHARGE_MAX(TAttrib<EA::Reflection::Float> &result) const;
+    bool RECHARGE_MAX(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &RECHARGE_MAX() const;
+    bool Set_RECHARGE_MAX(const EA::Reflection::Float &input);
+
+    bool RECHARGE_MAX_SPEED(TAttrib<EA::Reflection::Float> &result) const;
+    bool RECHARGE_MAX_SPEED(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &RECHARGE_MAX_SPEED() const;
+    bool Set_RECHARGE_MAX_SPEED(const EA::Reflection::Float &input);
+
+    bool RECHARGE_MIN(TAttrib<EA::Reflection::Float> &result) const;
+    bool RECHARGE_MIN(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &RECHARGE_MIN() const;
+    bool Set_RECHARGE_MIN(const EA::Reflection::Float &input);
+
+    bool RECHARGE_MIN_SPEED(TAttrib<EA::Reflection::Float> &result) const;
+    bool RECHARGE_MIN_SPEED(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &RECHARGE_MIN_SPEED() const;
+    bool Set_RECHARGE_MIN_SPEED(const EA::Reflection::Float &input);
+
+    bool TORQUE_BOOST(TAttrib<EA::Reflection::Float> &result) const;
+    bool TORQUE_BOOST(EA::Reflection::Float &result) const;
+    const EA::Reflection::Float &TORQUE_BOOST() const;
+    bool Set_TORQUE_BOOST(const EA::Reflection::Float &input);
+
+  private:
+    unsigned int GetLayoutSize() {
+        return sizeof(_LayoutStruct);
+    }
+    nos &ConvertFromInstance(Instance &src) {}
+    const nos &ConvertFromInstance(const Instance &src) {}
+};
+}; // namespace Gen
+
+namespace ClassName {
+
+static const Key nos = 0xb1669f64;
+
+}; // namespace ClassName
+
+namespace Hash {
+namespace nos {
+
+static const Key FLOW_RATE = 0x3f3b1976;
+static const Key NOS_CAPACITY = 0xaa032196;
+static const Key NOS_DISENGAGE = 0xac733de3;
+static const Key RECHARGE_MAX = 0x12a14452;
+static const Key RECHARGE_MAX_SPEED = 0x5799043b;
+static const Key RECHARGE_MIN = 0x0a03c0eb;
+static const Key RECHARGE_MIN_SPEED = 0x97a0d2df;
+static const Key TORQUE_BOOST = 0x8de27c3c;
+
+}; // namespace nos
+}; // namespace Hash
+
+inline Key Gen::nos::ClassKey() {
+    return ClassName::nos;
+}
+
+inline bool Gen::nos::FLOW_RATE(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x3f3b1976);
+}
+inline const EA::Reflection::Float &Gen::nos::FLOW_RATE() const {
+    ATTRIB_CODEGEN_GETLAYOUT(FLOW_RATE);
+}
+inline bool Gen::nos::FLOW_RATE(EA::Reflection::Float &result) const {
+    result = FLOW_RATE();
+    return true;
+}
+inline bool Gen::nos::Set_FLOW_RATE(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(FLOW_RATE, input);
+}
+
+inline bool Gen::nos::NOS_CAPACITY(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xaa032196);
+}
+inline const EA::Reflection::Float &Gen::nos::NOS_CAPACITY() const {
+    ATTRIB_CODEGEN_GETLAYOUT(NOS_CAPACITY);
+}
+inline bool Gen::nos::NOS_CAPACITY(EA::Reflection::Float &result) const {
+    result = NOS_CAPACITY();
+    return true;
+}
+inline bool Gen::nos::Set_NOS_CAPACITY(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(NOS_CAPACITY, input);
+}
+
+inline bool Gen::nos::NOS_DISENGAGE(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0xac733de3);
+}
+inline const EA::Reflection::Float &Gen::nos::NOS_DISENGAGE() const {
+    ATTRIB_CODEGEN_GETLAYOUT(NOS_DISENGAGE);
+}
+inline bool Gen::nos::NOS_DISENGAGE(EA::Reflection::Float &result) const {
+    result = NOS_DISENGAGE();
+    return true;
+}
+inline bool Gen::nos::Set_NOS_DISENGAGE(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(NOS_DISENGAGE, input);
+}
+
+inline bool Gen::nos::RECHARGE_MAX(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x12a14452);
+}
+inline const EA::Reflection::Float &Gen::nos::RECHARGE_MAX() const {
+    ATTRIB_CODEGEN_GETLAYOUT(RECHARGE_MAX);
+}
+inline bool Gen::nos::RECHARGE_MAX(EA::Reflection::Float &result) const {
+    result = RECHARGE_MAX();
+    return true;
+}
+inline bool Gen::nos::Set_RECHARGE_MAX(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(RECHARGE_MAX, input);
+}
+
+inline bool Gen::nos::RECHARGE_MAX_SPEED(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x5799043b);
+}
+inline const EA::Reflection::Float &Gen::nos::RECHARGE_MAX_SPEED() const {
+    ATTRIB_CODEGEN_GETLAYOUT(RECHARGE_MAX_SPEED);
+}
+inline bool Gen::nos::RECHARGE_MAX_SPEED(EA::Reflection::Float &result) const {
+    result = RECHARGE_MAX_SPEED();
+    return true;
+}
+inline bool Gen::nos::Set_RECHARGE_MAX_SPEED(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(RECHARGE_MAX_SPEED, input);
+}
+
+inline bool Gen::nos::RECHARGE_MIN(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x0a03c0eb);
+}
+inline const EA::Reflection::Float &Gen::nos::RECHARGE_MIN() const {
+    ATTRIB_CODEGEN_GETLAYOUT(RECHARGE_MIN);
+}
+inline bool Gen::nos::RECHARGE_MIN(EA::Reflection::Float &result) const {
+    result = RECHARGE_MIN();
+    return true;
+}
+inline bool Gen::nos::Set_RECHARGE_MIN(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(RECHARGE_MIN, input);
+}
+
+inline bool Gen::nos::RECHARGE_MIN_SPEED(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x97a0d2df);
+}
+inline const EA::Reflection::Float &Gen::nos::RECHARGE_MIN_SPEED() const {
+    ATTRIB_CODEGEN_GETLAYOUT(RECHARGE_MIN_SPEED);
+}
+inline bool Gen::nos::RECHARGE_MIN_SPEED(EA::Reflection::Float &result) const {
+    result = RECHARGE_MIN_SPEED();
+    return true;
+}
+inline bool Gen::nos::Set_RECHARGE_MIN_SPEED(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(RECHARGE_MIN_SPEED, input);
+}
+
+inline bool Gen::nos::TORQUE_BOOST(TAttrib<EA::Reflection::Float> &result) const {
+    ATTRIB_CODEGEN_GETATTRIB(EA::Reflection::Float, 0x8de27c3c);
+}
+inline const EA::Reflection::Float &Gen::nos::TORQUE_BOOST() const {
+    ATTRIB_CODEGEN_GETLAYOUT(TORQUE_BOOST);
+}
+inline bool Gen::nos::TORQUE_BOOST(EA::Reflection::Float &result) const {
+    result = TORQUE_BOOST();
+    return true;
+}
+inline bool Gen::nos::Set_TORQUE_BOOST(const EA::Reflection::Float &input) {
+    ATTRIB_CODEGEN_SETLAYOUT(TORQUE_BOOST, input);
+}
+
+}; // namespace Attrib
+
+#endif

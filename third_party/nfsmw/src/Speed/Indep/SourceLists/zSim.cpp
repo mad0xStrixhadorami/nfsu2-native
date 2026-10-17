@@ -1,0 +1,36 @@
+// TODO remove
+#ifdef _MSC_VER
+#pragma warning(disable : 4716)
+#endif
+
+#include "Speed/Indep/Src/Sim/Common/OBB.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/Simulation.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/Util.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimSurface.cpp"
+
+#include "Speed/Indep/Src/Sim/Entities/LocalPlayer.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimActivity.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimObject.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimEntity.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimEffect.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimServer.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimTypes.cpp"
+
+#include "Speed/Indep/Src/Sim/Common/SimModel.cpp"
+
+#include "Speed/Indep/Src/Sim/Activities/QuickGame.cpp"
+
+#include "Speed/Indep/Src/Sim/Activities/CareerGame.cpp"
+
+#include "Speed/Indep/Src/Sim/Activities/NISActivity.cpp"
+
+#include "Speed/Indep/Src/Sim/Activities/GameplayActivity.cpp"

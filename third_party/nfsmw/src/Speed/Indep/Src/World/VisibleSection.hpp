@@ -1,0 +1,500 @@
+#ifndef WORLD_VISIBLE_SECTION_H
+#define WORLD_VISIBLE_SECTION_H
+
+#ifdef EA_PRAGMA_ONCE_SUPPORTED
+#pragma once
+#endif
+
+#include "Speed/Indep/bWare/Inc/bChunk.hpp"
+#include "Speed/Indep/bWare/Inc/Strings.hpp"
+#include "Speed/Indep/bWare/Inc/bList.hpp"
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+#include "Speed/Indep/bWare/Inc/bWare.hpp"
+
+extern int ScenerySectionLODOffset;
+
+inline char GetScenerySectionLetter(int section_number) {
+    return static_cast<char>(section_number / 100 + 'A' - 1);
+}
+
+inline bool IsRegularScenerySection(int section_number) {
+    char section_letter = GetScenerySectionLetter(section_number);
+    return section_letter >= 'A' && section_letter < 'U';
+}
+
+inline int GetScenerySubsectionNumber(int section_number) {
+    return section_number % 100;
+}
+
+inline short GetScenerySectionNumber(char section_letter, int subsection_number) {
+    return static_cast<short>((section_letter - 'A' + 1) * 100 + subsection_number);
+}
+
+inline short MakeScenerySectionNumber(char section_letter, int subsection_number) {
+    return static_cast<short>((section_letter - 'A' + 1) * 100 + subsection_number);
+}
+
+inline bool IsTextureSection(int section_number) {
+    char section_letter = GetScenerySectionLetter(section_number);
+    return section_letter == 'Y' || section_letter == 'W';
+}
+
+inline bool IsLibrarySection(int section_number) {
+    char section_letter = GetScenerySectionLetter(section_number);
+    return section_letter == 'X' || section_letter == 'U';
+}
+
+inline bool IsScenerySectionDrivable(int section_number) {
+    if (!IsRegularScenerySection(section_number)) {
+        return false;
+    }
+
+    int subsection_number = GetScenerySubsectionNumber(section_number);
+    return subsection_number > 0 && subsection_number < ScenerySectionLODOffset;
+}
+
+inline int GetDrivableSectionNumber(int lod_section_number) {
+    return lod_section_number - ScenerySectionLODOffset;
+}
+
+inline int GetLODScenerySectionNumber(int drivable_section_number) {
+    return drivable_section_number + ScenerySectionLODOffset;
+}
+
+inline bool IsLODScenerySectionNumber(int section_number) {
+    int subsection_number = GetScenerySubsectionNumber(section_number);
+    return subsection_number >= ScenerySectionLODOffset && subsection_number < ScenerySectionLODOffset * 2;
+}
+
+inline bool HasSection(short *section_table, int num_sections, short section_number) {
+    return bIsInTable(section_table, num_sections, section_number);
+}
+
+// total size: 0xA4
+class VisibleSectionBoundary : public bTNode<VisibleSectionBoundary> {
+  public:
+    int16 SectionNumber;   // offset 0x8, size 0x2
+    int8 NumPoints;        // offset 0xA, size 0x1
+    int8 PanoramaBoundary; // offset 0xB, size 0x1
+    bVector2 BBoxMin;      // offset 0xC, size 0x8
+    bVector2 BBoxMax;      // offset 0x14, size 0x8
+    bVector2 Centre;       // offset 0x1C, size 0x8
+    bVector2 Points[16];   // offset 0x24, size 0x80
+
+    bool IsPointInside(const bVector2 *point);
+    float GetDistanceOutside(const bVector2 *point, float max_distance);
+    float GetDistanceInside(const bVector2 *point);
+
+    int GetNumPoints() {
+        return this->NumPoints;
+    }
+
+    bVector2 *GetPoint(int n) {
+        return &this->Points[n];
+    }
+
+    void EndianSwap() {
+        bPlatEndianSwap(&this->SectionNumber);
+        bPlatEndianSwap(&this->NumPoints);
+        bPlatEndianSwap(&this->BBoxMin);
+        bPlatEndianSwap(&this->BBoxMax);
+        for (int i = 0; i < this->NumPoints; i++) {
+            bPlatEndianSwap(&this->Points[i]);
+        }
+    }
+
+    int GetSectionNumber() {
+        return this->SectionNumber;
+    }
+
+    int GetMemoryImageSize() {
+        return sizeof(*this) - (16 - this->NumPoints) * sizeof(bVector2);
+    }
+
+    void GetCentre(bVector2 *centre);
+    int IsPanoramaBoundary();
+
+    static int SortFunction(VisibleSectionBoundary *before, VisibleSectionBoundary *after);
+};
+
+class VisibleSectionManager;
+
+class VisibleSectionCoordinate {
+    // total size: 0x10
+    bVector2 Position;                 // offset 0x0, size 0x8
+    VisibleSectionBoundary *pBoundary; // offset 0x8, size 0x4
+    float TestDistance;                // offset 0xC, size 0x4
+
+  public:
+    VisibleSectionCoordinate();
+    void Clear();
+    bool Update(const bVector2 &, VisibleSectionManager &, float);
+    VisibleSectionBoundary *GetBoundary();
+    int GetSectionNumber();
+
+  private:
+    bool FullUpdate(const bVector2 &position, VisibleSectionManager &visible_section_manager, float overlap_distance);
+};
+
+// total size: 0xA4
+class DrivableScenerySection : public bTNode<DrivableScenerySection> {
+  public:
+    VisibleSectionBoundary *pBoundary; // offset 0x8, size 0x4
+    int16 SectionNumber;               // offset 0xC, size 0x2
+    int8 MostVisibleSections;          // offset 0xE, size 0x1
+    int8 MaxVisibleSections;           // offset 0xF, size 0x1
+    int16 NumVisibleSections;          // offset 0x10, size 0x2
+    int16 VisibleSections[72];         // offset 0x12, size 0x90
+#ifndef EA_BUILD_A124
+    short Padding; // offset 0xA2, size 0x2
+#endif
+
+    void AddVisibleSection(int section_number);
+    bool IsSectionVisible(int section_number);
+    void RemoveVisibleSection(int section_number);
+    void SortVisibleSections();
+
+    int GetSectionNumber() {
+        return this->SectionNumber;
+    }
+
+    void EndianSwap() {
+        bPlatEndianSwap(&this->SectionNumber);
+        bPlatEndianSwap(&this->NumVisibleSections);
+        bPlatEndianSwap(&this->MostVisibleSections);
+        bPlatEndianSwap(&this->MaxVisibleSections);
+        for (int i = 0; i < this->NumVisibleSections; i++) {
+            bPlatEndianSwap(&this->VisibleSections[i]);
+        }
+    }
+
+    int GetMemoryImageSize() {
+        return sizeof(*this) - (sizeof(this->VisibleSections) / sizeof(*this->VisibleSections) - this->MaxVisibleSections) * sizeof(*this->VisibleSections);
+    }
+
+    int GetNumVisibleSections() {
+        return this->NumVisibleSections;
+    }
+
+    int GetVisibleSection(int i) {
+        return this->VisibleSections[i];
+    }
+
+    VisibleSectionBoundary *GetBoundary() {
+        return this->pBoundary;
+    }
+};
+
+// total size: 0x324
+class DrivableSectionsInRegion {
+  public:
+    int32 NumSections;   // offset 0x0, size 0x4
+    int16 Sections[400]; // offset 0x4, size 0x320
+
+    bool IsSectionDrivable(int16 section_number);
+    void AddSection(int16 section_number);
+    void RemoveSection(int16 section_number);
+    void EndianSwap() {
+        bPlatEndianSwap(&this->NumSections);
+        for (int i = 0; i < this->NumSections; i++) {
+            bPlatEndianSwap(&this->Sections[i]);
+        }
+    }
+};
+
+// total size: 0x150S
+class VisibleTextureSection : public bTNode<VisibleTextureSection> {
+  public:
+    int16 SectionNumber;            // offset 0x8, size 0x2
+    int16 NumVisibleFromSections;   // offset 0xA, size 0x2
+    int16 VisibleFromSections[128]; // offset 0xC, size 0x100
+    int16 NumSuperSections;         // offset 0x10C, size 0x2
+    int16 SuperSections[32];        // offset 0x10E, size 0x40
+
+    ~VisibleTextureSection();
+    bool IsVisibleFromSection(int16 section_number);
+    bool IsSuperSection();
+    void AddVisibleTextureSection(int16 section_number);
+    void AddSuperTextureSection(int16 section_number);
+    void RemoveVisibleTextureSection(int16 section_number);
+    void RemoveSuperTextureSection(int16 section_number);
+    static int SortFunction(VisibleTextureSection *before, VisibleTextureSection *after);
+};
+
+// total size: 0x4C
+class LoadingSection : public bTNode<LoadingSection> {
+  public:
+    char Name[15];              // offset 0x8, size 0xF
+    int8 DefaultFlag;           // offset 0x17, size 0x1
+    int16 NumDrivableSections;  // offset 0x18, size 0x2
+    int16 DrivableSections[16]; // offset 0x1A, size 0x20
+    int16 NumExtraSections;     // offset 0x3A, size 0x2
+    int16 ExtraSections[8];     // offset 0x3C, size 0x10
+
+    LoadingSection();
+    ~LoadingSection();
+    void SetName(const char *name);
+    char *GetName() {
+        return this->Name;
+    };
+    void AddDrivableSection(int section_number);
+    void AddExtraSection(int section_number);
+    void RemoveDrivableSection(int section_number);
+    void RemoveExtraSection(int section_number);
+
+    bool HasDrivableSection(int section_number) {
+        return HasSection(this->DrivableSections, this->NumDrivableSections, section_number);
+    }
+
+    bool HasExtraSection(int);
+    bool IsDefaultSection();
+    char *GetDrivableSectionNames(char *text, int max_len);
+
+    void EndianSwap() {
+        bPlatEndianSwap(&this->NumDrivableSections);
+        for (int i = 0; i < this->NumDrivableSections; i++) {
+            bPlatEndianSwap(&this->DrivableSections[i]);
+        }
+        bPlatEndianSwap(&this->NumExtraSections);
+        for (int j = 0; j < this->NumExtraSections; j++) {
+            bPlatEndianSwap(&this->ExtraSections[j]);
+        }
+    }
+
+    static int SortFunction(LoadingSection *before, LoadingSection *after);
+};
+
+// total size: 0x30
+class SuperScenerySection : public bTNode<SuperScenerySection> {
+  public:
+    int SectionNumber;  // offset 0x8, size 0x4
+    int16 NumSections;  // offset 0xC, size 0x2
+    int16 Sections[16]; // offset 0xE, size 0x20
+
+    SuperScenerySection(int section_number);
+    ~SuperScenerySection();
+    int GetSectionNumber();
+    void AddSection(int section_number);
+    void RemoveSection(int section_number);
+    bool HasSection(int section_number);
+#if 0
+    char *GetSectionNames(char *, int);
+#endif
+    static int SortFunction(SuperScenerySection *before, SuperScenerySection *after);
+};
+
+// total size: 0x15E
+class VisibleSectionBitTable {
+    uint8 Bits[350]; // offset 0x0, size 0x15E
+
+  public:
+    VisibleSectionBitTable();
+    void Clear();
+    void AddSection(int section_number);
+    void RemoveSection(int section_number);
+    bool HasSection(int section_number);
+    int BuildTable(int16 *table, int table_size);
+};
+
+// total size: 0x638
+struct UsedInSectionInfo : public bTNode<UsedInSectionInfo> {
+    char Name[64];                         // offset 0x8, size 0x40
+    bool IsTexture;                        // offset 0x48, size 0x1
+    bool AlwaysVisible;                    // offset 0x4C, size 0x1
+    int NumUsedInSections;                 // offset 0x50, size 0x4
+    int16 UsedInSections[128];             // offset 0x54, size 0x100
+    int NumVisibleFromSections;            // offset 0x154, size 0x4
+    int16 VisibleFromSections[256];        // offset 0x158, size 0x200
+    int NumVisibleFromTextureSections;     // offset 0x358, size 0x4
+    int16 VisibleFromTextureSections[100]; // offset 0x35C, size 0xC8
+    int NumPlacedInSections;               // offset 0x424, size 0x4
+    int16 PlacedInSections[256];           // offset 0x428, size 0x200
+    float PlacementScore;                  // offset 0x628, size 0x4
+    float MemoryScore;                     // offset 0x62C, size 0x4
+    float BandwidthScore;                  // offset 0x630, size 0x4
+    const char *PlacementReason;           // offset 0x634, size 0x4
+
+    ~UsedInSectionInfo();
+    char *GetName();
+    void AddUsedInSection(int16 section_number);
+    bool IsUsedInSection(int16 section_number);
+    void AddVisibleFromSection(int16 section_number);
+    bool IsVisibleFromSection(int16 section_number);
+    void AddVisibleFromTextureSection(int16 section_number);
+    bool IsVisibleFromTextureSection(int16 section_number);
+    bool IsFull();
+};
+
+// total size: 0x6034
+class VisibleSectionOverlay : public bTNode<VisibleSectionOverlay> {
+  public:
+    // total size: 0x6
+    struct OverlayEntry {
+        int8 AddRemove;              // offset 0x0, size 0x1
+        int8 Pad;                    // offset 0x1, size 0x1
+        int16 DrivableSectionNumber; // offset 0x2, size 0x2
+        int16 SectionNumber;         // offset 0x4, size 0x2
+    };
+
+    VisibleSectionOverlay(const char *name) {
+        this->NumEntries = 0;
+        bMemSet(this->Name, 0, sizeof(this->Name));
+        bSafeStrCpy(this->Name, name, sizeof(this->Name));
+    }
+
+    void EndianSwap() {
+        bPlatEndianSwap(&this->NumEntries);
+        for (int n = 0; n < this->NumEntries; n++) {
+            OverlayEntry *entry = &this->EntryTable[n];
+            bPlatEndianSwap(&entry->DrivableSectionNumber);
+            bPlatEndianSwap(&entry->SectionNumber);
+        }
+    }
+
+    int GetMemoryImageSize();
+
+    char Name[40];                 // offset 0x8, size 0x28
+    int NumEntries;                // offset 0x30, size 0x4
+    OverlayEntry EntryTable[4096]; // offset 0x34, size 0x6000
+};
+
+// total size: 0x328
+struct VisibleSectionManagerInfo {
+    int32 LODOffset;                                      // offset 0x0, size 0x4
+    DrivableSectionsInRegion TheDrivableSectionsInRegion; // offset 0x4, size 0x324
+
+    void EndianSwap() {
+        bPlatEndianSwap(&this->LODOffset);
+        this->TheDrivableSectionsInRegion.EndianSwap();
+    }
+};
+
+// total size: 0x4C
+struct OverrideSectionObject : public bTNode<OverrideSectionObject> {
+    int16 SectionNumber; // offset 0x8, size 0x2
+    int16 Touched;       // offset 0xA, size 0x2
+    char ObjectName[64]; // offset 0xC, size 0x40
+
+    ~OverrideSectionObject();
+    static int SortFunction(OverrideSectionObject *before, OverrideSectionObject *after);
+};
+
+// total size: 0x1C
+struct VisibleSectionUserInfo {
+    int ReferenceCount;                                 // offset 0x0, size 0x4
+    struct ScenerySectionHeader *pScenerySectionHeader; // offset 0x4, size 0x4
+    struct eLightFlarePackHeader *pLightFlarePack;      // offset 0x8, size 0x4
+    struct eLightPack *pLightPack;                      // offset 0xC, size 0x4
+    struct SmokeableSpawnerPack *pSmokeableSpawnerPack; // offset 0x10, size 0x4
+    struct ParkedCarPack *pParkedCarPack;               // offset 0x14, size 0x4
+    struct EventTriggerPack *pEventTriggerPack;         // offset 0x18, size 0x4
+};
+
+class UnallocatedVisibleSectionUserInfo;
+
+// total size: 0x8
+struct VisibleGroupInfo {
+    char *SelectionSetName; // offset 0x0, size 0x4
+    bool UsedForTopology;   // offset 0x4, size 0x1
+};
+
+class VisibleSectionManager {
+  public:
+    static VisibleGroupInfo *GetGroupInfo(const char *selection_set_name);
+
+    VisibleTextureSection *FindVisibleTextureSection(int section_number);
+
+    LoadingSection *FindLoadingSection(int drivable_section_number);
+
+    LoadingSection *FindLoadingSection(const char *name);
+
+    int GetSectionsToLoad(LoadingSection *loading_section, int16 *section_numbers, int max_sections);
+
+    OverrideSectionObject *FindOverrideSectionObject(const char *name, OverrideSectionObject *prev_object, bool partial_compare);
+
+    VisibleSectionManager();
+
+    ~VisibleSectionManager();
+
+    VisibleSectionUserInfo *AllocateUserInfo(int section_number);
+
+    void UnallocateUserInfo(int section_number);
+
+    void ActivateOverlay(const char *name);
+
+    void ActivateOverlay(VisibleSectionOverlay *overlay, VisibleSectionOverlay *undo_overlay);
+
+    void UnactivateOverlay();
+
+    int Loader(bChunk *chunk);
+
+    int Unloader(bChunk *chunk);
+
+    VisibleSectionBoundary *FindBoundary(int section_number);
+
+    VisibleSectionBoundary *FindClosestBoundary(const bVector2 *point, float *distance_outside);
+
+    VisibleSectionBoundary *FindBoundary(const bVector2 *point);
+
+    int GetDrivableSectionNumber(const bVector2 *point) {
+        VisibleSectionBoundary *b = this->FindBoundary(point);
+        return b != nullptr ? b->SectionNumber : 0;
+    }
+
+    int FindCloseBoundaries(VisibleSectionBoundary **boundaries, int max_boundaries, const bVector2 *point, float distance_outside);
+
+    DrivableScenerySection *FindDrivableSection(const bVector2 *point);
+
+    DrivableScenerySection *FindDrivableSection(int section_number);
+
+    uint32 GetVisibleSectionChecksum(int section_number);
+
+    bool IsGroupEnabled(uint32 group_name_hash);
+
+    void EnableGroup(uint32 group_name_hash);
+
+    void DisableGroup(uint32 group_name_hash);
+
+    void DisableAllGroups() {
+        bMemSet(this->EnabledGroups, 0, 0x400);
+    }
+
+    VisibleSectionUserInfo *GetUserInfo(int section_number) {
+        return this->UserInfoTable[section_number];
+    }
+
+    int GetLODOffset() {
+        return this->pInfo->LODOffset;
+    }
+
+  private:
+    bTList<VisibleSectionBoundary> DrivableBoundaryList;               // offset 0x0, size 0x8
+    bTList<VisibleSectionBoundary> NonDrivableBoundaryList;            // offset 0x8, size 0x8
+    bTList<DrivableScenerySection> DrivableSectionList;                // offset 0x10, size 0x8
+    bTList<VisibleTextureSection> VisibleTextureSectionList;           // offset 0x18, size 0x8
+    bTList<LoadingSection> LoadingSectionList;                         // offset 0x20, size 0x8
+    bTList<SuperScenerySection> SuperScenerySectionList;               // offset 0x28, size 0x8
+    bTList<OverrideSectionObject> OverrideSectionObjectList;           // offset 0x30, size 0x8
+    bTList<UsedInSectionInfo> GeometryUsedInSectionInfoList;           // offset 0x38, size 0x8
+    bTList<UsedInSectionInfo> TextureUsedInSectionInfoList;            // offset 0x40, size 0x8
+    bTList<VisibleSectionOverlay> OverlayList;                         // offset 0x48, size 0x8
+    bChunk *pBoundaryChunks;                                           // offset 0x50, size 0x4
+    VisibleSectionManagerInfo *pInfo;                                  // offset 0x54, size 0x4
+    VisibleSectionOverlay *pActiveOverlay;                             // offset 0x58, size 0x4
+    VisibleSectionOverlay *pUndoOverlay;                               // offset 0x5C, size 0x4
+    VisibleSectionUserInfo *UserInfoTable[2800];                       // offset 0x60, size 0x2BC0
+    int NumAllocatedUserInfo;                                          // offset 0x2C20, size 0x4
+    VisibleSectionUserInfo UserInfoStorageTable[512];                  // offset 0x2C24, size 0x3800
+    bTList<UnallocatedVisibleSectionUserInfo> UnallocatedUserInfoList; // offset 0x6424, size 0x8
+    VisibleSectionBitTable *VisibleBitTables;                          // offset 0x642C, size 0x4
+    uint32 EnabledGroups[256];                                         // offset 0x6430, size 0x40
+};
+
+extern VisibleSectionManager TheVisibleSectionManager; // size: 0x6830
+
+int Get2PlayerSectionNumber(int section_number);
+char *GetScenerySectionName(int section_number);
+char *GetScenerySectionName(char *text, int section_number);
+int GetBoundarySectionNumber(int section_number, const char *platform_name);
+
+#endif
