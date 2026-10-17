@@ -841,6 +841,52 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
                          label = kModes[m_audioMode % 3];
                      },
                      [this](int dir) { m_audioMode = (m_audioMode + (dir < 0 ? 2 : 1)) % 3; }});
+    } else if (cat == 2) {
+        // FUN_002038c8: six toggles then a Save slider (vtable 0x0046e358), in AddOption order.
+        auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
+        // 0x002013f0/0x00201490: On/Off, stored 0 or 127.
+        w.push_back({0xF26A5CBF, // Jump Camera
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_jumpCamera); },
+                     [this](int) { m_jumpCamera = !m_jumpCamera; }});
+        // 0x002014e8/0x00201568: On/Off.
+        w.push_back({0x85A6CE05, // Rearview Mirror
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_rearviewMirror); },
+                     [this](int) { m_rearviewMirror = !m_rearviewMirror; }});
+        // 0x002015b0/0x00201648: MPH (0) / KM/H (1).
+        w.push_back({0xF86A6272, // Speedometer Units
+                     [this](uint32_t &l, std::string &) { l = m_speedoUnits ? 0x8569A25Fu : 0x8569AB44u; },
+                     [this](int) { m_speedoUnits ^= 1; }});
+        // 0x00201698/0x00201738: Easy / Medium / Hard.
+        w.push_back({0xBC0E6C55, // Career Difficulty
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0xDBBB4E8F, 0xCAB262DE, 0xDBBCF37C};
+                         l = kModes[m_careerDifficulty % 3];
+                     },
+                     [this](int dir) { m_careerDifficulty = (m_careerDifficulty + (dir < 0 ? 2 : 1)) % 3; }});
+        // 0x00201908/0x002019a8: Off / Static / Rotate.
+        w.push_back({0xC6269082, // Explore Map Mode
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0x0000CCFA, 0xF75595F2, 0xF4B00E99};
+                         l = kModes[m_exploreMapMode % 3];
+                     },
+                     [this](int dir) { m_exploreMapMode = (m_exploreMapMode + (dir < 0 ? 2 : 1)) % 3; }});
+        // 0x002017d0/0x00201888: Off / Static / Rotate; split screen (0x004f12e9) only 0..1.
+        w.push_back({0x9FA5EC9E, // Race Map Mode
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0x0000CCFA, 0xF75595F2, 0xF4B00E99};
+                         l = kModes[m_raceMapMode % 3];
+                     },
+                     [this](int dir) {
+                         const int n = m_raceMode == 4 ? 2 : 3;
+                         m_raceMapMode = (m_raceMapMode + (dir < 0 ? n - 1 : 1)) % n;
+                     }});
+        // 0x00201ad8/0x00201c18: Save slider, states Off (0,0) / Prompt (1,0) / Autosave (1,1).
+        w.push_back({0x996463E6, // Save
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0x1B7ABF90, 0x1B7ABF8F, 0x1B7ABF8E};
+                         l = kModes[m_saveState % 3];
+                     },
+                     [this](int dir) { m_saveState = (m_saveState + (dir < 0 ? 2 : 1)) % 3; }});
     }
     printf("[Menu] Options: category %d, %zu rows\n", cat, w.size());
     m_widgets.Setup(pkg, std::move(w));

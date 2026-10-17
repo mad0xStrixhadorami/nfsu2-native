@@ -119,6 +119,17 @@ private:
     // Template init 0x002006d8 etc. clamps to [0,1] with a per-row step (uGpffff9644..).
     float m_audioVolume[7] = {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f};
     int m_audioMode = 1;
+    // UI_Options Gameplay toggles (0x004f12ec Jump Camera stored 0/127, 0x004f12e0 Rearview
+    // Mirror, 0x004f12e8 Speedometer Units 0 MPH / 1 KM-H, 0x004f15e4 Career Difficulty 0..2,
+    // 0x004f12ea Explore Map Mode, 0x004f12e9 Race Map Mode, 0x004fb4a0/a4 Save 0 Off/1 Prompt/
+    // 2 Autosave). All are BSS and default to 0 in the binary.
+    bool m_jumpCamera = false;
+    bool m_rearviewMirror = false;
+    int m_speedoUnits = 0;
+    int m_careerDifficulty = 0;
+    int m_exploreMapMode = 0;
+    int m_raceMapMode = 0;
+    int m_saveState = 0;
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
