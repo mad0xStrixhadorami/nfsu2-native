@@ -34,6 +34,133 @@ constexpr uint32_t kChunkLanguage = 0x00039000;      // BCHUNK_LANGUAGE
 constexpr u32 kMsgDisableInputs = 0x05922615;
 constexpr u32 kMsgEnableInputs = 0x7e4d1288;
 
+struct DecodedPreviewPoint {
+    float x, y, z;
+};
+
+uint32_t ReadLE32(const std::vector<uint8_t> &d, size_t p)
+{
+    return uint32_t(d[p]) | (uint32_t(d[p + 1]) << 8) | (uint32_t(d[p + 2]) << 16) |
+           (uint32_t(d[p + 3]) << 24);
+}
+
+// Stand-in geometry decoder for the car-select preview. It decodes the verified Q15 position
+// streams but deliberately emits points until the original GIF strip topology is understood.
+bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size, unsigned nverts,
+                       std::vector<DecodedPreviewPoint> &out)
+{
+    struct Vec4s { int16_t v[4] = {}; };
+    Vec4s positions[256];
+    float bounds[2][3] = {};
+    bool haveBounds[2] = {};
+    size_t p = start, end = std::min(d.size(), start + size);
+    while (p + 4 <= end) {
+        uint16_t imm = uint16_t(d[p]) | (uint16_t(d[p + 1]) << 8);
+        unsigned num = d[p + 2];
+        unsigned cmd = d[p + 3] & 0x7f;
+        p += 4;
+        if (cmd >= 0x60) {
+            unsigned vn = (cmd >> 2) & 3, vl = cmd & 3;
+            unsigned comps = vn + 1;
+            unsigned bits = vl == 0 ? 32 : vl == 1 ? 16 : vl == 2 ? 8 : 5;
+            size_t elem = bits == 5 ? 2 : bits * comps / 8;
+            if (!elem || p + elem * num > end)
+                return false;
+            unsigned addr = imm & 0x3ff;
+            if (bits == 32 && comps == 3 && addr >= 2 && addr <= 3 && num > 0) {
+                for (unsigned k = 0; k < std::min(num, 2u); ++k) {
+                    for (unsigned c = 0; c < 3; ++c) {
+                        uint32_t word = ReadLE32(d, p + k * elem + c * 4);
+                        memcpy(&bounds[addr - 2 + k][c], &word, sizeof(word));
+                    }
+                    haveBounds[addr - 2 + k] = true;
+                }
+            } else if (bits == 16 && comps == 4 && addr >= 5 && addr + num <= 5 + 192) {
+                for (unsigned k = 0; k < num; ++k)
+                    for (unsigned c = 0; c < 4; ++c) {
+                        uint16_t word = uint16_t(d[p + k * elem + c * 2]) |
+                                        (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
+                        positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
+                    }
+            }
+            p += (elem * num + 3) & ~size_t(3);
+        } else if (cmd == 0x20) {
+            p += 4;
+        } else if (cmd == 0x30 || cmd == 0x31) {
+            p += 16;
+        } else if (cmd == 0x14 || cmd == 0x15 || cmd == 0x17) {
+            break;
+        }
+    }
+    if (!haveBounds[0] || !haveBounds[1])
+        return false;
+    for (unsigned i = 0; i < nverts; ++i) {
+        unsigned group = i / 4, lane = i & 3, base = group * 3;
+        if (base + 2 >= 192)
+            return false;
+        DecodedPreviewPoint v{};
+        float *dst[3] = {&v.x, &v.y, &v.z};
+        for (unsigned a = 0; a < 3; ++a) {
+            float q = static_cast<float>(positions[base + a].v[lane]) / 32768.0f;
+            *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
+        }
+        out.push_back(v);
+    }
+    return true;
+}
+
+void DecodePreviewMesh(const std::vector<uint8_t> &d, size_t body, size_t size,
+                       std::vector<DecodedPreviewPoint> &out)
+{
+    size_t end = std::min(d.size(), body + size);
+    size_t table = 0, tableSize = 0, vif = 0, vifSize = 0;
+    for (size_t p = body; p + 8 <= end;) {
+        uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
+        size_t child = p + 8;
+        if (len > end - child)
+            return;
+        if (id == 0x134a01) { table = child; tableSize = len; }
+        if (id == 0x134a02) { vif = child; vifSize = len; }
+        p = child + len;
+    }
+    if (!table || !vif || tableSize < 4)
+        return;
+    unsigned strips = (tableSize - 4) / 16;
+    for (unsigned i = 0; i < strips; ++i) {
+        size_t e = table + 4 + i * 16;
+        unsigned nverts = d[e + 2];
+        unsigned dq = uint16_t(d[e + 8]) | (uint16_t(d[e + 9]) << 8);
+        unsigned qwords = d[e + 12];
+        size_t offset = vif + size_t(dq) * 16, bytes = size_t(qwords) * 16;
+        if (offset <= vif + vifSize && bytes <= vif + vifSize - offset)
+            DecodePreviewStrip(d, offset, bytes, nverts, out);
+    }
+}
+
+void DecodePreviewChunks(const std::vector<uint8_t> &d, size_t begin, size_t end,
+                         std::vector<DecodedPreviewPoint> &out)
+{
+    for (size_t p = begin; p + 8 <= end;) {
+        uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
+        size_t body = p + 8;
+        if (len > end - body)
+            return;
+        if (id == 0x80134100)
+            DecodePreviewMesh(d, body, len, out);
+        else if (id & 0x80000000)
+            DecodePreviewChunks(d, body, body + len, out);
+        p = body + len;
+    }
+}
+
+// Stand-in geometry decoder; the engine equivalent is UG2's solid loader 0x001bf3b8.
+std::vector<DecodedPreviewPoint> DecodePreviewGeometry(const std::vector<uint8_t> &d)
+{
+    std::vector<DecodedPreviewPoint> points;
+    DecodePreviewChunks(d, 0, d.size(), points);
+    return points;
+}
+
 std::string LowerName(const char *s)
 {
     std::string r(s);
@@ -110,6 +237,58 @@ FENativeInterface::FENativeInterface(SDL_Renderer *renderer) : m_renderer(render
             }
         }
     }
+}
+
+// Stand-in: the UG2 car-select renderer is not ported yet; draw the decoded model as a point cloud.
+void FENativeInterface::EndPackageRendering(FEPackage *pkg)
+{
+    if (!pkg || !pkg->GetName() || strcasecmp(pkg->GetName(), "UI_QRCarSelect.fng") != 0 || !m_renderer)
+        return;
+
+    if (!m_carPreviewLoadAttempted) {
+        m_carPreviewLoadAttempted = true;
+        if (m_readFile) {
+            std::vector<uint8_t> geometry = m_readFile("CARS\\SKYLINE\\GEOMETRY.BIN");
+            std::vector<DecodedPreviewPoint> decoded = DecodePreviewGeometry(geometry);
+            m_carPreviewPoints.reserve(decoded.size());
+            for (const DecodedPreviewPoint &v : decoded)
+                m_carPreviewPoints.push_back({v.x, v.y, v.z});
+            fprintf(stderr, "[CarPreview] decoded %zu Skyline vertices from CARS\\SKYLINE\\GEOMETRY.BIN\n",
+                    m_carPreviewPoints.size());
+        }
+    }
+    if (m_carPreviewPoints.empty())
+        return;
+
+    float midX = 0.0f, midY = 0.0f, midZ = 0.0f;
+    for (const PreviewVertex &v : m_carPreviewPoints) {
+        midX += v.x; midY += v.y; midZ += v.z;
+    }
+    float invCount = 1.0f / static_cast<float>(m_carPreviewPoints.size());
+    midX *= invCount; midY *= invCount; midZ *= invCount;
+    constexpr float yawCos = 0.8660254f, yawSin = 0.5f, elevSin = 0.22f;
+    float minX = 1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
+    for (const PreviewVertex &v : m_carPreviewPoints) {
+        float x = (v.x - midX) * yawCos + (v.z - midZ) * yawSin;
+        float depth = -(v.x - midX) * yawSin + (v.z - midZ) * yawCos;
+        float y = (v.y - midY) - depth * elevSin;
+        minX = std::min(minX, x); maxX = std::max(maxX, x);
+        minY = std::min(minY, y); maxY = std::max(maxY, y);
+    }
+    const float scale = std::min(320.0f / std::max(maxX - minX, 0.01f),
+                                 145.0f / std::max(maxY - minY, 0.01f));
+    std::vector<SDL_Point> screenPoints;
+    screenPoints.reserve(m_carPreviewPoints.size());
+    for (size_t i = 0; i < m_carPreviewPoints.size(); i += 2) {
+        const PreviewVertex &v = m_carPreviewPoints[i];
+        float x = (v.x - midX) * yawCos + (v.z - midZ) * yawSin;
+        float depth = -(v.x - midX) * yawSin + (v.z - midZ) * yawCos;
+        float y = (v.y - midY) - depth * elevSin;
+        screenPoints.push_back({int(320.0f + x * scale), int(300.0f - y * scale)});
+    }
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(m_renderer, 138, 194, 255, 220);
+    SDL_RenderDrawPoints(m_renderer, screenPoints.data(), static_cast<int>(screenPoints.size()));
 }
 
 FENativeInterface::~FENativeInterface()

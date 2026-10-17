@@ -97,7 +97,7 @@ public:
     void NotificationMessage(u32 Message, FEObject *pObject, u32 Param1, u32 Param2) override;
     void NotifySoundMessage(u32 Message, FEObject *pObject, u32 ControlMask, u32 pPackagePtr) override;
     void BeginPackageRendering(FEPackage *) override {}
-    void EndPackageRendering(FEPackage *) override {}
+    void EndPackageRendering(FEPackage *pkg) override;
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
     void RenderObject(FEObject *pObject) override;
@@ -116,6 +116,9 @@ private:
     struct Context {
         Affine xform;
         int r = 255, g = 255, b = 255, a = 255;
+    };
+    struct PreviewVertex {
+        float x, y, z;
     };
 
     Affine LocalTransform(const FEObject *obj) const;
@@ -141,6 +144,8 @@ private:
     std::map<uint32_t, std::string> m_resourceNames; // resource handle -> name (movies)
     std::map<FEObject *, std::string> m_movieNames;
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
+    std::vector<PreviewVertex> m_carPreviewPoints;
+    bool m_carPreviewLoadAttempted = false;
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;
