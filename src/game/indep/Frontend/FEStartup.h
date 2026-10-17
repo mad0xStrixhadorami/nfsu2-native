@@ -77,6 +77,8 @@ private:
     void RefreshTrackInfo(FEPackage *pkg);
     void HandleQRModeOptionsLoaded(FEPackage *pkg);
     void HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg);
+    void HandleOptionsMainLoaded(FEPackage *pkg);
+    void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     const char *QuickRaceNext(const char *screen) const;
     const char *QuickRaceBack(const char *screen) const;
     void SwitchFlow(const char *from, const char *to);
@@ -104,6 +106,11 @@ private:
     size_t m_mainLastSelection = 1; // 0x001e6ea0: FEngSetLastButton(pkg, 2) -> Quick Race
     size_t m_modeLastSelection = 0;
     std::vector<int> m_modeTypes;   // race type per mode option
+    // UI_OptionsMain (0x00202460/0x00202780): option carousel. Each item sets DAT_004f12cc to
+    // its category (read by UI_Options, 0x00202b68) before switching there.
+    size_t m_optionsMainLastSelection = 0;
+    std::vector<int> m_optionCategories;
+    int m_optionCategory = 0;
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)

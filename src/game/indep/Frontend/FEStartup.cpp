@@ -185,6 +185,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRModeOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_OptionsMain.fng") == 0) {
+        HandleOptionsMainLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -256,6 +260,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
             msg != kMsgPadAccept && msg != kMsgPadBack)
             HandleQRModeOptionsMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_OptionsMain.fng") == 0 && msg != kMsgPadBack) {
+        HandleOptionsMainMessage(msg, pkg);
         return;
     }
     // Other quick race flow screens (contents not ported yet): Accept goes on, Back goes back.
@@ -694,6 +702,53 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     m_widgets.HandleMessage(msg);
+}
+
+// UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel
+// with one entry per option category, same base as the main menu. AddOption order is the on-screen
+// order (as in UI_Main). Each item's handler 0x00200428..0x00200528 sets DAT_004f12cc (the category
+// read by UI_Options, 0x00202b68): 0 Audio, 1 Video, 2 Gameplay, 3 Player, 4 Controls, 5 EA GAMES
+// TRAX (Online Options 7 on PC, DAT_00506bd0 > 0xb), 6 Trailers/Bonus (0x002005c0), 8 Credits.
+void FEStartupSequence::HandleOptionsMainLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t tex, label;
+        int category;
+    } kOptions[] = {
+        {0xF37AF144, 0xE76CD783, 0}, // Audio
+        {0x8A006328, 0xE8E24508, 1}, // Video
+        {0x4DF98FB2, 0xD0CF6EE1, 2}, // Gameplay
+        {0xD708EFEF, 0xF760EABE, 3}, // Player
+        {0xA04A7B26, 0xD77A22D8, 4}, // Controls
+        {0xC52CCBF6, 0xDCFB6B36, 5}, // EA GAMES TRAX (PS2; Online Options on PC)
+        {0xCAF8F145, 0xB7326E56, 6}, // Trailers / bonus
+        {0x51009E20, 0x0905101F, 8}, // Credits
+    };
+    std::vector<FEIconScroller::Def> defs;
+    m_optionCategories.clear();
+    for (const auto &o : kOptions) {
+        defs.push_back({o.tex, o.label});
+        m_optionCategories.push_back(o.category);
+    }
+    printf("[Menu] OptionsMain: %zu options\n", defs.size());
+    m_scroller.Setup(pkg, defs, m_optionsMainLastSelection);
+}
+
+void FEStartupSequence::HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        size_t sel = m_scroller.Selected();
+        m_optionsMainLastSelection = sel;
+        if (sel >= m_optionCategories.size())
+            return;
+        m_optionCategory = m_optionCategories[sel];
+        printf("[Menu] option category %d\n", m_optionCategory);
+        NavigateTo(pkg->GetName(), "UI_Options.fng");
+        return;
+    }
+    m_scroller.HandleMessage(msg, TickSeconds());
 }
 
 void FEStartupSequence::SwitchFlow(const char *from, const char *to)
