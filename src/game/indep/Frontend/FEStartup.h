@@ -44,6 +44,7 @@ public:
 
     // Car select Accept requested a race; returns the world region to load (e.g. "L4RA") once.
     bool TakeRaceRequest(std::string &region);
+    int RaceNumber() const { return m_raceNumber; } // chosen track, 0 for Free Run
 
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();

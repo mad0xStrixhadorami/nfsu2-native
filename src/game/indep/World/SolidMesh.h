@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // PS2 eSolid mesh decoding: positions are Q15 values between per-strip bounds (VU addresses 2/3),
@@ -25,4 +26,16 @@ void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size, std
 // Every 0x80134100 mesh under [begin, end), descending into container chunks.
 void DecodeChunks(const uint8_t *d, size_t dataSize, size_t begin, size_t end, std::vector<Triangle> &out);
 std::vector<Triangle> DecodeGeometry(const uint8_t *d, size_t size);
+} // namespace SolidMesh
+
+namespace SolidMesh {
+// One 0x80134010 solid: its (possibly truncated, 27-char) name from the 0x134011 header and its
+// triangles in solid space.
+struct NamedSolid {
+    std::string name;
+    uint32_t hash = 0;
+    float bboxMin[3] = {}, bboxMax[3] = {};
+    std::vector<Triangle> tris;
+};
+std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size);
 } // namespace SolidMesh

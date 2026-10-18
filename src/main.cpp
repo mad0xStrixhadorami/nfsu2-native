@@ -24,6 +24,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
@@ -254,7 +255,10 @@ int main(int argc, char **argv)
     // In-game world (stand-in for the PS2 game flow after StartRace, ISSUES.md #103/#104).
     TrackWorld world;
     TrackWorld::Camera camera;
-    bool inWorld = false;
+    PlayerCar car;
+    bool inWorld = false, flyCamera = false;
+    float chaseYaw = 0.0f, steer = 0.0f;
+    const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     auto enterWorld = [&](const std::string &region) {
         // LoadingRegion (0x002ddb40): show Loading.fng while the region streams in.
         if (engine->PushPackage("Loading.fng", 0, 0xff)) {
@@ -269,6 +273,26 @@ int main(int argc, char **argv)
             return;
         }
         camera = world.StartCamera();
+        std::string markersPath = "TRACKS\\ROUTES" + region + "\\TRACKPOSMARKERSALL.BIN";
+        int raceNumber = startup.RaceNumber();
+        if (const char *n = getenv("NFSU2_RACE"))
+            raceNumber = atoi(n);
+        if (raceNumber && world.StartFromMarkers(ReadGameFile(*fs, markersPath.c_str()), raceNumber, camera)) {
+            camera.z += 2.0f;
+            printf("[World] race %d start grid\n", raceNumber);
+        }
+        // The player car (stand-in for the unported car loader / physics, ISSUES.md #105).
+        flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
+        std::string carPath = "CARS\\" + fe.PreviewCarName() + "\\GEOMETRY.BIN";
+        if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()))) {
+            world.SetCar(car.Model(), SDL_Color{40, 90, 200, 255});
+            float ground = camera.z - 2.0f;
+            world.GroundHeight(camera.x, camera.y, camera.z, ground);
+            car.Place(camera.x, camera.y, ground, camera.yaw);
+            chaseYaw = camera.yaw;
+        } else {
+            flyCamera = true;
+        }
         if (const char *cam = getenv("NFSU2_WORLD_CAM"))
             sscanf(cam, "%f,%f,%f,%f,%f", &camera.x, &camera.y, &camera.z, &camera.yaw, &camera.pitch);
         printf("[World] camera %.1f %.1f %.1f yaw %.2f\n", camera.x, camera.y, camera.z, camera.yaw);
@@ -306,32 +330,55 @@ int main(int argc, char **argv)
         }
 
         if (inWorld) {
-            // Fly camera: Up/Down move, Left/Right turn, L1/R1 lower/raise.
             const float dt = std::min(0.1f, (now - last) / 1000.0f);
             const u32 pad = fe.GetJoyPadMask(0);
             if (releaseInjectedPadAfterUpdate)
                 fe.SetSimulatedPadMask(0);
             last = now;
-            const float speed = 40.0f * dt, turn = 1.6f * dt;
-            if (pad & FENativeInterface::kPadLeft)
-                camera.yaw += turn;
-            if (pad & FENativeInterface::kPadRight)
-                camera.yaw -= turn;
-            float move = (pad & FENativeInterface::kPadUp) ? speed : (pad & FENativeInterface::kPadDown) ? -speed : 0.0f;
-            camera.x += std::cos(camera.yaw) * move;
-            camera.y += std::sin(camera.yaw) * move;
-            if (pad & FENativeInterface::kPadLTrigger)
-                camera.z -= speed * 0.5f;
-            if (pad & FENativeInterface::kPadRTrigger)
-                camera.z += speed * 0.5f;
+            if (flyCamera) {
+                // Fly camera: Up/Down move, Left/Right turn, L1/R1 lower/raise.
+                const float speed = 40.0f * dt, turn = 1.6f * dt;
+                if (pad & FENativeInterface::kPadLeft)
+                    camera.yaw += turn;
+                if (pad & FENativeInterface::kPadRight)
+                    camera.yaw -= turn;
+                float move = (pad & FENativeInterface::kPadUp) ? speed : (pad & FENativeInterface::kPadDown) ? -speed : 0.0f;
+                camera.x += std::cos(camera.yaw) * move;
+                camera.y += std::sin(camera.yaw) * move;
+                if (pad & FENativeInterface::kPadLTrigger)
+                    camera.z -= speed * 0.5f;
+                if (pad & FENativeInterface::kPadRTrigger)
+                    camera.z += speed * 0.5f;
+            } else {
+                // Drive: Up throttle, Down brake/reverse, Left/Right steer (eased for digital input).
+                float target = (pad & FENativeInterface::kPadLeft) ? 1.0f : (pad & FENativeInterface::kPadRight) ? -1.0f : 0.0f;
+                steer += std::clamp(target - steer, -4.0f * dt, 4.0f * dt);
+                float throttle = (autoDrive || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
+                float brake = (pad & FENativeInterface::kPadDown) ? 1.0f : 0.0f;
+                car.Update(world, throttle, brake, steer, dt);
+                float m[12];
+                car.Transform(m);
+                world.SetCarTransform(m);
+                // Chase camera: behind and above, lagging the car's heading.
+                float diff = std::remainder(car.Yaw() - chaseYaw, 6.2831853f);
+                chaseYaw += diff * std::min(1.0f, 5.0f * dt);
+                camera.x = car.X() - std::cos(chaseYaw) * 6.5f;
+                camera.y = car.Y() - std::sin(chaseYaw) * 6.5f;
+                float camGround = car.Z();
+                world.GroundHeight(camera.x, camera.y, car.Z() + 2.0f, camGround);
+                camera.z = std::max(car.Z(), camGround) + 2.3f;
+                camera.yaw = chaseYaw;
+                camera.pitch = -0.17f;
+            }
             int w, h;
             SDL_GetRendererOutputSize(ren, &w, &h);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
             world.Render(ren, camera, w, h);
             static Uint32 fpsStart = now, fpsFrames = 0;
-            if (++fpsFrames == 120) {
-                printf("[World] %.1f fps\n", 120000.0 / std::max<Uint32>(1, now - fpsStart));
+            if (++fpsFrames == 60) {
+                printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
+                       car.X(), car.Y(), car.Z(), car.Speed());
                 fpsStart = now;
                 fpsFrames = 0;
             }

@@ -219,4 +219,45 @@ std::vector<Triangle> DecodeGeometry(const uint8_t *d, size_t size)
     return tris;
 }
 
+namespace {
+void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t end, std::vector<NamedSolid> &out)
+{
+    for (size_t p = begin; p + 8 <= end;) {
+        uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
+        size_t body = p + 8;
+        if (len > end - body)
+            return;
+        if (id == 0x80134010) {
+            NamedSolid s;
+            for (size_t q = body; q + 8 <= body + len;) {
+                uint32_t cid = ReadLE32(d, q), clen = ReadLE32(d, q + 4);
+                if (clen > body + len - (q + 8))
+                    break;
+                if (cid == 0x134011 && clen >= 0xc0) {
+                    // Solid header: name hash +0x10, bbox +0x20/+0x30, name +0xa4 (28 bytes).
+                    const uint8_t *h = d + q + 8;
+                    s.hash = ReadLE32(h, 0x10);
+                    memcpy(s.bboxMin, h + 0x20, 12);
+                    memcpy(s.bboxMax, h + 0x30, 12);
+                    s.name.assign(reinterpret_cast<const char *>(h + 0xa4), strnlen(reinterpret_cast<const char *>(h + 0xa4), clen - 0xa4));
+                }
+                q += 8 + clen;
+            }
+            DecodeChunks(d, dataSize, body, body + len, s.tris);
+            out.push_back(std::move(s));
+        } else if (id & 0x80000000) {
+            CollectNamedSolids(d, dataSize, body, body + len, out);
+        }
+        p = body + len;
+    }
+}
+} // namespace
+
+std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size)
+{
+    std::vector<NamedSolid> out;
+    CollectNamedSolids(d, size, 0, size, out);
+    return out;
+}
+
 } // namespace SolidMesh

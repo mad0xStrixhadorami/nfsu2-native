@@ -62,6 +62,158 @@ void BaseColour(Kind k, float &r, float &g, float &b)
 }
 } // namespace
 
+bool TrackWorld::Shade(Tri &w, float r, float g, float b)
+{
+    constexpr float lx = 0.40f, ly = 0.30f, lz = 0.866f; // light direction (normalised)
+    float ux = w.v[3] - w.v[0], uy = w.v[4] - w.v[1], uz = w.v[5] - w.v[2];
+    float vx = w.v[6] - w.v[0], vy = w.v[7] - w.v[1], vz = w.v[8] - w.v[2];
+    float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-6f)
+        return false;
+    float lit = 0.35f + 0.65f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
+    w.shade[0] = uint8_t(std::min(255.0f, r * lit * 255.0f));
+    w.shade[1] = uint8_t(std::min(255.0f, g * lit * 255.0f));
+    w.shade[2] = uint8_t(std::min(255.0f, b * lit * 255.0f));
+    return true;
+}
+
+template <typename F> void TrackWorld::ForNearbyTris(float x, float y, F &&f) const
+{
+    // Triangles are bucketed by centroid, so a large one can overlap the neighbouring cells.
+    const int gx = int(std::floor(x / kCellSize)), gy = int(std::floor(y / kCellSize));
+    for (int cx = gx - 1; cx <= gx + 1; ++cx)
+        for (int cy = gy - 1; cy <= gy + 1; ++cy) {
+            auto it = m_cells.find(CellKey(cx, cy));
+            if (it != m_cells.end())
+                for (const Tri &t : it->second.tris)
+                    f(t);
+        }
+}
+
+bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z) const
+{
+    bool found = false;
+    float best = -1e30f;
+    ForNearbyTris(x, y, [&](const Tri &t) {
+        const float *a = t.v, *b = t.v + 3, *c = t.v + 6;
+        // Quick reject on the XY bounds.
+        if (x < std::min({a[0], b[0], c[0]}) || x > std::max({a[0], b[0], c[0]}) ||
+            y < std::min({a[1], b[1], c[1]}) || y > std::max({a[1], b[1], c[1]}))
+            return;
+        float d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        if (std::fabs(d) < 1e-6f)
+            return; // vertical in XY
+        float l0 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d;
+        float l1 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d;
+        float l2 = 1.0f - l0 - l1;
+        if (l0 < 0 || l1 < 0 || l2 < 0)
+            return;
+        // Walkable: the normal points mostly up or down (winding is unknown).
+        float ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+        float vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+        float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        if (nz * nz < 0.5f * (nx * nx + ny * ny + nz * nz))
+            return;
+        float h = l0 * a[2] + l1 * b[2] + l2 * c[2];
+        if (h <= zMax && h > best) {
+            best = h;
+            found = true;
+        }
+    });
+    if (found)
+        z = best;
+    return found;
+}
+
+bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz) const
+{
+    const float dx = bx - ax, dy = by - ay, dz = bz - az;
+    bool hit = false;
+    ForNearbyTris(ax, ay, [&](const Tri &t) {
+        if (hit)
+            return;
+        const float *a = t.v, *b = t.v + 3, *c = t.v + 6;
+        float e1x = b[0] - a[0], e1y = b[1] - a[1], e1z = b[2] - a[2];
+        float e2x = c[0] - a[0], e2y = c[1] - a[1], e2z = c[2] - a[2];
+        float nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+        float n2 = nx * nx + ny * ny + nz * nz;
+        if (n2 < 1e-8f || nz * nz > 0.25f * n2)
+            return; // not steep enough to be a wall
+        // Moeller-Trumbore segment test.
+        float px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+        float det = e1x * px + e1y * py + e1z * pz;
+        if (std::fabs(det) < 1e-8f)
+            return;
+        float inv = 1.0f / det;
+        float sx = ax - a[0], sy = ay - a[1], sz = az - a[2];
+        float u = (sx * px + sy * py + sz * pz) * inv;
+        if (u < 0 || u > 1)
+            return;
+        float qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+        float v = (dx * qx + dy * qy + dz * qz) * inv;
+        if (v < 0 || u + v > 1)
+            return;
+        float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        hit = tt >= 0 && tt <= 1;
+        if (hit && getenv("NFSU2_WORLD_DEBUG"))
+            printf("[World] wall (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f)\n", a[0], a[1], a[2], b[0], b[1], b[2],
+                   c[0], c[1], c[2]);
+    });
+    return hit;
+}
+
+void TrackWorld::SetCar(const std::vector<SolidMesh::Triangle> &model, SDL_Color paint)
+{
+    m_carModel = model;
+    m_carPaint = paint;
+    m_carTris.clear();
+}
+
+void TrackWorld::SetCarTransform(const float m[12])
+{
+    m_carTris.clear();
+    m_carTris.reserve(m_carModel.size());
+    for (const SolidMesh::Triangle &t : m_carModel) {
+        Tri w;
+        for (int k = 0; k < 3; ++k)
+            for (int a = 0; a < 3; ++a)
+                w.v[k * 3 + a] = t.v[k].x * m[a] + t.v[k].y * m[4 + a] + t.v[k].z * m[8 + a] + m[3 + 4 * a];
+        if (Shade(w, m_carPaint.r / 255.0f, m_carPaint.g / 255.0f, m_carPaint.b / 255.0f))
+            m_carTris.push_back(w);
+    }
+}
+
+bool TrackWorld::StartFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, Camera &out) const
+{
+    if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
+        return false;
+    size_t p = 8;
+    while (p < markers.size() && markers[p] == 0x11)
+        ++p;
+    std::vector<std::pair<uint32_t, size_t>> group; // markers of this race, in file order
+    for (; p + 0x30 <= markers.size(); p += 0x30) {
+        uint16_t number;
+        memcpy(&number, markers.data() + p + 0x24, 2);
+        if (number == raceNumber)
+            group.emplace_back(Read32(markers.data() + p + 8), p);
+    }
+    for (const auto &[hash, first] : group) {
+        size_t count = 0;
+        for (const auto &g : group)
+            count += g.first == hash;
+        if (count < 4)
+            continue; // a single start/finish marker, not a grid
+        float pos[3];
+        uint16_t heading;
+        memcpy(pos, markers.data() + first + 0x10, 12);
+        memcpy(&heading, markers.data() + first + 0x20, 2);
+        out = {pos[0], pos[1], pos[2], heading * (6.2831853f / 65536.0f), -0.12f};
+        return true;
+    }
+    return false;
+}
+
 bool TrackWorld::Load(const std::vector<uint8_t> &stream)
 {
     const uint8_t *d = stream.data();
@@ -98,7 +250,6 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
     std::vector<RoadSpot> roads;
     double sumX = 0, sumY = 0;
     size_t unresolved = 0;
-    const float lx = 0.40f, ly = 0.30f, lz = 0.866f; // light direction (normalised)
 
     for (auto [body, len] : sections) {
         size_t infos = 0, infosLen = 0, inst = 0, instLen = 0;
@@ -160,16 +311,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
                     for (int a = 0; a < 3; ++a)
                         w.v[k * 3 + a] = p.x * m[a] + p.y * m[3 + a] + p.z * m[6 + a] + pos[a];
                 }
-                float ux = w.v[3] - w.v[0], uy = w.v[4] - w.v[1], uz = w.v[5] - w.v[2];
-                float vx = w.v[6] - w.v[0], vy = w.v[7] - w.v[1], vz = w.v[8] - w.v[2];
-                float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-                float len2 = std::sqrt(nx * nx + ny * ny + nz * nz);
-                if (len2 < 1e-6f)
+                if (!Shade(w, br, bg, bb))
                     continue; // degenerate
-                float lit = 0.35f + 0.65f * std::fabs((nx * lx + ny * ly + nz * lz) / len2);
-                w.shade[0] = uint8_t(std::min(255.0f, br * lit * 255.0f));
-                w.shade[1] = uint8_t(std::min(255.0f, bg * lit * 255.0f));
-                w.shade[2] = uint8_t(std::min(255.0f, bb * lit * 255.0f));
                 float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
                 int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
                 m_cells[CellKey(gx, gy)].tris.push_back(w);
@@ -237,6 +380,8 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     visible.clear();
     const int reach = int(std::ceil(kDrawDistance / kCellSize));
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
+    std::vector<const std::vector<Tri> *> lists;
+    lists.push_back(&m_carTris);
     for (int gx = ccx - reach; gx <= ccx + reach; ++gx)
         for (int gy = ccy - reach; gy <= ccy + reach; ++gy) {
             auto it = m_cells.find(CellKey(gx, gy));
@@ -246,7 +391,15 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
             float dist = std::sqrt(mx * mx + my * my);
             if (dist > kDrawDistance + kCellSize || mx * cy + my * sy < -kCellSize)
                 continue; // too far, or wholly behind the camera
-            for (const Tri &t : it->second.tris) {
+            // Horizontal view cone (half angle atan(w/2 / focal)) widened by the cell radius.
+            const float along = mx * cy + my * sy, across = std::fabs(mx * sy - my * cy);
+            if (across > along * (w * 0.5f / focal) + kCellSize * 0.75f)
+                continue;
+            lists.push_back(&it->second.tris);
+        }
+    for (const std::vector<Tri> *list : lists) {
+        {
+            for (const Tri &t : *list) {
                 CamVert in[3];
                 int behind = 0;
                 for (int k = 0; k < 3; ++k) {
@@ -288,6 +441,7 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
                 visible.push_back(vis);
             }
         }
+    }
     std::sort(visible.begin(), visible.end(), [](const Visible &a, const Visible &b) { return a.depth > b.depth; });
 
     if (getenv("NFSU2_WORLD_DEBUG")) {

@@ -65,6 +65,7 @@ public:
     void SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
     void CycleCarPreview(int direction); // Stand-in for the car-select vehicle carousel.
+    const std::string &PreviewCarName() const { return m_previewCarName; } // car folder, e.g. SKYLINE
 
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
     void AddBundle(const uint8_t *data, size_t size, const char *label = nullptr);
