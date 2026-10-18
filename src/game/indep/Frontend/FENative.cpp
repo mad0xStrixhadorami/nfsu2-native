@@ -281,11 +281,14 @@ void FENativeInterface::RenderCarPreviewOverlay()
 // 0-100 km/h time (12 s -> 4.5 s), simulated top speed (170 -> 270 km/h) and tyre grip per tonne.
 // Layout as 0x002614e0: the track starts 46 units into the 256-wide backing and is 164 long; the
 // "cur" fill starts 4 units further and grows with the value, the handle sits at its end.
-void FENativeInterface::UpdateStatBars(FEPackage *pkg)
+void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force)
 {
-    if (m_statBarsCar == m_previewCarName)
+    if (!pkg)
+        return;
+    if (!force && m_statBarsCar == m_previewCarName)
         return;
     m_statBarsCar = m_previewCarName;
+    SetVisible(pkg, 0xf5a9d520, true);
     PlayerCar::Performance p;
     PlayerCar::Wheel w[4];
     float values[3] = {0.5f, 0.5f, 0.5f};
@@ -336,6 +339,12 @@ void FENativeInterface::DrawCarPreviewLabel(FEPackage *pkg)
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     auto it = m_carTable.find(key);
     if (it == m_carTable.end())
+        return;
+
+    // The authentic game displays the stylized model badge (CARBADGE 0xb05dd708);
+    // only draw the synthetic string label as fallback when no badge texture exists.
+    uint32_t badgeTex = bStringHash(("SECONDARY_LOGO_" + key).c_str());
+    if (m_textures.count(badgeTex) && m_textures[badgeTex] && m_textures[badgeTex] != m_white)
         return;
 
     std::function<u32(FEObject *)> findFont = [&](FEObject *o) -> u32 {
@@ -544,6 +553,12 @@ void FENativeInterface::SetTextureHash(FEObject *obj, uint32_t texHash)
         return;
     obj->Handle = texHash;
     obj->Flags |= 0x400000u;
+}
+
+void FENativeInterface::SetTextureHash(FEPackage *pkg, uint32_t objHash, uint32_t texHash)
+{
+    if (FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr)
+        SetTextureHash(obj, texHash);
 }
 
 // 0x00293240 (FEngSetScript): switch object to scriptHash and optionally reset CurTime = 0.

@@ -189,6 +189,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRCarSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_StartCareer.fng") == 0) {
+        HandleStartCareerLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_OptionsMain.fng") == 0) {
         HandleOptionsMainLoaded(pkg);
         return;
@@ -282,6 +286,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleOptionsMainMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_StartCareer.fng") == 0 && msg != kMsgPadBack) {
+        HandleStartCareerMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_Options.fng") == 0) {
         // Pad messages for this list come from the pad in Tick(); ignore FEng's copies.
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
@@ -333,19 +341,41 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
         strcasecmp(active->GetName(), "UI_QRCarSelect.fng") == 0) {
         // Stand-in: the real carousel uses UG2 car-select messages (0x36db742/0x36db743).
-        if (pressed & FENativeInterface::kPadLeft)
+        if (pressed & FENativeInterface::kPadLeft) {
             m_fe->CycleCarPreview(-1);
-        else if (pressed & FENativeInterface::kPadRight)
+            UpdateQRCarSelect(active);
+        } else if (pressed & FENativeInterface::kPadRight) {
             m_fe->CycleCarPreview(1);
+            UpdateQRCarSelect(active);
+        }
         // L1/R1 cycle the filter type (DAT_00566764) -- messages 0x5073ef13 / 0x260113a7 (0x001f50f0).
         else if (pressed & FENativeInterface::kPadLTrigger)
             CycleCarFilter(-1, active);
         else if (pressed & FENativeInterface::kPadRTrigger)
             CycleCarFilter(1, active);
         // Accept (0x001f32f8, quick race mode 2: PAD_ACCEPT -> StartRace 0x0025d4d8). Mode 0 is a
-        // car select pushed directly with NFSU2_PACKAGE.
-        else if ((pressed & FENativeInterface::kPadAccept) && (m_raceMode == 2 || m_raceMode == 0))
+        // car select pushed directly with NFSU2_PACKAGE. Mode 8 is career car select.
+        else if ((pressed & FENativeInterface::kPadAccept) &&
+                 (m_raceMode == 2 || m_raceMode == 0 || m_raceMode == 8 || m_raceMode == 1))
             RequestRace();
+        else if (pressed & FENativeInterface::kPadBack) {
+            if (m_raceMode == 1 || m_raceMode == 8)
+                SwitchFlow(active->GetName(), "UI_StartCareer.fng");
+            else
+                SwitchFlow(active->GetName(), QuickRaceBack(active->GetName()));
+        }
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_StartCareer.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleStartCareerMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleStartCareerMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleStartCareerMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleStartCareerMessage(kMsgPadBack, active);
         return;
     }
     FEPackage *list = m_widgets.Package();
@@ -512,8 +542,13 @@ const char *FEStartupSequence::QuickRaceBack(const char *screen) const
         return "UI_Main.fng";
     if (strcasecmp(screen, "UI_QRTrackSelect.fng") == 0 || strcasecmp(screen, "UI_QRModeOptions.fng") == 0)
         return "UI_QRModeSelect.fng";
-    if (strcasecmp(screen, "UI_QRCarSelect.fng") == 0 && m_raceMode != 0x20)
+    if (strcasecmp(screen, "UI_QRCarSelect.fng") == 0) {
+        if (m_raceMode == 1 || m_raceMode == 8)
+            return "UI_StartCareer.fng";
+        if (m_raceMode == 0x20)
+            return "UI_Main.fng";
         return m_raceType == 9 ? "UI_QRModeSelect.fng" : "UI_QRModeOptions.fng";
+    }
     return nullptr;
 }
 
@@ -748,8 +783,43 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
 // every state here (best-effort, like the unlocked-tracks note in ISSUES #60).
 void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
 {
+    uint32_t title = (m_raceMode == 8 || m_raceMode == 1) ? 0xa7fa00b6 : 0xe1385c1e;
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, title);
+    FENativeInterface::SetVisible(pkg, 0xf5a9d520, true);
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
+    UpdateQRCarSelect(pkg);
+}
+
+// 0x001f44f0 / 0x001f4038: Update car-select screen objects for the current vehicle:
+// - Manufacturer logo (0x3e01ad1d) set to CARSELECT_MANUFACTURER_<MANUF>
+// - Car model badge (0xb05dd708) set to SECONDARY_LOGO_<MODEL>
+// - Left / right arrows (0x444969fd / 0x444969fe)
+// - Performance stat bars (0x001f4228 / 0x002614e0)
+void FEStartupSequence::UpdateQRCarSelect(FEPackage *pkg)
+{
+    if (!pkg)
+        return;
+    const std::string &car = m_fe->PreviewCarName();
+    std::string manuf = m_fe->CarManufacturer(car);
+    std::string upperManuf, upperCar;
+    for (char c : manuf)
+        upperManuf += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (char c : car)
+        upperCar += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    uint32_t manufTex = bStringHash(("CARSELECT_MANUFACTURER_" + upperManuf).c_str());
+    uint32_t badgeTex = bStringHash(("SECONDARY_LOGO_" + upperCar).c_str());
+
+    FENativeInterface::SetTextureHash(pkg, 0x3e01ad1d, manufTex); // MANUFACTURERLOGO
+    FENativeInterface::SetTextureHash(pkg, 0xb05dd708, badgeTex); // CARBADGE
+    FENativeInterface::SetVisible(pkg, 0x3e01ad1d, true);
+    FENativeInterface::SetVisible(pkg, 0xb05dd708, true);
+
+    FENativeInterface::SetVisible(pkg, 0x444969fd, true); // ScrollBar_Arrow_1
+    FENativeInterface::SetVisible(pkg, 0x444969fe, true); // ScrollBar_Arrow_2
+
+    m_fe->UpdateStatBars(pkg, true);
 }
 
 // 0x001f44f0: label hash for the current filter state.
@@ -789,6 +859,79 @@ void FEStartupSequence::CycleCarFilter(int direction, FEPackage *pkg)
     m_carFilterState = kCycle[(cur + (direction < 0 ? -1 : 1) + n) % n];
     printf("[CarSelect] filter state %d\n", m_carFilterState);
     ApplyCarFilterLabel(pkg);
+}
+
+// UI_StartCareer (0x001e7168 / ctor 0x001e71f0): Career Mode starting screen.
+// An icon carousel with 3 options:
+//   Resume Career (tex 0xa230cd88, label 0xe072db21)
+//   New Career (tex 0x3cb92e26, label 0x97b1dcda)
+//   Career Garage (tex 0x72c87f3c, label 0xaa3f09d8)
+void FEStartupSequence::HandleStartCareerLoaded(FEPackage *pkg)
+{
+    // 0x001e71f0: Screen title "CAREER" (0x5e7e1192)
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0x5e7e1192);
+
+    static const struct {
+        uint32_t tex, label;
+        int action; // 0 Resume, 1 New, 2 Garage
+    } kOptions[] = {
+        {0xa230cd88, 0xe072db21, 0}, // Resume Career
+        {0x3cb92e26, 0x97b1dcda, 1}, // New Career
+        {0x72c87f3c, 0xaa3f09d8, 2}, // Career Garage
+    };
+    std::vector<FEIconScroller::Def> defs;
+    m_careerActions.clear();
+    for (const auto &o : kOptions) {
+        defs.push_back({o.tex, o.label});
+        m_careerActions.push_back(o.action);
+    }
+    printf("[Menu] StartCareer: %zu options\n", defs.size());
+    m_scroller.Setup(pkg, defs, m_startCareerLastSelection);
+}
+
+void FEStartupSequence::HandleStartCareerMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_scroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_scroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        NavigateTo(pkg->GetName(), "UI_Main.fng");
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        size_t sel = m_scroller.Selected();
+        m_startCareerLastSelection = sel;
+        if (sel >= m_careerActions.size())
+            return;
+        int action = m_careerActions[sel];
+        printf("[Career] action %d selected\n", action);
+        if (action == 0) {
+            // Resume Career -> enters world free roam (L4RA)
+            m_raceMode = 1;
+            m_raceType = 9; // free roam
+            RequestRace();
+        } else if (action == 1) {
+            // New Career -> choose starter car
+            m_raceMode = 8; // career car select
+            NavigateTo(pkg->GetName(), "UI_QRCarSelect.fng");
+        } else if (action == 2) {
+            // Career Garage -> GarageMain.fng
+            NavigateTo(pkg->GetName(), "GarageMain.fng");
+        }
+        return;
+    }
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel

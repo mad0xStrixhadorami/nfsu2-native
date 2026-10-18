@@ -91,10 +91,21 @@ public:
     // "<manufacturer> <model>" for a car folder (the car-select label), or the folder itself.
     std::string CarDisplayName(const std::string &folder) const
     {
-        auto it = m_carTable.find(folder);
+        std::string key = folder;
+        for (char &ch : key)
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        auto it = m_carTable.find(key);
         if (it == m_carTable.end())
             return folder;
         return it->second.manufacturer.empty() ? folder : it->second.manufacturer + " " + folder;
+    }
+    std::string CarManufacturer(const std::string &folder) const
+    {
+        std::string key = folder;
+        for (char &ch : key)
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        auto it = m_carTable.find(key);
+        return it != m_carTable.end() ? it->second.manufacturer : "";
     }
     // Raw database record of a car folder (nullptr if unknown).
     const uint8_t *CarRecordData(const std::string &folder) const
@@ -149,6 +160,8 @@ public:
     static void SetString(FEPackage *pkg, uint32_t objHash, const char *text);
     const std::vector<RaceInfo> &Races() const { return m_races; }
     static void SetTextureHash(FEObject *obj, uint32_t texHash);
+    static void SetTextureHash(FEPackage *pkg, uint32_t objHash, uint32_t texHash);
+    void UpdateStatBars(FEPackage *pkg, bool force = false);
     static void SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime = true);
     static void GetCenter(const FEObject *obj, float &x, float &y);
     static void SetCenter(FEObject *obj, float x, float y);
@@ -204,7 +217,6 @@ private:
     SDL_Texture *TextureFor(uint32_t hash);
     bool LoadCarPreview(const char *model);
     void DrawCarPreviewLabel(FEPackage *pkg);
-    void UpdateStatBars(FEPackage *pkg);
     std::string m_statBarsCar; // car the stat bars were last set for
     void DrawImage(FEObject *obj);
     void DrawString(FEObject *obj);

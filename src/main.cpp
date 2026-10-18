@@ -198,8 +198,22 @@ int main(int argc, char **argv)
             fflush(stdout);
             _Exit(0);
         }
-        if (!engine->PushPackage(package, 0, 0xff))
+        FEPackage *pkg = engine->PushPackage(package, 0, 0xff);
+        if (!pkg)
             fprintf(stderr, "could not push %s\n", package);
+        else if (getenv("NFSU2_FETREE")) {
+            std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
+                for (; o; o = o->GetNext()) {
+                    const FEObjData *d = o->GetObjData();
+                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x\n", depth * 2, "",
+                           o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
+                           d ? d->Size.y : 0, o->Flags);
+                    if (o->Type == FE_Group)
+                        dump(static_cast<FEGroup *>(o)->GetFirstChild(), depth + 1, o->NameHash);
+                }
+            };
+            dump(pkg->GetFirstObject(), 0, 0);
+        }
     } else {
         // 1. BootLoadingScreen (0x002e01f0): push loading_boot.fng, hide Legal_blurb (0x855f83ba) on PAL.
         FEPackage *bootPkg = engine->PushPackage("loading_boot.fng", 0, 0xff);

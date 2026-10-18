@@ -101,8 +101,11 @@ private:
     void HandleQRModeOptionsLoaded(FEPackage *pkg);
     void HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg);
     void HandleQRCarSelectLoaded(FEPackage *pkg);
+    void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
+    void HandleStartCareerLoaded(FEPackage *pkg);
+    void HandleStartCareerMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsLoaded(FEPackage *pkg);
@@ -140,6 +143,8 @@ private:
     size_t m_optionsMainLastSelection = 0;
     std::vector<int> m_optionCategories;
     int m_optionCategory = 0;
+    size_t m_startCareerLastSelection = 0;
+    std::vector<int> m_careerActions;
     // UI_Options audio settings (0x004f12f4, 0x004f12f8, 0x004f12fc, 0x004f1300, 0x004f1304,
     // 0x004f1308, 0x004f130c) and audio mode (0x004f131c: 0 Mono, 1 Stereo, 2 Dolby Pro Logic II).
     // Template init 0x002006d8 etc. clamps to [0,1] with a per-row step (uGpffff9644..).
