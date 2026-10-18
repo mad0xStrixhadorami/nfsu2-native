@@ -149,6 +149,9 @@ private:
     bool m_pScore = false;              // 0x004f133c
     bool m_pLeaderboard = false;        // 0x004f1344
     bool m_pAskTransmission = false;    // 0x004f1348
+    // UI_Options Controls category (0x00203f70): on this disc it holds the two online toggles.
+    bool m_showPlayerNames = false;     // 0x00506bc0
+    bool m_badConnectionWarning = false;// 0x00506bc4
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
