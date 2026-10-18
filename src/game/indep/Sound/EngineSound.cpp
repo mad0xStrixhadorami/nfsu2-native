@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -133,6 +134,30 @@ bool EngineSound::LoadLayer(const std::vector<uint8_t> &bank, Loop &layer)
     return true;
 }
 
+bool EngineSound::LoadShift(const std::vector<uint8_t> &bank)
+{
+    std::vector<Loop> sounds;
+    if (!DecodeBank(bank, sounds) || sounds.size() < 2 || !OpenDevice())
+        return false;
+    SDL_LockAudioDevice(m_device);
+    m_voices.clear();
+    m_shift = std::move(sounds);
+    SDL_UnlockAudioDevice(m_device);
+    return true;
+}
+
+void EngineSound::Shift(int direction)
+{
+    if (!m_device || m_shift.size() < 2 || !m_running)
+        return;
+    if (getenv("NFSU2_SOUND_DEBUG"))
+        printf("[Engine] shift %s\n", direction > 0 ? "up" : "down");
+    SDL_LockAudioDevice(m_device);
+    if (m_voices.size() < 4)
+        m_voices.push_back({&m_shift[direction > 0 ? 0 : 1], 0.0f});
+    SDL_UnlockAudioDevice(m_device);
+}
+
 void EngineSound::Set(float rpm, float idleRpm, float redline, float throttle, bool running)
 {
     m_rpm = rpm, m_idle = idleRpm, m_redline = redline, m_throttle = throttle, m_running = running;
@@ -199,4 +224,16 @@ void EngineSound::Mix(float *out, int frames)
     if (!m_road.pcm.empty())
         MixLoop(m_road, running ? 0.12f * std::min(1.0f, speed / 50.0f) : 0.0f,
                 m_road.rate / m_rate * (0.8f + std::min(speed, 70.0f) / 120.0f), out, frames);
+    // One-shots (gear changes).
+    for (Voice &v : m_voices) {
+        const float step = v.sound->rate / m_rate;
+        for (int f = 0; f < frames && v.pos < v.sound->pcm.size(); ++f, v.pos += step) {
+            const float smp = v.sound->pcm[size_t(v.pos)] * 0.35f;
+            out[f * 2] += smp;
+            out[f * 2 + 1] += smp;
+        }
+    }
+    m_voices.erase(std::remove_if(m_voices.begin(), m_voices.end(),
+                                  [](const Voice &v) { return v.pos >= v.sound->pcm.size(); }),
+                   m_voices.end());
 }

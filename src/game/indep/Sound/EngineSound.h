@@ -18,6 +18,10 @@ public:
     // and road noise (SOUND\IG_GLOBAL\ROADNOISE_00_MB.abk).
     bool LoadSkid(const std::vector<uint8_t> &bank) { return LoadLayer(bank, m_skid); }
     bool LoadRoad(const std::vector<uint8_t> &bank) { return LoadLayer(bank, m_road); }
+    // Gear-change one-shots (SOUND\SHIFTING\GEAR_<size>_Base.abk: 0 upshift, 1 downshift -- order
+    // assumed). Shift(+1/-1) plays one.
+    bool LoadShift(const std::vector<uint8_t> &bank);
+    void Shift(int direction);
     // Engine state for the mixer (called from the game loop).
     void Set(float rpm, float idleRpm, float redline, float throttle, bool running);
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
@@ -42,6 +46,12 @@ private:
     int m_rate = 32000;
     std::vector<Loop> m_loops;
     Loop m_skid, m_road;
+    std::vector<Loop> m_shift;
+    struct Voice {
+        const Loop *sound;
+        float pos;
+    };
+    std::vector<Voice> m_voices; // one-shots in flight (audio-locked)
     std::atomic<float> m_speed{0}, m_slip{0};
     std::atomic<float> m_rpm{0}, m_idle{900}, m_redline{7000}, m_throttle{0};
     std::atomic<bool> m_running{false};

@@ -304,6 +304,7 @@ int main(int argc, char **argv)
     // which also mutes the engine).
     MusicStream music;
     EngineSound engineSound; // player car (ISSUES.md #124)
+    int lastGear = 1;        // for gear-change sounds
     bool musicStarted = false;
     const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
     UiSound uiSound; // front-end clicks (ISSUES.md #126)
@@ -459,6 +460,7 @@ int main(int argc, char **argv)
             engineSound.Load(ReadGameFile(*fs, bankPath));
             engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
             engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
+            engineSound.LoadShift(ReadGameFile(*fs, "SOUND\\SHIFTING\\GEAR_MED_Base.abk"));
         }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
@@ -738,6 +740,11 @@ int main(int argc, char **argv)
                 engineSound.Set(car.Rpm(), car.GetPerformance().idleRpm, car.GetPerformance().redline,
                                 std::max(throttle, inputThrottle), !pausePkg);
                 engineSound.SetMotion(car.Speed(), car.Slip());
+                if (car.Gear() != lastGear) {
+                    if (lastGear > 0 && car.Gear() > 0)
+                        engineSound.Shift(car.Gear() - lastGear);
+                    lastGear = car.Gear();
+                }
                 // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
                 float power = 1.0f;
                 if (race.IsDrag() && race.GetPhase() != RaceSession::kFinished) {
