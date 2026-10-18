@@ -43,6 +43,8 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
 {
     m_hud = hud;
     m_config = config;
+    if (m_config.route && m_config.route->Valid() && !m_config.route->Closed())
+        m_config.laps = 1; // sprint
     m_phase = kCountdown;
     m_countdown = 3.0f;
     m_goShown = 0;
@@ -54,7 +56,7 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_position = 1;
     m_wrongWay = 0;
     SetupHud();
-    printf("[Race] begin: %d laps, track %.0f m, line %s\n", config.laps, config.trackLength,
+    printf("[Race] begin: %d laps, track %.0f m, line %s\n", m_config.laps, config.trackLength,
            config.hasLine ? "from markers" : "none");
 }
 
@@ -66,9 +68,10 @@ void RaceSession::SetupHud()
     // world-map widgets that UG2's HUD class hides per mode.
     static const uint32_t kShown[] = {kGaugeCluster, kGaugeBacking, kMinimapMask, kMinimapNorth, kTrackMap,
                                       kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText};
+    const bool sprint = m_config.route && m_config.route->Valid() && !m_config.route->Closed();
     for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext())
         FENativeInterface::SetObjectVisible(o, std::find(std::begin(kShown), std::end(kShown), o->NameHash) !=
-                                                   std::end(kShown));
+                                                   std::end(kShown) && !(sprint && o->NameHash == kLapGroup));
     for (uint32_t h : {kTurboGroup, kNosLine, kNosFill, kNosGameBreaker, kShiftLight})
         FENativeInterface::SetVisible(m_hud, h, false);
     char text[16];
@@ -76,6 +79,18 @@ void RaceSession::SetupHud()
     FENativeInterface::SetString(m_hud, kNumberLaps, text);
     snprintf(text, sizeof(text), "/%d", m_config.racers);
     FENativeInterface::SetString(m_hud, kNumberRacers, text);
+}
+
+// A circuit lap is the whole loop; a sprint (open route) is one "lap" of the race record's length
+// from the start line (the route itself runs on past the finish).
+float RaceSession::LapLength() const
+{
+    const RaceRoute *r = m_config.route;
+    if (!r)
+        return m_config.trackLength;
+    if (r->Closed())
+        return r->Length();
+    return m_config.trackLength > 0 ? m_config.trackLength : r->Length() - m_config.lineS;
 }
 
 float RaceSession::RaceDistance(float startS, float progress) const
@@ -109,7 +124,7 @@ void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &op
     m_progress += route.Delta(m_routeS, s);
     m_routeS = s;
     const float dist = RaceDistance(m_startS, m_progress);
-    if (m_phase == kRacing && dist >= m_lap * route.Length())
+    if (m_phase == kRacing && dist >= m_lap * LapLength())
         CompleteLap();
     // Position: opponents further along the route are ahead.
     int ahead = 0;

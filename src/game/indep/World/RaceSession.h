@@ -29,6 +29,7 @@ public:
     bool Update(const PlayerCar &car, const std::vector<float> &opponents, float dt);
     // Race distance of a car at route distance s plus its accumulated progress.
     float RaceDistance(float startS, float progress) const;
+    float LapLength() const;
     bool Running() const { return m_phase == kRacing; }
     float PlayerDistance() const { return RaceDistance(m_startS, m_progress); }
     Phase GetPhase() const { return m_phase; }
