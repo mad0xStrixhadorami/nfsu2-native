@@ -879,13 +879,19 @@ void FEStartupSequence::HandleStartCareerLoaded(FEPackage *pkg)
         {0x3cb92e26, 0x97b1dcda, 1}, // New Career
         {0x72c87f3c, 0xaa3f09d8, 2}, // Career Garage
     };
+    // Option list per the constructor 0x001e71f0: with a saved career (DAT_004f0e70 != 0) the first
+    // option is Resume Career and New Career follows; without one New Career comes first and there is
+    // no Resume. Career Garage is always last. We have no save data yet, so m_careerExists is false
+    // until a career has been started in this run.
     std::vector<FEIconScroller::Def> defs;
     m_careerActions.clear();
     for (const auto &o : kOptions) {
+        if (o.action == 0 && !m_careerExists)
+            continue;
         defs.push_back({o.tex, o.label});
         m_careerActions.push_back(o.action);
     }
-    printf("[Menu] StartCareer: %zu options\n", defs.size());
+    printf("[Menu] StartCareer: %zu options (career %s)\n", defs.size(), m_careerExists ? "exists" : "none");
     m_scroller.Setup(pkg, defs, m_startCareerLastSelection);
 }
 

@@ -105,6 +105,7 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
+    bool m_careerExists = false; // DAT_004f0e70: a saved career is present
     void HandleStartCareerLoaded(FEPackage *pkg);
     void HandleStartCareerMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsMainLoaded(FEPackage *pkg);
