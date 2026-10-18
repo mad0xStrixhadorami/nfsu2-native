@@ -136,6 +136,7 @@ private:
     struct CarRecord {
         std::string folder;
         std::string manufacturer;
+        bool traffic = false; // chunk field +0x84c == 2: service/traffic vehicle, not selectable
     };
 
     Affine LocalTransform(const FEObject *obj) const;

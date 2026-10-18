@@ -513,7 +513,14 @@ void FENativeInterface::CycleCarPreview(int direction)
     for (size_t attempt = 0; attempt < count; ++attempt) {
         int next = (static_cast<int>(cur) + (direction < 0 ? -1 : 1) + int(count)) % int(count);
         cur = static_cast<size_t>(next);
-        if (LoadCarPreview(modelAt(cur))) {
+        const char *model = modelAt(cur);
+        // Service/traffic vehicles (taxi, ambulance, vans) are never selectable in Quick Race.
+        if (haveDb) {
+            auto it = m_carTable.find(model);
+            if (it != m_carTable.end() && it->second.traffic)
+                continue;
+        }
+        if (LoadCarPreview(model)) {
             m_previewCarIndex = cur;
             return;
         }
@@ -769,6 +776,7 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 CarRecord rec;
                 rec.folder = folder;
                 rec.manufacturer = manuf;
+                rec.traffic = *reinterpret_cast<const uint32_t *>(r + 0x84c) == 2;
                 std::string key = rec.folder;
                 for (char &ch : key)
                     ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
