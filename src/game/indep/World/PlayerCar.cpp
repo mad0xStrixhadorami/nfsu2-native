@@ -208,7 +208,16 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
 
     // Steering: bicycle model with less lock at speed.
     float lock = 0.55f / (1.0f + std::fabs(m_speed) * 0.05f);
-    m_yaw += m_speed / kWheelbase * std::tan(steer * lock) * dt;
+    const float yawRate = m_speed / kWheelbase * std::tan(steer * lock);
+    m_yaw += yawRate * dt;
+    // Tyre slip for sound (0..1): cornering force against the grip limit, or hard braking at speed.
+    if (dt > 0) {
+        const float grip = (m_perf.Valid() ? m_perf.grip : 1.0f) * 9.81f;
+        float slip = std::clamp((std::fabs(m_speed * yawRate) / grip - 0.55f) / 0.45f, 0.0f, 1.0f);
+        if (brake > 0.5f && m_speed > 8.0f)
+            slip = std::max(slip, std::min(1.0f, (m_speed - 8.0f) / 20.0f));
+        m_slip += (slip - m_slip) * std::min(1.0f, dt * 8.0f);
+    }
 
     float fx = std::cos(m_yaw), fy = std::sin(m_yaw);
     float nx = m_x + fx * m_speed * dt, ny = m_y + fy * m_speed * dt;

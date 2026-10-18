@@ -453,6 +453,8 @@ int main(int argc, char **argv)
             char bankPath[64];
             snprintf(bankPath, sizeof(bankPath), "SOUND\\ENGINE\\CAR_%02d_ENG_MB_SPU.abk", bankIndex);
             engineSound.Load(ReadGameFile(*fs, bankPath));
+            engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
+            engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
         }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
@@ -731,6 +733,7 @@ int main(int argc, char **argv)
                 const bool go = race.GetPhase() != RaceSession::kCountdown;
                 engineSound.Set(car.Rpm(), car.GetPerformance().idleRpm, car.GetPerformance().redline,
                                 std::max(throttle, inputThrottle), !pausePkg);
+                engineSound.SetMotion(car.Speed(), car.Slip());
                 // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
                 float power = 1.0f;
                 if (race.IsDrag() && race.GetPhase() != RaceSession::kFinished) {
@@ -816,8 +819,8 @@ int main(int argc, char **argv)
                     printf("[World]   opp %zu at %.1f %.1f %.1f speed %.1f race %.1f m\n", i + 1, opponentCars[i].X(),
                            opponentCars[i].Y(), opponentCars[i].Z(), opponentCars[i].Speed(),
                            race.RaceDistance(aiStartS[i], ai[i].Progress()));
-                printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s race %.1f m\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
-                       car.X(), car.Y(), car.Z(), car.Speed(), race.PlayerDistance());
+                printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s race %.1f m slip %.2f\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
+                       car.X(), car.Y(), car.Z(), car.Speed(), race.PlayerDistance(), car.Slip());
                 if (race.IsDrag() && getenv("NFSU2_WORLD_DEBUG"))
                     printf("[Drag] gear %d rpm %.0f\n", race.Gear(), race.Rpm());
                 if (race.IsDrift() && getenv("NFSU2_WORLD_DEBUG"))

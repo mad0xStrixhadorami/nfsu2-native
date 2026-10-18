@@ -58,7 +58,7 @@ EngineSound::~EngineSound()
         SDL_CloseAudioDevice(m_device);
 }
 
-bool EngineSound::Load(const std::vector<uint8_t> &bank)
+bool EngineSound::DecodeBank(const std::vector<uint8_t> &bank, std::vector<Loop> &loops)
 {
     // BNKl: 'BNKl', u16 version, u16 count, u32 header size, u32 total size, u32, then one u32 per
     // sound -- the offset of its "PT" header from that slot; sample data offsets are from the BNKl.
@@ -69,7 +69,6 @@ bool EngineSound::Load(const std::vector<uint8_t> &bank)
     if (b + 0x18 > bank.size())
         return false;
     const unsigned count = d[b + 6] | d[b + 7] << 8;
-    std::vector<Loop> loops;
     for (unsigned i = 0; i < count; ++i) {
         const size_t slot = b + 0x18 + 4 * i;
         if (slot + 4 > bank.size())
@@ -87,34 +86,76 @@ bool EngineSound::Load(const std::vector<uint8_t> &bank)
         DecodeVag(d + b + start, bytes, samples, l.pcm);
         loops.push_back(std::move(l));
     }
-    if (loops.size() < 7)
+    return !loops.empty();
+}
+
+bool EngineSound::OpenDevice()
+{
+    if (m_device)
+        return true;
+    if (!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
         return false;
-    if (!m_device) {
-        if (!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
-            return false;
-        SDL_AudioSpec want{}, have{};
-        want.freq = m_rate;
-        want.format = AUDIO_F32SYS;
-        want.channels = 2;
-        want.samples = 512;
-        want.callback = &EngineSound::Callback;
-        want.userdata = this;
-        m_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-        if (!m_device)
-            return false;
-        m_rate = have.freq;
-    }
+    SDL_AudioSpec want{}, have{};
+    want.freq = m_rate;
+    want.format = AUDIO_F32SYS;
+    want.channels = 2;
+    want.samples = 512;
+    want.callback = &EngineSound::Callback;
+    want.userdata = this;
+    m_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+    if (!m_device)
+        return false;
+    m_rate = have.freq;
+    SDL_PauseAudioDevice(m_device, 0);
+    return true;
+}
+
+bool EngineSound::Load(const std::vector<uint8_t> &bank)
+{
+    std::vector<Loop> loops;
+    if (!DecodeBank(bank, loops) || loops.size() < 7 || !OpenDevice())
+        return false;
     SDL_LockAudioDevice(m_device);
     m_loops = std::move(loops);
     SDL_UnlockAudioDevice(m_device);
-    SDL_PauseAudioDevice(m_device, 0);
     printf("[Engine] %zu loops\n", m_loops.size());
+    return true;
+}
+
+bool EngineSound::LoadLayer(const std::vector<uint8_t> &bank, Loop &layer)
+{
+    std::vector<Loop> loops;
+    if (!DecodeBank(bank, loops) || !OpenDevice())
+        return false;
+    SDL_LockAudioDevice(m_device);
+    layer = std::move(loops[0]);
+    SDL_UnlockAudioDevice(m_device);
     return true;
 }
 
 void EngineSound::Set(float rpm, float idleRpm, float redline, float throttle, bool running)
 {
     m_rpm = rpm, m_idle = idleRpm, m_redline = redline, m_throttle = throttle, m_running = running;
+}
+
+void EngineSound::MixLoop(Loop &l, float target, float step, float *out, int frames)
+{
+    const float n = float(l.pcm.size());
+    for (int f = 0; f < frames; ++f) {
+        l.gain += (target - l.gain) * 0.002f; // smooth gain changes
+        if (l.gain < 1e-4f && target == 0.0f) {
+            l.pos = std::fmod(l.pos + step, n);
+            continue;
+        }
+        const int i0 = int(l.pos);
+        const float t = l.pos - float(i0);
+        const float s = l.pcm[size_t(i0)] * (1 - t) + l.pcm[size_t((i0 + 1) % l.pcm.size())] * t;
+        out[f * 2] += s * l.gain;
+        out[f * 2 + 1] += s * l.gain;
+        l.pos += step;
+        if (l.pos >= n)
+            l.pos -= n;
+    }
 }
 
 void EngineSound::Callback(void *self, Uint8 *stream, int len)
@@ -149,22 +190,13 @@ void EngineSound::Mix(float *out, int frames)
         Loop &l = m_loops[size_t(i)];
         const float ref = i == 0 ? idle : idle + centres[(i - 1) % 3] * (redline - idle);
         const float pitch = std::clamp(std::max(rpm, idle) / ref, 0.5f, 2.0f);
-        const float step = l.rate / m_rate * pitch;
-        const float n = float(l.pcm.size());
-        for (int f = 0; f < frames; ++f) {
-            l.gain += (target[i] * volume - l.gain) * 0.002f; // smooth gain changes
-            if (l.gain < 1e-4f && target[i] == 0.0f) {
-                l.pos = std::fmod(l.pos + step, n);
-                continue;
-            }
-            const int i0 = int(l.pos);
-            const float t = l.pos - float(i0);
-            const float s = l.pcm[size_t(i0)] * (1 - t) + l.pcm[size_t((i0 + 1) % l.pcm.size())] * t;
-            out[f * 2] += s * l.gain;
-            out[f * 2 + 1] += s * l.gain;
-            l.pos += step;
-            if (l.pos >= n)
-                l.pos -= n;
-        }
+        MixLoop(l, target[i] * volume, l.rate / m_rate * pitch, out, frames);
     }
+    // Tyre squeal with slip; road noise rising with speed.
+    const float speed = std::fabs(m_speed.load());
+    if (!m_skid.pcm.empty())
+        MixLoop(m_skid, running ? 0.22f * m_slip : 0.0f, m_skid.rate / m_rate, out, frames);
+    if (!m_road.pcm.empty())
+        MixLoop(m_road, running ? 0.12f * std::min(1.0f, speed / 50.0f) : 0.0f,
+                m_road.rate / m_rate * (0.8f + std::min(speed, 70.0f) / 120.0f), out, frames);
 }

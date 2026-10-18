@@ -68,6 +68,7 @@ public:
     float Z() const { return m_z; }
     float Yaw() const { return m_yaw; }
     float Speed() const { return m_speed; }
+    float Slip() const { return m_slip; } // tyre slip 0..1 (cornering at the limit / hard braking)
     // Car-to-car contact (resolved by the caller): move without physics, scale the speed.
     void Nudge(float dx, float dy) { m_x += dx, m_y += dy; }
     void ScaleSpeed(float f) { m_speed *= f; }
@@ -84,6 +85,7 @@ private:
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading
     float m_vz = 0;    // vertical speed while airborne
+    float m_slip = 0;
     float m_rideHeight = 0;
     size_t m_wheelStart = 0;
     Performance m_perf;
