@@ -42,6 +42,9 @@ public:
 
     FEStartupSequence(FEngine *engine, FENativeInterface *fe, bool isPal = true);
 
+    // Car select Accept requested a race; returns the world region to load (e.g. "L4RA") once.
+    bool TakeRaceRequest(std::string &region);
+
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();
 
@@ -72,6 +75,7 @@ private:
     void HandleMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleQRModeSelectLoaded(FEPackage *pkg);
     void HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg);
+    void RequestRace();
     void HandleQRTrackSelectLoaded(FEPackage *pkg);
     void HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg);
     void RefreshTrackInfo(FEPackage *pkg);
@@ -167,7 +171,9 @@ private:
     };
     RaceOptions m_options[16];
     FEWidgetMenu m_widgets;
-    uint32_t m_lastPad = 0;             // DAT_004f13b0: 0 circuit .. 10 street x
+    uint32_t m_lastPad = 0;
+    bool m_raceRequested = false;
+    std::string m_raceRegion;             // DAT_004f13b0: 0 circuit .. 10 street x
 
     // Menu navigation: screens to return to on Back, and a guard so one press acts once
     // (BUTTON_PRESSED and PAD_ACCEPT both arrive for the same press).

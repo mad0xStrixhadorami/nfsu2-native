@@ -24,6 +24,7 @@ extern FEMultiPool ObjDataPool; // FEObject.cpp: pool for FEObject transform dat
 #include "game/bWare/bCompression.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/SolidMesh.h"
 
 void SetActiveFEngineForWrapper(FEngine *engine);
 
@@ -38,202 +39,6 @@ constexpr uint32_t kChunkLanguage = 0x00039000;      // BCHUNK_LANGUAGE
 
 constexpr u32 kMsgDisableInputs = 0x05922615;
 constexpr u32 kMsgEnableInputs = 0x7e4d1288;
-
-struct DecodedPreviewPoint {
-    float x, y, z;
-};
-
-struct DecodedPreviewTriangle {
-    DecodedPreviewPoint v[3];
-};
-
-uint32_t ReadLE32(const std::vector<uint8_t> &d, size_t p)
-{
-    return uint32_t(d[p]) | (uint32_t(d[p + 1]) << 8) | (uint32_t(d[p + 2]) << 16) |
-           (uint32_t(d[p + 3]) << 24);
-}
-
-// Decodes one strip entry's VIF block into its NumVerts Q15 positions (see tools/solid_mesh.py).
-bool DecodePreviewStrip(const std::vector<uint8_t> &d, size_t start, size_t size, unsigned nverts,
-                       std::vector<DecodedPreviewPoint> &out)
-{
-    struct Vec4s { int16_t v[4] = {}; };
-    Vec4s positions[256];
-    float bounds[2][3] = {};
-    bool haveBounds[2] = {};
-    size_t p = start, end = std::min(d.size(), start + size);
-    while (p + 4 <= end) {
-        uint16_t imm = uint16_t(d[p]) | (uint16_t(d[p + 1]) << 8);
-        unsigned num = d[p + 2];
-        unsigned cmd = d[p + 3] & 0x7f;
-        p += 4;
-        if (cmd >= 0x60) {
-            unsigned vn = (cmd >> 2) & 3, vl = cmd & 3;
-            unsigned comps = vn + 1;
-            unsigned bits = vl == 0 ? 32 : vl == 1 ? 16 : vl == 2 ? 8 : 5;
-            size_t elem = bits == 5 ? 2 : bits * comps / 8;
-            if (!elem || p + elem * num > end)
-                break; // truncated final unpack: keep whatever decoded so far
-            unsigned addr = imm & 0x3ff;
-            if (bits == 32 && (comps == 3 || comps == 4) && addr >= 2 && addr <= 3 && num > 0) {
-                for (unsigned k = 0; k < std::min(num, 2u); ++k) {
-                    for (unsigned c = 0; c < 3; ++c) {
-                        uint32_t word = ReadLE32(d, p + k * elem + c * 4);
-                        memcpy(&bounds[addr - 2 + k][c], &word, sizeof(word));
-                    }
-                    haveBounds[addr - 2 + k] = true;
-                }
-            } else if (bits == 16 && comps == 4 && addr >= 5 && addr + num <= 5 + 192) {
-                for (unsigned k = 0; k < num; ++k)
-                    for (unsigned c = 0; c < 4; ++c) {
-                        uint16_t word = uint16_t(d[p + k * elem + c * 2]) |
-                                        (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
-                        positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
-                    }
-            } else if (bits == 16 && comps <= 3 && addr >= 5 && addr + num <= 256) {
-                // VIF packs tail vertices as V1/V2-16 SoA or V3-16 AoS after full V4-16 groups.
-                for (unsigned k = 0; k < num; ++k)
-                    for (unsigned c = 0; c < comps; ++c) {
-                        uint16_t word = uint16_t(d[p + k * elem + c * 2]) |
-                                        (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
-                        positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
-                    }
-            }
-            p += (elem * num + 3) & ~size_t(3);
-        } else if (cmd == 0x20) {
-            p += 4;
-        } else if (cmd == 0x30 || cmd == 0x31) {
-            p += 16;
-        } else if (cmd == 0x14 || cmd == 0x15 || cmd == 0x17) {
-            break;
-        }
-    }
-    if (!haveBounds[0] || !haveBounds[1]) return false;
-    unsigned soaVertices = nverts & ~3u;
-    for (unsigned i = 0; i < nverts; ++i) {
-        DecodedPreviewPoint v{};
-        float *dst[3] = {&v.x, &v.y, &v.z};
-        if (i < soaVertices) {
-            unsigned group = i / 4, lane = i & 3, base = group * 3;
-            if (base + 2 >= 192) return false;
-            for (unsigned a = 0; a < 3; ++a) {
-                float q = static_cast<float>(positions[base + a].v[lane]) / 32768.0f;
-                *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
-            }
-        } else {
-            // Tail vertices follow the full V4-16 groups at VU address 5+(soa/4)*3; positions[] is
-            // indexed by (VU address - 5), so the first tail qword is index (soa/4)*3.
-            unsigned tail = (soaVertices / 4) * 3;
-            unsigned rem = nverts - soaVertices, lane = i - soaVertices;
-            if (tail + (rem == 3 ? lane : 2) >= 256) return false;
-            for (unsigned a = 0; a < 3; ++a) {
-                unsigned qword = tail + (rem == 3 ? lane : a);
-                unsigned component = rem == 1 ? 0 : (rem == 3 ? a : lane);
-                float q = static_cast<float>(positions[qword].v[component]) / 32768.0f;
-                *dst[a] = bounds[0][a] + q * (bounds[1][a] - bounds[0][a]);
-            }
-        }
-        out.push_back(v);
-    }
-    return true;
-}
-
-// Topology approximation (ISSUES #65): a strip entry is one triangle strip, but NumPolys is
-// always less than NumVerts-2 with an even gap, i.e. (NumVerts-NumPolys)/2 = run count R and 2
-// "bridge" triangles are skipped at each internal run seam. The seams are not stored, so drop the
-// (NumVerts-2)-NumPolys largest-longest-edge triangles as the bridges.
-void BuildStripTriangles(const std::vector<DecodedPreviewPoint> &p, unsigned nverts, unsigned numpoly,
-                         std::vector<DecodedPreviewTriangle> &out)
-{
-    if (nverts < 3 || p.size() != nverts)
-        return;
-    struct Tri {
-        float longest;
-        unsigned a, b, c;
-    };
-    std::vector<Tri> tris;
-    tris.reserve(nverts - 2);
-    auto edge = [&p](unsigned i, unsigned j) {
-        float dx = p[i].x - p[j].x, dy = p[i].y - p[j].y, dz = p[i].z - p[j].z;
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
-    };
-    for (unsigned k = 0; k + 2 < nverts; ++k) {
-        unsigned a = k % 2 == 0 ? k : k + 1, b = k % 2 == 0 ? k + 1 : k, c = k + 2;
-        tris.push_back({std::max(edge(a, b), std::max(edge(b, c), edge(a, c))), a, b, c});
-    }
-    unsigned keep = numpoly < tris.size() ? numpoly : static_cast<unsigned>(tris.size());
-    std::nth_element(tris.begin(), tris.begin() + keep, tris.end(),
-                     [](const Tri &l, const Tri &r) { return l.longest < r.longest; });
-    for (unsigned i = 0; i < keep; ++i) {
-        const DecodedPreviewPoint &a = p[tris[i].a], &b = p[tris[i].b], &c = p[tris[i].c];
-        out.push_back({{{a.x, a.y, a.z}, {b.x, b.y, b.z}, {c.x, c.y, c.z}}});
-    }
-}
-
-void DecodePreviewMesh(const std::vector<uint8_t> &d, size_t body, size_t size,
-                       std::vector<DecodedPreviewTriangle> &out)
-{
-    size_t end = std::min(d.size(), body + size);
-    size_t table = 0, tableSize = 0, vif = 0, vifSize = 0;
-    for (size_t p = body; p + 8 <= end;) {
-        uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
-        size_t child = p + 8;
-        if (len > end - child)
-            return;
-        if (id == 0x134a01) { table = child; tableSize = len; }
-        if (id == 0x134a02) {
-            // The VIF chunk body is prefixed with FLUSHE (0x11) bytes; strip DataQWordOffsets are
-            // relative to the first UNPACK, so skip the prefix (matches tools/solid_preview.py).
-            vif = child;
-            vifSize = len;
-            while (vifSize > 0 && d[vif] == 0x11) {
-                ++vif;
-                --vifSize;
-            }
-        }
-        p = child + len;
-    }
-    if (!table || !vif || tableSize < 4)
-        return;
-    std::vector<DecodedPreviewPoint> points;
-    unsigned strips = (tableSize - 4) / 16;
-    for (unsigned i = 0; i < strips; ++i) {
-        size_t e = table + 4 + i * 16;
-        unsigned nverts = d[e + 2], numpoly = d[e + 3];
-        unsigned dq = uint16_t(d[e + 8]) | (uint16_t(d[e + 9]) << 8);
-        unsigned qwords = d[e + 12];
-        size_t offset = vif + size_t(dq) * 16, bytes = size_t(qwords) * 16;
-        if (offset > vif + vifSize || bytes > vif + vifSize - offset)
-            continue;
-        points.clear();
-        if (DecodePreviewStrip(d, offset, bytes, nverts, points))
-            BuildStripTriangles(points, nverts, numpoly, out);
-    }
-}
-
-void DecodePreviewChunks(const std::vector<uint8_t> &d, size_t begin, size_t end,
-                         std::vector<DecodedPreviewTriangle> &out)
-{
-    for (size_t p = begin; p + 8 <= end;) {
-        uint32_t id = ReadLE32(d, p), len = ReadLE32(d, p + 4);
-        size_t body = p + 8;
-        if (len > end - body)
-            return;
-        if (id == 0x80134100)
-            DecodePreviewMesh(d, body, len, out);
-        else if (id & 0x80000000)
-            DecodePreviewChunks(d, body, body + len, out);
-        p = body + len;
-    }
-}
-
-// Stand-in geometry decoder; the engine equivalent is UG2's solid loader 0x001bf3b8.
-std::vector<DecodedPreviewTriangle> DecodePreviewGeometry(const std::vector<uint8_t> &d)
-{
-    std::vector<DecodedPreviewTriangle> tris;
-    DecodePreviewChunks(d, 0, d.size(), tris);
-    return tris;
-}
 
 std::string LowerName(const char *s)
 {
@@ -320,7 +125,7 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         return false;
     std::string path = "CARS\\" + std::string(model) + "\\GEOMETRY.BIN";
     std::vector<uint8_t> geometry = m_readFile(path.c_str());
-    std::vector<DecodedPreviewTriangle> decoded = DecodePreviewGeometry(geometry);
+    std::vector<SolidMesh::Triangle> decoded = SolidMesh::DecodeGeometry(geometry.data(), geometry.size());
     if (decoded.empty()) {
         fprintf(stderr, "[CarPreview] no geometry decoded from %s\n", path.c_str());
         return false;
@@ -328,7 +133,7 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     m_carPreviewTris.clear();
     m_carPreviewSplatsBuilt = false;
     m_carPreviewTris.reserve(decoded.size());
-    for (const DecodedPreviewTriangle &t : decoded) {
+    for (const SolidMesh::Triangle &t : decoded) {
         PreviewTriangle tri;
         for (int k = 0; k < 3; ++k)
             tri.v[k] = {t.v[k].x, t.v[k].y, t.v[k].z};
@@ -792,6 +597,8 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 memcpy(&info.typeFlags, r + 0x94, 4);
                 info.special = r[0x88];
                 memcpy(&info.length, r + 0x98, 4);
+                memcpy(info.region, r + 0x40, sizeof(info.region));
+                info.region[sizeof(info.region) - 1] = 0;
                 m_races.push_back(info);
             }
         } else if (c->id == kChunkFEngFont) {

@@ -23,6 +23,7 @@ struct RaceInfo {
     uint32_t typeFlags; // +0x94 race types this track supports (bit per type, see TrackSelect)
     uint8_t special;    // +0x88 non-zero: not offered in quick race
     int32_t length;     // +0x98 length in metres
+    char region[8];     // +0x40 world region bundle, e.g. "L4RA" (TRACKS\STREAM%s.BUN)
 };
 class FEStartupSequence;
 

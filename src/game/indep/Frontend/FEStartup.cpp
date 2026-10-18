@@ -334,6 +334,10 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             CycleCarFilter(-1, active);
         else if (pressed & FENativeInterface::kPadRTrigger)
             CycleCarFilter(1, active);
+        // Accept (0x001f32f8, quick race mode 2: PAD_ACCEPT -> StartRace 0x0025d4d8). Mode 0 is a
+        // car select pushed directly with NFSU2_PACKAGE.
+        else if ((pressed & FENativeInterface::kPadAccept) && (m_raceMode == 2 || m_raceMode == 0))
+            RequestRace();
         return;
     }
     FEPackage *list = m_widgets.Package();
@@ -1127,4 +1131,26 @@ void FEStartupSequence::NavigateTo(const char *from, const char *target)
     m_backStack.push_back(from);
     m_navPending = true;
     m_engine->QueuePackageSwitch(target, 0xff);
+}
+
+// StartRace (0x0025d4d8) builds the race parameters, then queues "UnloadingFrontEnd" (0x002e0098)
+// and "LoadingRegion" (0x002ddb40). The region bundle comes from the chosen track's race record
+// (+0x40); Free Run has no track and uses the city, L4RA.
+void FEStartupSequence::RequestRace()
+{
+    m_raceRegion = "L4RA";
+    for (const RaceInfo &r : m_fe->Races())
+        if (r.number == m_raceNumber && r.region[0])
+            m_raceRegion = r.region;
+    m_raceRequested = true;
+    printf("[Race] start: type %d track %d region %s\n", m_raceType, m_raceNumber, m_raceRegion.c_str());
+}
+
+bool FEStartupSequence::TakeRaceRequest(std::string &region)
+{
+    if (!m_raceRequested)
+        return false;
+    m_raceRequested = false;
+    region = m_raceRegion;
+    return true;
 }

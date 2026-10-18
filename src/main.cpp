@@ -13,6 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <algorithm>
+#include <cmath>
+#include <string>
 #include <vector>
 
 #include "game/bWare/bCompression.h"
@@ -21,6 +24,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
 
@@ -247,6 +251,35 @@ int main(int argc, char **argv)
         }
     }
 
+    // In-game world (stand-in for the PS2 game flow after StartRace, ISSUES.md #103/#104).
+    TrackWorld world;
+    TrackWorld::Camera camera;
+    bool inWorld = false;
+    auto enterWorld = [&](const std::string &region) {
+        // LoadingRegion (0x002ddb40): show Loading.fng while the region streams in.
+        if (engine->PushPackage("Loading.fng", 0, 0xff)) {
+            engine->Update(16, 0);
+            renderFrame(engine);
+        }
+        std::string path = "TRACKS\\STREAM" + region + ".BUN";
+        std::vector<uint8_t> stream = ReadGameFile(*fs, path.c_str());
+        printf("[World] %s: %zu bytes\n", path.c_str(), stream.size());
+        if (stream.empty() || !world.Load(stream)) {
+            fprintf(stderr, "[World] could not load %s\n", path.c_str());
+            return;
+        }
+        camera = world.StartCamera();
+        if (const char *cam = getenv("NFSU2_WORLD_CAM"))
+            sscanf(cam, "%f,%f,%f,%f,%f", &camera.x, &camera.y, &camera.z, &camera.yaw, &camera.pitch);
+        printf("[World] camera %.1f %.1f %.1f yaw %.2f\n", camera.x, camera.y, camera.z, camera.yaw);
+        // The front end stays loaded but is no longer ticked or drawn (UnloadingFrontEnd 0x002e0098
+        // is not ported); the world view uses the full output resolution.
+        SDL_RenderSetLogicalSize(ren, 0, 0);
+        inWorld = true;
+    };
+    if (const char *region = getenv("NFSU2_WORLD"))
+        enterWorld(region);
+
     for (bool running = true; running;) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
@@ -272,16 +305,51 @@ int main(int argc, char **argv)
             }
         }
 
-        startup.Tick(elapsed);
-        engine->Update(static_cast<i32>(now - last), 0); // FEng ticks are milliseconds (cFEng::Service)
-        if (releaseInjectedPadAfterUpdate)
-            fe.SetSimulatedPadMask(0);
-        last = now;
+        if (inWorld) {
+            // Fly camera: Up/Down move, Left/Right turn, L1/R1 lower/raise.
+            const float dt = std::min(0.1f, (now - last) / 1000.0f);
+            const u32 pad = fe.GetJoyPadMask(0);
+            if (releaseInjectedPadAfterUpdate)
+                fe.SetSimulatedPadMask(0);
+            last = now;
+            const float speed = 40.0f * dt, turn = 1.6f * dt;
+            if (pad & FENativeInterface::kPadLeft)
+                camera.yaw += turn;
+            if (pad & FENativeInterface::kPadRight)
+                camera.yaw -= turn;
+            float move = (pad & FENativeInterface::kPadUp) ? speed : (pad & FENativeInterface::kPadDown) ? -speed : 0.0f;
+            camera.x += std::cos(camera.yaw) * move;
+            camera.y += std::sin(camera.yaw) * move;
+            if (pad & FENativeInterface::kPadLTrigger)
+                camera.z -= speed * 0.5f;
+            if (pad & FENativeInterface::kPadRTrigger)
+                camera.z += speed * 0.5f;
+            int w, h;
+            SDL_GetRendererOutputSize(ren, &w, &h);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+            SDL_RenderClear(ren);
+            world.Render(ren, camera, w, h);
+            static Uint32 fpsStart = now, fpsFrames = 0;
+            if (++fpsFrames == 120) {
+                printf("[World] %.1f fps\n", 120000.0 / std::max<Uint32>(1, now - fpsStart));
+                fpsStart = now;
+                fpsFrames = 0;
+            }
+        } else {
+            startup.Tick(elapsed);
+            engine->Update(static_cast<i32>(now - last), 0); // FEng ticks are milliseconds (cFEng::Service)
+            if (releaseInjectedPadAfterUpdate)
+                fe.SetSimulatedPadMask(0);
+            last = now;
 
-        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-        SDL_RenderClear(ren);
-        engine->Render();
-        fe.RenderCarPreviewOverlay();
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+            SDL_RenderClear(ren);
+            engine->Render();
+            fe.RenderCarPreviewOverlay();
+            std::string region;
+            if (startup.TakeRaceRequest(region))
+                enterWorld(region);
+        }
 
         // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
         if (const char *shot = getenv("NFSU2_SCREENSHOT")) {
