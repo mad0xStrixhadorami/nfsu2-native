@@ -22,14 +22,16 @@ public:
     void Set(float rpm, float idleRpm, float redline, float throttle, bool running);
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
 
-private:
     struct Loop {
         std::vector<float> pcm;
         float rate = 16000;
         float pos = 0;
         float gain = 0; // smoothed
     };
+    // Decodes every sound of an ABKC/BNKl bank (PS2 SPU ADPCM) -- shared with UiSound.
     static bool DecodeBank(const std::vector<uint8_t> &bank, std::vector<Loop> &loops);
+
+private:
     bool LoadLayer(const std::vector<uint8_t> &bank, Loop &layer);
     bool OpenDevice();
     static void MixLoop(Loop &l, float target, float step, float *out, int frames);

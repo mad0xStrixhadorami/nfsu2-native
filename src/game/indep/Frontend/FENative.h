@@ -60,6 +60,8 @@ public:
     void AttachEngine(FEngine *engine);
     void SetStartupSequence(FEStartupSequence *startup) { m_startup = startup; }
     // Reads a file from the game data (used for movies, which are streamed separately).
+    // Called for every FEng sound notification (UI sounds, ISSUES.md #126).
+    void SetSoundHook(std::function<void(uint32_t msg)> hook) { m_soundHook = std::move(hook); }
     void SetFileReader(std::function<std::vector<uint8_t>(const char *)> reader) { m_readFile = std::move(reader); }
     // 0x00290cb8 (FEngMovieStarter): start the movie for a FE_Movie object, or report it done.
     void StartMovie(FEObject *obj, FEPackage *pkg);
@@ -234,6 +236,7 @@ private:
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
+    std::function<void(uint32_t)> m_soundHook;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;
     std::vector<std::pair<const uint8_t *, size_t>> m_bundles;

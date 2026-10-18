@@ -824,6 +824,8 @@ void FENativeInterface::NotifySoundMessage(u32 message, FEObject *, u32, u32 pkg
     FEPackage *pkg = reinterpret_cast<FEPackage *>(pkgPtr);
     if (getenv("NFSU2_FEDEBUG"))
         fprintf(stderr, "FENative::NotifySoundMessage msg=%08x pkg=%s\n", message, pkg ? pkg->GetName() : "?");
+    if (m_soundHook)
+        m_soundHook(message);
 }
 
 // 0x00290fe8 (cFEngGameInterface::GetJoyPadMask) + FEJoyInput.cpp:

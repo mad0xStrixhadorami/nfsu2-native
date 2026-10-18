@@ -30,6 +30,7 @@
 #include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/Sound/EngineSound.h"
 #include "game/indep/Sound/MusicStream.h"
+#include "game/indep/Sound/UiSound.h"
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
@@ -305,6 +306,9 @@ int main(int argc, char **argv)
     EngineSound engineSound; // player car (ISSUES.md #124)
     bool musicStarted = false;
     const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
+    UiSound uiSound; // front-end clicks (ISSUES.md #126)
+    if (musicVolume > 0 && uiSound.Load(ReadGameFile(*fs, "SOUND\\GLOBAL\\FE_COMMON_MB.abk")))
+        fe.SetSoundHook([&uiSound](uint32_t msg) { uiSound.OnMessage(msg); });
     std::function<void(const std::string &)> enterWorld;
     enterWorld = [&](const std::string &region) {
         currentRegion = region;
