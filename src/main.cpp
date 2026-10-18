@@ -35,6 +35,7 @@
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
+#include "game/indep/World/Traffic.h"
 #include "game/indep/World/RaceSession.h"
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
@@ -295,6 +296,9 @@ int main(int argc, char **argv)
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
     std::vector<AiDriver> ai;
+    TrafficNet trafficNet;
+    std::vector<PlayerCar> trafficCars;
+    Traffic traffic;
     std::vector<bool> aiOut; // URL knockout (ISSUES #117): opponents eliminated this race
     AiDriver playerAi; // NFSU2_AUTODRIVE with a route
     std::vector<float> aiStartS;
@@ -546,6 +550,45 @@ int main(int argc, char **argv)
                 printf("[World] opponent %d: %s\n", i + 1, name.c_str());
                 oppNames.push_back(name);
                 aiFinish.push_back(0.0f);
+            }
+        }
+        // Ambient traffic (ISSUES #130): service vehicles on the free-roam lane links.
+        trafficCars.clear();
+        traffic = Traffic();
+        if (!flyCamera && !getenv("NFSU2_NOTRAFFIC")) {
+            static const int kCount[] = {0, 5, 10, 16};
+            int want = kCount[std::clamp(startup.RaceTraffic(), 0, 3)];
+            if (const char *t = getenv("NFSU2_TRAFFIC"))
+                want = atoi(t);
+            snprintf(pathsPath, sizeof(pathsPath), "TRACKS\\ROUTES%s\\PATHSFREEROAM.BIN", region.c_str());
+            std::vector<std::string> pool = fe.TrafficCars();
+            if (want > 0 && !pool.empty() && trafficNet.Load(ReadGameFile(*fs, pathsPath))) {
+                static const SDL_Color kTrafficPaints[] = {{180, 180, 190, 255}, {30, 30, 40, 255}, {170, 30, 30, 255},
+                                                           {200, 190, 120, 255}, {40, 70, 150, 255}};
+                trafficCars.resize(size_t(want));
+                std::vector<size_t> firstOf(pool.size(), size_t(-1));
+                for (size_t i = 0; i < trafficCars.size(); ++i) {
+                    size_t k = i % pool.size();
+                    if (firstOf[k] == size_t(-1)) {
+                        PlayerCar::Wheel w[4];
+                        if (!trafficCars[i].LoadModel(ReadCarGeometry(*fs, pool[k]), fe.CarWheels(pool[k], w) ? w : nullptr))
+                            continue;
+                        firstOf[k] = i;
+                        world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + pool[k] + "\\TEXTURES.BIN").c_str()));
+                    } else {
+                        trafficCars[i].SetModel(trafficCars[firstOf[k]]);
+                    }
+                    PlayerCar::Performance perf;
+                    trafficCars[i].SetPerformance(fe.CarPerformance(pool[k], perf) ? perf : PlayerCar::Performance());
+                }
+                // Cars whose model failed to load stay empty; they are still driven but invisible.
+                for (PlayerCar &c : trafficCars)
+                    world.AddCar(&c.Model(), &c.TriangleTextures(), kTrafficPaints[(&c - trafficCars.data()) % 5]);
+                traffic.Init(&trafficNet, &trafficCars, 0x2a5eu + unsigned(raceNumber));
+                if (getenv("NFSU2_WORLD_DEBUG"))
+                    for (const std::string &n : pool)
+                        printf("[World]   traffic model %s: geometry %zu bytes\n", n.c_str(), ReadCarGeometry(*fs, n).size());
+                printf("[World] traffic: %zu cars, %zu lane links\n", trafficCars.size(), trafficNet.Links().size());
             }
         }
         raceConfig.racers = 1 + int(ai.size());
@@ -803,6 +846,14 @@ int main(int argc, char **argv)
                 std::vector<PlayerCar *> cars{&car};
                 for (PlayerCar &o : opponentCars)
                     cars.push_back(&o);
+                if (traffic.Size()) {
+                    std::vector<const PlayerCar *> avoid(cars.begin(), cars.end());
+                    traffic.Update(world, dt, avoid);
+                }
+                for (PlayerCar &t : trafficCars)
+                    cars.push_back(&t);
+                if (getenv("NFSU2_WORLD_DEBUG") && !trafficCars.empty())
+                    printf("[World]   traffic 0 at %.1f %.1f speed %.1f\n", trafficCars[0].X(), trafficCars[0].Y(), trafficCars[0].Speed());
                 for (size_t i = 0; i < cars.size(); ++i)
                     for (size_t j = i + 1; j < cars.size(); ++j) {
                         float dx = cars[j]->X() - cars[i]->X(), dy = cars[j]->Y() - cars[i]->Y();

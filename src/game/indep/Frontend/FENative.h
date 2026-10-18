@@ -133,6 +133,18 @@ public:
         return out;
     }
 
+    // Service/traffic vehicles in database order (the ones RaceableCars skips).
+    std::vector<std::string> TrafficCars() const
+    {
+        std::vector<std::string> out;
+        for (const std::string &name : m_carRoster) {
+            auto it = m_carTable.find(name);
+            if (it != m_carTable.end() && it->second.traffic)
+                out.push_back(name);
+        }
+        return out;
+    }
+
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
     void AddBundle(const uint8_t *data, size_t size, const char *label = nullptr);
     void ShowLoadingProgress(const char *stage, float fraction);

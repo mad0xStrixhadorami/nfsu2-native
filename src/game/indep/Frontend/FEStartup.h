@@ -57,6 +57,7 @@ public:
     }
     int RaceType() const { return m_raceType; } // DAT_004f13b0: 0 circuit .. 10 street x
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
+    int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
 
     // 0x00292280: start the boot flow by pushing the first package in the sequence.

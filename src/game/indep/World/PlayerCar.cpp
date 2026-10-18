@@ -58,15 +58,24 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
+    // Service/traffic vehicles (TAXI, BUS, ...) have no tuning kits: their parts are <NAME>_BODY_A and
+    // <NAME>_TIRE_FRONT_A (ISSUES #130), so accept those when there is no KIT00 part at all.
+    bool traffic = true;
+    for (const SolidMesh::NamedSolid &s : solids)
+        if (Contains(s.name, "_KIT00_"))
+            traffic = false;
     for (const SolidMesh::NamedSolid &s : solids) {
         const std::string &n = s.name;
-        if (!Contains(n, "_KIT00_") && !Contains(n, "_BASE_"))
+        if (traffic) {
+            if (!Contains(n, "_BODY_") && !Contains(n, "_TIRE_"))
+                continue;
+        } else if (!Contains(n, "_KIT00_") && !Contains(n, "_BASE_"))
             continue;
         // LOD suffix _A.._D; names are cut to 27 characters, and the A level comes first.
         if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
             continue;
-        if (Contains(n, "FRONT_WHEEL")) { frontWheel = &s; continue; }
-        if (Contains(n, "REAR_WHEEL")) { rearWheel = &s; continue; }
+        if (Contains(n, "FRONT_WHEEL") || Contains(n, "TIRE_FRONT")) { frontWheel = &s; continue; }
+        if (Contains(n, "REAR_WHEEL") || Contains(n, "TIRE_REAR")) { rearWheel = &s; continue; }
         // Parts modelled around their own origin, or hidden inside the body.
         if (Contains(n, "BRAKE_") || Contains(n, "SPOILER") || Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
             Contains(n, "ENGINE") || Contains(n, "AUDIO") || Contains(n, "UNLIT"))
