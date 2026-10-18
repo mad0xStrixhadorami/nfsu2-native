@@ -759,8 +759,19 @@ void FEStartupSequence::HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg)
         if (sel >= m_optionCategories.size())
             return;
         m_optionCategory = m_optionCategories[sel];
-        printf("[Menu] option category %d\n", m_optionCategory);
-        NavigateTo(pkg->GetName(), "UI_Options.fng");
+        // 0x00202560 (the carousel's accept handler) routes the selected category to its own
+        // screen: 0/1/2/3 (and 7 Online on PC) use the generic UI_Options list, 4 Controls opens
+        // the controller-mapping screen, 5 EA TRAX the jukebox and 8 Credits its own scroll.
+        const char *dest = "UI_Options.fng";
+        switch (m_optionCategory) {
+        case 4: dest = "UI_OptionsController.fng"; break;
+        case 5: dest = "EA_Trax_Jukebox.fng"; break;
+        case 6: dest = "UI_Trailers.fng"; break;
+        case 8: dest = "Credits.fng"; break;
+        default: break;
+        }
+        printf("[Menu] option category %d -> %s\n", m_optionCategory, dest);
+        NavigateTo(pkg->GetName(), dest);
         return;
     }
     m_scroller.HandleMessage(msg, TickSeconds());
