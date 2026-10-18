@@ -267,6 +267,29 @@ int main(int argc, char **argv)
         bool sent = false;
     };
     std::vector<ScriptedPress> script;
+    // NFSU2_DRIVE="from-to:button,..." (ms since start; up down left right): buttons held for a window,
+    // so a test can drive the car by hand (throttle, steer) instead of using NFSU2_AUTODRIVE.
+    struct HeldPress {
+        unsigned from, to;
+        u32 mask;
+    };
+    std::vector<HeldPress> held;
+    if (const char *in = getenv("NFSU2_DRIVE")) {
+        for (const char *p = in; *p;) {
+            unsigned a = 0, b = 0;
+            char name[16] = {};
+            int used = 0;
+            if (sscanf(p, "%u-%u:%15[a-z]%n", &a, &b, name, &used) != 3)
+                break;
+            u32 m = !strcmp(name, "up") ? FENativeInterface::kPadUp : !strcmp(name, "down") ? FENativeInterface::kPadDown
+                  : !strcmp(name, "left") ? FENativeInterface::kPadLeft : !strcmp(name, "right") ? FENativeInterface::kPadRight : 0;
+            if (m)
+                held.push_back({a, b, m});
+            p += used;
+            if (*p == ',')
+                ++p;
+        }
+    }
     if (const char *in = getenv("NFSU2_INPUT")) {
         static const struct { const char *name; u32 mask; } kButtons[] = {
             {"up", FENativeInterface::kPadUp},         {"down", FENativeInterface::kPadDown},
@@ -685,7 +708,10 @@ int main(int argc, char **argv)
             // Paused: the simulation stands still (zero time step) while the world and HUD draw.
             const Uint32 frameStart = last;
             const float dt = pausePkg ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
-            const u32 pad = fe.GetJoyPadMask(0);
+            u32 pad = fe.GetJoyPadMask(0);
+            for (const HeldPress &h : held)
+                if (elapsed >= h.from && elapsed < h.to)
+                    pad |= h.mask;
             const u32 pressed = pad & ~worldLastPad;
             worldLastPad = pad;
             last = now;
@@ -853,7 +879,16 @@ int main(int argc, char **argv)
                 for (PlayerCar &t : trafficCars)
                     cars.push_back(&t);
                 if (getenv("NFSU2_WORLD_DEBUG") && !trafficCars.empty())
-                    printf("[World]   traffic 0 at %.1f %.1f speed %.1f\n", trafficCars[0].X(), trafficCars[0].Y(), trafficCars[0].Speed());
+                {
+                    static int dbgFrame = 0;
+                    if (++dbgFrame % 15 == 0) {
+                        float nd = 1e9f;
+                        for (PlayerCar &t : trafficCars)
+                            nd = std::min(nd, std::hypot(t.X() - car.X(), t.Y() - car.Y()));
+                        printf("[World]   player %.1f %.1f yaw %.2f speed %.1f nearest traffic %.1f m\n", car.X(), car.Y(),
+                               car.Yaw(), car.Speed(), nd);
+                    }
+                }
                 for (size_t i = 0; i < cars.size(); ++i)
                     for (size_t j = i + 1; j < cars.size(); ++j) {
                         float dx = cars[j]->X() - cars[i]->X(), dy = cars[j]->Y() - cars[i]->Y();
