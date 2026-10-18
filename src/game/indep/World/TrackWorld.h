@@ -31,6 +31,8 @@ public:
     // u16 race number +0x24). Each race has an 8-car forward grid and a reverse grid under two
     // name hashes, plus single start/finish markers; the first 8-marker group is taken.
     bool StartFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, Camera &out) const;
+    // The race's first single marker (start/finish line) position.
+    bool LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const;
     void Render(SDL_Renderer *renderer, const Camera &cam, int width, int height);
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.

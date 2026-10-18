@@ -568,6 +568,13 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             auto buf = std::make_unique<std::vector<uint8_t>>(bGetDecompressedSize(c->Data() + 4));
             if (bDecompress(c->Data() + 4, buf->data()) == buf->size()) {
                 m_packages[LowerName(PackageShortName(buf->data()))] = buf->data();
+                // NFSU2_DUMP_PACKAGE=name.fng: write that package's decompressed data (dev aid).
+                if (const char *dump = getenv("NFSU2_DUMP_PACKAGE"))
+                    if (LowerName(dump) == LowerName(PackageShortName(buf->data())))
+                        if (FILE *f = fopen(dump, "wb")) {
+                            fwrite(buf->data(), 1, buf->size(), f);
+                            fclose(f);
+                        }
                 m_unpacked.push_back(std::move(buf));
             }
         } else if (c->id == 0x00034600) { // car database: 46 records of 0x890 bytes (GLOBALB)

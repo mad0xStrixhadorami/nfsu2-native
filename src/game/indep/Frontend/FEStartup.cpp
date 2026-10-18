@@ -1154,3 +1154,12 @@ bool FEStartupSequence::TakeRaceRequest(std::string &region)
     region = m_raceRegion;
     return true;
 }
+
+void FEStartupSequence::ReturnFromRace()
+{
+    m_backStack.clear();
+    m_navPending = false;
+    m_lastPad = 0;
+    printf("[Menu] race -> UI_Main.fng\n");
+    m_engine->PushPackage("UI_Main.fng", 0, 0xff);
+}

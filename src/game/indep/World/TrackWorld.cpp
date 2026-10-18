@@ -184,6 +184,34 @@ void TrackWorld::SetCarTransform(const float m[12])
     }
 }
 
+bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const
+{
+    if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
+        return false;
+    size_t p = 8;
+    while (p < markers.size() && markers[p] == 0x11)
+        ++p;
+    std::vector<std::pair<uint32_t, size_t>> group;
+    for (; p + 0x30 <= markers.size(); p += 0x30) {
+        uint16_t number;
+        memcpy(&number, markers.data() + p + 0x24, 2);
+        if (number == raceNumber)
+            group.emplace_back(Read32(markers.data() + p + 8), p);
+    }
+    for (const auto &[hash, at] : group) {
+        size_t count = 0;
+        for (const auto &g : group)
+            count += g.first == hash;
+        if (count != 1)
+            continue;
+        float pos[2];
+        memcpy(pos, markers.data() + at + 0x10, 8);
+        x = pos[0], y = pos[1];
+        return true;
+    }
+    return false;
+}
+
 bool TrackWorld::StartFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, Camera &out) const
 {
     if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
@@ -372,7 +400,9 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     };
     struct Visible {
         float depth;
-        int count; // 3 or 4 (a clipped triangle can become a quad)
+        float nearest; // smallest vertex depth
+        int pass;      // 0 world behind/around the car, 1 car, 2 world wholly in front of the car
+        int count;     // 3 or 4 (a clipped triangle can become a quad)
         CamVert v[4];
         SDL_Color colour;
     };
@@ -438,11 +468,30 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
                               Uint8(t.shade[1] + (fogG * 255 - t.shade[1]) * fog),
                               Uint8(t.shade[2] + (fogB * 255 - t.shade[2]) * fog), 255};
                 vis.depth = depth;
+                vis.nearest = 1e30f;
+                float farthest = 0;
+                for (int k = 0; k < vis.count; ++k) {
+                    vis.nearest = std::min(vis.nearest, vis.v[k].z);
+                    farthest = std::max(farthest, vis.v[k].z);
+                }
+                vis.pass = list == &m_carTris ? 1 : 0;
+                vis.nearest = vis.pass == 1 ? vis.nearest : farthest; // world: compare by its far end
                 visible.push_back(vis);
             }
         }
     }
-    std::sort(visible.begin(), visible.end(), [](const Visible &a, const Visible &b) { return a.depth > b.depth; });
+    // Painter's order by mean depth, except that the car is drawn over the (often large) world
+    // triangles it sits on: only world triangles wholly nearer than the whole car go after it.
+    float carNearest = 1e30f;
+    for (const Visible &v : visible)
+        if (v.pass == 1)
+            carNearest = std::min(carNearest, v.nearest);
+    for (Visible &v : visible)
+        if (v.pass == 0 && v.nearest < carNearest)
+            v.pass = 2;
+    std::sort(visible.begin(), visible.end(), [](const Visible &a, const Visible &b) {
+        return a.pass != b.pass ? a.pass < b.pass : a.depth > b.depth;
+    });
 
     if (getenv("NFSU2_WORLD_DEBUG")) {
         size_t near30 = 0;

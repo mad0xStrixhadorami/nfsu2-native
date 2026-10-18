@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 
 #include <algorithm>
 #include <cmath>
@@ -20,11 +21,14 @@
 
 #include "game/bWare/bCompression.h"
 #include "game/indep/File/ZipFileSystem.h"
+#include "Speed/Indep/Src/FEng/FEGroup.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
+#include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/PlayerCar.h"
+#include "game/indep/World/RaceSession.h"
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
@@ -256,7 +260,12 @@ int main(int argc, char **argv)
     TrackWorld world;
     TrackWorld::Camera camera;
     PlayerCar car;
+    std::vector<uint8_t> inGameCommon, inGameRace;
     bool inWorld = false, flyCamera = false;
+    FEPackage *hud = nullptr;
+    RaceSession race;
+    u32 worldLastPad = 0;
+    RaceSession::Config raceConfig;
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     auto enterWorld = [&](const std::string &region) {
@@ -264,6 +273,16 @@ int main(int argc, char **argv)
         if (engine->PushPackage("Loading.fng", 0, 0xff)) {
             engine->Update(16, 0);
             renderFrame(engine);
+        }
+        // RegionLoader stage 1 (0x002ddbc0): the in-game bundles with the HUD packages.
+        if (inGameCommon.empty()) {
+            inGameCommon = ReadGameFile(*fs, "GLOBAL\\INGAMECOMMON.LZC");
+            fe.AddBundle(inGameCommon.data(), inGameCommon.size(), "GLOBAL\\INGAMECOMMON.LZC");
+            inGameRace = ReadGameFile(*fs, "GLOBAL\\INGAMERACE.BUN");
+            fe.AddBundle(inGameRace.data(), inGameRace.size(), "GLOBAL\\INGAMERACE.BUN");
+            if (getenv("NFSU2_LIST_INGAME"))
+                for (const std::string &n : fe.PackageNames())
+                    printf("[World] package %s\n", n.c_str());
         }
         std::string path = "TRACKS\\STREAM" + region + ".BUN";
         std::vector<uint8_t> stream = ReadGameFile(*fs, path.c_str());
@@ -277,9 +296,18 @@ int main(int argc, char **argv)
         int raceNumber = startup.RaceNumber();
         if (const char *n = getenv("NFSU2_RACE"))
             raceNumber = atoi(n);
-        if (raceNumber && world.StartFromMarkers(ReadGameFile(*fs, markersPath.c_str()), raceNumber, camera)) {
-            camera.z += 2.0f;
+        raceConfig = RaceSession::Config();
+        raceConfig.laps = startup.RaceLaps();
+        std::vector<uint8_t> markers = ReadGameFile(*fs, markersPath.c_str());
+        if (raceNumber && world.StartFromMarkers(markers, raceNumber, camera)) {
             printf("[World] race %d start grid\n", raceNumber);
+            raceConfig.dirX = std::cos(camera.yaw);
+            raceConfig.dirY = std::sin(camera.yaw);
+            raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY);
+            for (const RaceInfo &r : fe.Races())
+                if (r.number == raceNumber)
+                    raceConfig.trackLength = float(r.length);
+            camera.z += 2.0f;
         }
         // The player car (stand-in for the unported car loader / physics, ISSUES.md #105).
         flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
@@ -298,7 +326,29 @@ int main(int argc, char **argv)
         printf("[World] camera %.1f %.1f %.1f yaw %.2f\n", camera.x, camera.y, camera.z, camera.yaw);
         // The front end stays loaded but is no longer ticked or drawn (UnloadingFrontEnd 0x002e0098
         // is not ported); the world view uses the full output resolution.
-        SDL_RenderSetLogicalSize(ren, 0, 0);
+        // UnloadingFrontEnd (0x002e0098): drop the front-end screens, then show the race HUD.
+        std::vector<FEPackage *> fePackages;
+        for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+            fePackages.push_back(p);
+        for (FEPackage *p : fePackages)
+            engine->UnloadPackage(p);
+        hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
+        printf("[World] HUD %s\n", hud ? "HUD_SingleRace.fng" : "missing");
+        race.Begin(hud, raceConfig);
+        if (hud && getenv("NFSU2_FETREE")) {
+            // Dev aid: the object tree (stripped packages carry only name hashes).
+            std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
+                for (; o; o = o->GetNext()) {
+                    const FEObjData *d = o->GetObjData();
+                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x\n", depth * 2, "",
+                           o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
+                           d ? d->Size.y : 0, o->Flags);
+                    if (o->Type == FE_Group)
+                        dump(static_cast<FEGroup *>(o)->GetFirstChild(), depth + 1, o->NameHash);
+                }
+            };
+            dump(hud->GetFirstObject(), 0, 0);
+        }
         inWorld = true;
     };
     if (const char *region = getenv("NFSU2_WORLD"))
@@ -332,9 +382,22 @@ int main(int argc, char **argv)
         if (inWorld) {
             const float dt = std::min(0.1f, (now - last) / 1000.0f);
             const u32 pad = fe.GetJoyPadMask(0);
+            const u32 pressed = pad & ~worldLastPad;
+            worldLastPad = pad;
             if (releaseInjectedPadAfterUpdate)
                 fe.SetSimulatedPadMask(0);
             last = now;
+            // Start: leave the race (pause menu "Quit Race" is not ported) -- or Accept once it is over.
+            if ((pressed & FENativeInterface::kPadStart) ||
+                (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
+                if (hud)
+                    engine->UnloadPackage(hud);
+                hud = nullptr;
+                inWorld = false;
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                startup.ReturnFromRace();
+                continue;
+            }
             if (flyCamera) {
                 // Fly camera: Up/Down move, Left/Right turn, L1/R1 lower/raise.
                 const float speed = 40.0f * dt, turn = 1.6f * dt;
@@ -355,6 +418,11 @@ int main(int argc, char **argv)
                 steer += std::clamp(target - steer, -4.0f * dt, 4.0f * dt);
                 float throttle = (autoDrive || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
                 float brake = (pad & FENativeInterface::kPadDown) ? 1.0f : 0.0f;
+                if (!race.Update(car, dt)) {
+                    // Countdown, or race over: no throttle; brake to a stop after the finish.
+                    throttle = 0;
+                    brake = race.GetPhase() == RaceSession::kFinished ? 1.0f : 0.0f;
+                }
                 car.Update(world, throttle, brake, steer, dt);
                 float m[12];
                 car.Transform(m);
@@ -370,11 +438,16 @@ int main(int argc, char **argv)
                 camera.yaw = chaseYaw;
                 camera.pitch = -0.17f;
             }
+            engine->Update(static_cast<i32>(dt * 1000.0f), 0);
+            // The world uses the full output resolution; FEng (HUD) its 640x480 screen space.
+            SDL_RenderSetLogicalSize(ren, 0, 0);
             int w, h;
             SDL_GetRendererOutputSize(ren, &w, &h);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
             world.Render(ren, camera, w, h);
+            SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            engine->Render();
             static Uint32 fpsStart = now, fpsFrames = 0;
             if (++fpsFrames == 60) {
                 printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
