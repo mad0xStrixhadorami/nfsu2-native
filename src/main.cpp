@@ -368,7 +368,9 @@ int main(int argc, char **argv)
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
-        if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()))) {
+        PlayerCar::Wheel wheels[4];
+        if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()),
+                                        fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
             world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
@@ -395,7 +397,9 @@ int main(int argc, char **argv)
                 const TrackWorld::Camera &slot = grid[i];
                 std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
                 std::string path = "CARS\\" + name + "\\GEOMETRY.BIN";
-                if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str())))
+                PlayerCar::Wheel oppWheels[4];
+                if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str()),
+                                               fe.CarWheels(name, oppWheels) ? oppWheels : nullptr))
                     opponentCars[i].SetModel(car);
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);

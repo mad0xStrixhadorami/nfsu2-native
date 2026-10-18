@@ -7,7 +7,7 @@
 #include "game/indep/World/GLBridge.h"
 
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
-                 float yaw, SDL_Color paint, const std::vector<uint32_t> *textures)
+                 float yaw, SDL_Color paint, const std::vector<uint32_t> *textures, size_t wheelsFrom)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -40,9 +40,14 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
 
     const float aspect = float(pixels.w) / float(std::max(pixels.h, 1));
     const float tanHalf = std::tan(16.0f * 3.14159265f / 180.0f);
-    // Fit the length (horizontal) rather than the bounding sphere: cars are long and low.
-    const float dist = radius / (tanHalf * aspect) * 1.02f, nearZ = std::max(0.05f, dist - radius * 2),
-                farZ = dist + radius * 2;
+    // Fit while turning: the footprint radius horizontally, the projected height under the 14 degree
+    // elevation vertically, plus half the footprint for the near side of the car.
+    const float hx = (hi[0] - lo[0]) * 0.5f, hy = (hi[1] - lo[1]) * 0.5f, hz = (hi[2] - lo[2]) * 0.5f;
+    const float footprint = std::sqrt(hx * hx + hy * hy);
+    const float elev = 14.0f * 3.14159265f / 180.0f;
+    const float projH = hz * std::cos(elev) + footprint * std::sin(elev);
+    const float dist = std::max(footprint / (tanHalf * aspect), projH / tanHalf) + footprint * 0.5f;
+    const float nearZ = std::max(0.05f, dist - radius * 2), farZ = dist + radius * 2;
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glFrustum(-nearZ * tanHalf * aspect, nearZ * tanHalf * aspect, -nearZ * tanHalf, nearZ * tanHalf, nearZ, farZ);
@@ -70,7 +75,9 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
             continue;
         float lit = 0.3f + 0.7f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
         float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
-        if (slots)
+        if (i >= wheelsFrom)
+            rgb[0] = rgb[1] = rgb[2] = 0.09f;
+        else if (slots)
             CarMaterial::SlotColour((*textures)[i], rgb);
         glColor3ub(GLubyte(255 * rgb[0] * lit), GLubyte(255 * rgb[1] * lit), GLubyte(255 * rgb[2] * lit));
         glVertex3f(a.x, a.y, a.z);

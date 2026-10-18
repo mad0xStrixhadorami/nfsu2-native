@@ -1,4 +1,5 @@
 #pragma once
+#include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/SolidMesh.h"
 #include <SDL.h>
 
@@ -67,6 +68,16 @@ public:
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
     void CycleCarPreview(int direction); // Stand-in for the car-select vehicle carousel.
     const std::string &PreviewCarName() const { return m_previewCarName; } // car folder, e.g. SKYLINE
+    // Wheel placement for a car folder from the database (false if unknown).
+    bool CarWheels(const std::string &folder, PlayerCar::Wheel out[4]) const
+    {
+        auto it = m_carTable.find(folder);
+        if (it == m_carTable.end() || it->second.wheels[0].radius <= 0)
+            return false;
+        for (int i = 0; i < 4; ++i)
+            out[i] = it->second.wheels[i];
+        return true;
+    }
     // Quick Race cars in database order (GLOBALB 0x34600, service/traffic vehicles skipped).
     std::vector<std::string> RaceableCars() const
     {
@@ -151,6 +162,7 @@ private:
         std::string folder;
         std::string manufacturer;
         bool traffic = false; // chunk field +0x84c == 2: service/traffic vehicle, not selectable
+        PlayerCar::Wheel wheels[4] = {};
     };
 
     Affine LocalTransform(const FEObject *obj) const;
@@ -196,6 +208,7 @@ private:
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
     std::vector<uint32_t> m_carPreviewSlots;            // its material slot hashes
+    size_t m_carPreviewWheels = SIZE_MAX;               // first wheel triangle
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;

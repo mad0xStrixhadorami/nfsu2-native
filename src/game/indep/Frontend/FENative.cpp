@@ -135,9 +135,11 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     // The stock body as assembled for racing (PlayerCar), drawn with GL when available.
     PlayerCar assembled;
     m_carPreviewModel.clear();
-    if (assembled.LoadModel(geometry)) {
+    PlayerCar::Wheel wheels[4];
+    if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
+        m_carPreviewWheels = assembled.WheelTrianglesStart();
     }
     m_carPreviewTris.clear();
     m_carPreviewSplatsBuilt = false;
@@ -189,7 +191,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
         float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
         SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
         float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
-        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255}, &m_carPreviewSlots)) {
+        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255}, &m_carPreviewSlots,
+                        m_carPreviewWheels)) {
             DrawCarPreviewLabel(pkg);
             return;
         }
@@ -616,6 +619,12 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 rec.folder = folder;
                 rec.manufacturer = manuf;
                 rec.traffic = *reinterpret_cast<const uint32_t *>(r + 0x84c) == 2;
+                for (int w = 0; w < 4; ++w) { // wheels: 0x30-byte records from +0x128
+                    const uint8_t *wr = r + 0x128 + w * 0x30;
+                    memcpy(&rec.wheels[w].x, wr, 12);
+                    memcpy(&rec.wheels[w].radius, wr + 0x10, 4);
+                    memcpy(&rec.wheels[w].width, wr + 0x14, 4);
+                }
                 std::string key = rec.folder;
                 for (char &ch : key)
                     ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));

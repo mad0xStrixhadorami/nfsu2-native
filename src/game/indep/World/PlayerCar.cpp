@@ -51,7 +51,7 @@ void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle
 }
 } // namespace
 
-bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry)
+bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels)
 {
     m_model.clear();
     m_triTex.clear();
@@ -77,7 +77,20 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry)
     }
     if (!rearWheel)
         rearWheel = frontWheel;
-    if (body && frontWheel) {
+    m_rideHeight = 0;
+    m_wheelStart = m_model.size();
+    if (frontWheel && wheels) {
+        // Database placement: the wheel solid's inner face is at y = 0 and it extends outwards
+        // (+y) by about its width, so the hub goes at |y| - width / 2; right-hand wheels mirror.
+        for (int i = 0; i < 4; ++i) {
+            const Wheel &w = wheels[i];
+            const bool right = w.y < 0;
+            const SolidMesh::NamedSolid &solid = (i < 2 || !rearWheel) ? *frontWheel : *rearWheel;
+            float hub = std::fabs(w.y) - w.width * 0.5f;
+            AddWheel(solid, w.x, right ? -hub : hub, w.z, right, m_model, m_triTex);
+        }
+        m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
+    } else if (body && frontWheel) {
         float radius = (frontWheel->bboxMax[2] - frontWheel->bboxMin[2]) * 0.5f;
         float front = body->bboxMax[0] - 0.85f, rear = body->bboxMin[0] + 0.95f;
         float side = std::max(0.3f, body->bboxMax[1] - 0.2f);
@@ -173,5 +186,6 @@ void PlayerCar::Transform(float m[12]) const
         m[4 + a] = l[a];
         m[8 + a] = u[a];
     }
-    m[3] = m_x, m[7] = m_y, m[11] = m_z;
+    // m_z is the ground contact; the model origin sits RideHeight() above it.
+    m[3] = m_x + u[0] * m_rideHeight, m[7] = m_y + u[1] * m_rideHeight, m[11] = m_z + u[2] * m_rideHeight;
 }
