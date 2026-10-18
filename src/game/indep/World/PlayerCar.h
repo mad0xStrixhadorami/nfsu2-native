@@ -39,6 +39,8 @@ public:
     // Update/Place/Transform run it instead of the arcade model.
     bool UseUG2Physics(const uint8_t *record) { return m_ug2.Setup(record); }
     bool UsingUG2Physics() const { return m_ug2.Valid(); }
+    // Holds the car with the handbrake (race countdown: stops it rolling on slopes).
+    void SetHold(bool hold) { m_hold = hold; }
     const Performance &GetPerformance() const { return m_perf; }
     int Gear() const { return m_gear; }  // 1.. forward, -1 reverse, 0 neutral
     float Rpm() const { return m_rpm; }
@@ -97,5 +99,6 @@ private:
     int m_gear = 1;
     float m_rpm = 0;
     UG2Physics::Vehicle m_ug2;
+    bool m_hold = false;
     float m_wheelRadius = 0.32f;
 };

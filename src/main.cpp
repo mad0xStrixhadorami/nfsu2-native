@@ -507,8 +507,9 @@ int main(int argc, char **argv)
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
         car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
-        // NFSU2_PHYSICS=ug2: the ported vehicle physics (ISSUES #129, in progress).
-        if (const char *ph = getenv("NFSU2_PHYSICS"); ph && !strcmp(ph, "ug2")) {
+        // The ported UG2 vehicle physics (ISSUES #129) drive the player car; NFSU2_PHYSICS=arcade
+        // selects the old stand-in model.
+        if (const char *ph = getenv("NFSU2_PHYSICS"); !ph || strcmp(ph, "arcade")) {
             const uint8_t *rec = fe.CarRecordData(fe.PreviewCarName());
             printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
         }
@@ -784,6 +785,7 @@ int main(int argc, char **argv)
                 std::vector<float> rivals;
                 for (size_t i = 0; i < ai.size(); ++i)
                     rivals.push_back(race.RaceDistance(aiStartS[i], ai[i].Progress()));
+                car.SetHold(race.GetPhase() == RaceSession::kCountdown);
                 if (!race.Update(car, rivals, dt)) {
                     // Countdown, or race over: no throttle; brake to a stop after the finish
                     // (braking at rest would drive the car backwards).
