@@ -867,8 +867,17 @@ int main(int argc, char **argv)
                         float iTowards = std::cos(cars[i]->Yaw()) * dx + std::sin(cars[i]->Yaw()) * dy;
                         PlayerCar *behind = iTowards > 0 ? cars[i] : cars[j];
                         PlayerCar *ahead = behind == cars[i] ? cars[j] : cars[i];
-                        if (behind->Speed() > ahead->Speed() + 1.0f)
-                            behind->ScaleSpeed(0.98f);
+                        if (behind->Speed() > ahead->Speed() + 1.0f) {
+                            // Traffic (ISSUES #130) is solid: a hit sheds real speed and shoves the
+                            // other car; racers only rub (0.98).
+                            const size_t firstTraffic = 1 + opponentCars.size();
+                            if (i >= firstTraffic || j >= firstTraffic) {
+                                float closing = behind->Speed() - ahead->Speed();
+                                behind->ScaleSpeed(std::max(0.7f, 1.0f - 0.03f * closing));
+                                ahead->ScaleSpeed(1.0f + std::min(0.15f, 0.01f * closing));
+                            } else
+                                behind->ScaleSpeed(0.98f);
+                        }
                     }
                 for (size_t i = 0; i < cars.size(); ++i) {
                     float m[12];
