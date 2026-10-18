@@ -24,8 +24,10 @@ public:
         float pitch = -0.12f;      // radians, negative looks down
     };
 
-    // Parse a STREAM<region>.BUN image. Returns false if no scenery was found.
-    bool Load(const std::vector<uint8_t> &stream);
+    // Parse a STREAM<region>.BUN image. Returns false if no scenery was found. neighbours: other
+    // regions' streams, used only for solids the region's scenery names but does not contain
+    // (ISSUES.md #121); they are not kept after loading.
+    bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
     // A drivable spot to start from: the centre of a road instance near the middle of the map.
     Camera StartCamera() const { return m_start; }
     // Race start grids from Tracks\Routes<region>\TrackPosMarkersAll.bin (chunk 0x34146, 48-byte
@@ -92,6 +94,7 @@ private:
     Camera m_start;
     size_t m_triangleCount = 0;
     size_t m_instances = 0;
+    size_t m_borrowedSolids = 0;
     std::vector<SDL_Vertex> m_frame; // per-frame vertex buffer
     struct Car {
         const std::vector<SolidMesh::Triangle> *model;
