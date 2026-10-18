@@ -49,6 +49,14 @@ constexpr uint32_t kBoardPos[4] = {0x4183e0a1, 0x4183e0a2, 0x4183e0a3, 0x4183e0a
 constexpr uint32_t kBoardName[4] = {0x2af89fd7, 0x2af89fd8, 0x2af89fd9, 0x2af89fda};
 constexpr uint32_t kBoardPlate[4] = {0x4fddd64c, 0x4fddd64d, 0x4fddd64e, 0x4fddd64f};
 constexpr uint32_t kBoardIcon[4] = {0xfa3d7b71, 0xfa3d7b72, 0xfa3d7b73, 0xfa3d7b74};
+// Out-run (type 8) get-away meter, in HUD_SingleRace.fng: the Out_Run_Message banner and the
+// Getaway_Distance group (a backing, the guide lines, the bar, and the distance number/units). The
+// bar is a 256x16 image whose Size scales it, so the fraction of the lead fills it from the left.
+constexpr uint32_t kOutRunMessage = 0x407919af;
+constexpr uint32_t kGetawayGroup = 0x8ca76279;
+constexpr uint32_t kGetawayBacking = 0x238f4b29, kGetawayLines = 0xc81a81f5, kGetawayBar = 0xacbaf9ef;
+constexpr uint32_t kDistanceNumber = 0x92cdc512, kDistanceText = 0xbcea10ce;
+constexpr float kGetawayBarWidth = 256.0f;
 
 std::string FormatTime(float seconds)
 {
@@ -116,6 +124,8 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_leaderboard.clear();
     m_knockoutEvent = -1;
     m_playerOut = false;
+    m_outrunLead = 0;
+    m_outrunCaught = false;
     if (IsKnockout())
         m_config.laps = std::max(1, m_config.racers - 1); // one elimination per lap, down to one
     SetupHud();
@@ -146,10 +156,22 @@ void RaceSession::SetupHud()
                              std::find(std::begin(kBoardPlate), std::end(kBoardPlate), o->NameHash) != std::end(kBoardPlate) ||
                              std::find(std::begin(kBoardIcon), std::end(kBoardIcon), o->NameHash) != std::end(kBoardIcon)))
             shown = true;
+        // Out-run shows the get-away meter and its banner.
+        if (IsOutrun() && (o->NameHash == kGetawayGroup || o->NameHash == kOutRunMessage))
+            shown = true;
         FENativeInterface::SetObjectVisible(o, shown && !(sprint && o->NameHash == kLapGroup));
     }
     for (uint32_t h : {kTurboGroup, kNosLine, kNosFill, kNosGameBreaker, kShiftLight})
         FENativeInterface::SetVisible(m_hud, h, false);
+    // The get-away meter's children (the group is toggled in the loop above).
+    for (uint32_t h : {kGetawayBacking, kGetawayLines, kGetawayBar, kDistanceNumber, kDistanceText})
+        FENativeInterface::SetVisible(m_hud, h, IsOutrun());
+    // The get-away group is a transparent container: the engine skips a group whose colour alpha is
+    // zero (FEngine::RenderGroup), so give it an opaque colour (and the children one) to draw it.
+    for (uint32_t h : {kGetawayGroup, kGetawayBacking, kGetawayLines, kGetawayBar, kDistanceNumber, kDistanceText})
+        if (FEObject *o = m_hud->FindObjectByHash(h))
+            if (FEObjData *d = o->GetObjData())
+                d->Col.a = IsOutrun() ? 255 : 0;
     // Free run keeps only the gauges and minimap (ISSUES #118).
     if (IsFreeRun())
         for (uint32_t h : {kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText,
@@ -191,6 +213,9 @@ void RaceSession::Finish()
         printf("[Race] knocked out on lap %d\n", m_lap - 1);
     if (IsDrift())
         printf("[Drift] final score %d\n", int(m_driftTotal));
+    if (IsOutrun())
+        printf("[Race] outrun: lead %.0f m, %s\n", m_outrunLead,
+               m_outrunCaught ? "caught" : m_position == 1 ? "ahead" : "behind");
 }
 
 // Active racers: the player (unless knocked out) plus every opponent still in.
@@ -337,6 +362,25 @@ void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &op
         auto it = std::find(m_leaderboard.begin(), m_leaderboard.end(), 0);
         m_position = it == m_leaderboard.end() ? ActiveRacers() + 1 : int(it - m_leaderboard.begin()) + 1;
     }
+    // Out-run (type 8): the gap to the rival drives the get-away meter; opening the escape distance
+    // wins the duel, being caught by it loses.
+    if (m_phase == kRacing && IsOutrun() && !opponents.empty()) {
+        float rival = opponents[0];
+        for (float o : opponents)
+            rival = std::max(rival, o);
+        m_outrunLead = dist - rival;
+        if (m_outrunLead >= kOutrunEscape) {
+            m_position = 1;
+            Finish();
+            return;
+        }
+        if (m_outrunLead <= -kOutrunEscape) {
+            m_outrunCaught = true;
+            m_position = m_config.racers;
+            Finish();
+            return;
+        }
+    }
     // Wrong way: moving against the route direction for a second.
     float x, y, dx, dy;
     route.Sample(s, x, y, dx, dy);
@@ -460,6 +504,20 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         FENativeInterface::SetString(m_hud, kCommentData, comment);
     }
 
+    // Out-run get-away meter (ISSUES #119): the banner, the Ahead/Behind label, the gap in metres and
+    // the bar filled to the fraction of the escape distance reached.
+    if (IsOutrun()) {
+        FENativeInterface::SetString(m_hud, kOutRunMessage, "OUTRUN");
+        FENativeInterface::SetString(m_hud, kDistanceText, m_outrunLead >= 0 ? "Ahead" : "Behind");
+        snprintf(text, sizeof(text), "%.0f", std::fabs(m_outrunLead));
+        FENativeInterface::SetString(m_hud, kDistanceNumber, text);
+        if (FEObject *bar = m_hud->FindObjectByHash(kGetawayBar))
+            if (FEObjData *d = bar->GetObjData()) {
+                float frac = std::clamp(std::fabs(m_outrunLead) / kOutrunEscape, 0.0f, 1.0f);
+                d->Size.x = kGetawayBarWidth * frac;
+            }
+    }
+
     // Lap counter and lap time (free run has neither, ISSUES #118).
     if (IsFreeRun())
         return;
@@ -508,6 +566,8 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         static const char *const kNth[] = {"th", "st", "nd", "rd"};
         if (IsDrift())
             snprintf(text, sizeof(text), "DRIFT %d PTS", int(m_driftTotal));
+        else if (IsOutrun())
+            snprintf(text, sizeof(text), m_outrunCaught ? "CAUGHT" : "ESCAPED");
         else if (IsKnockout() && m_playerOut)
             snprintf(text, sizeof(text), "KNOCKED OUT");
         else

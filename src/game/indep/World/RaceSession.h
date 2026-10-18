@@ -76,6 +76,16 @@ public:
     // the race HUD elements hidden (ISSUES #118).
     bool IsFreeRun() const { return m_config.type == 9; }
 
+    // Outrun (type 8): a one-on-one freeway duel. UG2's version runs in free roam and is won by
+    // opening a lead of the "getaway" distance; with the free-roam road network undecoded (ISSUES
+    // #118) this is a stand-in on a normal route -- one rival, and the gap drives the get-away meter
+    // (Getaway_Distance_Bar + Distance_Number/Distance_Text, strings 0x566fa8 "Ahead" / 0x566fa0
+    // "Behind"). Reaching kOutrunEscape ahead escapes (win); being caught by the same margin loses.
+    bool IsOutrun() const { return m_config.type == 8; }
+    float OutrunLead() const { return m_outrunLead; } // metres the player is ahead of the rival
+    bool OutrunCaught() const { return m_outrunCaught; }
+    static constexpr float kOutrunEscape = 200.0f; // metre lead that ends the duel (stand-in)
+
 private:
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
@@ -126,4 +136,7 @@ private:
     std::vector<int> m_leaderboard;  // active racers, leader first (0 = player, i+1 = opponent i)
     int m_knockoutEvent = -1;        // opponent eliminated this frame (for the caller), else -1
     bool m_playerOut = false;
+    // Outrun (see IsOutrun).
+    float m_outrunLead = 0;          // metres the player leads the rival by (negative: behind)
+    bool m_outrunCaught = false;     // the rival escaped instead of the player
 };

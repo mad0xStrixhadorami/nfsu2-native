@@ -371,7 +371,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        const int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(startup.RaceOpponents(), int(grid.size()) - 1);
+        const int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(raceConfig.type == 8 ? 1 : startup.RaceOpponents(), int(grid.size()) - 1);
         if (!grid.empty()) {
             camera = grid[std::min<size_t>(opponents, grid.size() - 1)];
             printf("[World] race %d: grid of %zu, %d opponents\n", raceNumber, grid.size(), opponents);
