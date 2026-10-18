@@ -110,6 +110,10 @@ private:
         std::vector<RTri> render;
     };
     std::vector<Barrier> m_barriers;
+    // PAN_* panorama instances: drawn first as a far backdrop without fog (GL path only).
+    std::vector<RTri> m_panorama;
+    unsigned m_panoramaBuffer = 0;
+    int m_panoramaVertices = 0;
     // OpenGL vertex buffers per cell, built on first use (TrackWorldGL.cpp).
     struct GLRange {
         unsigned texture; // GL texture name (a white 1x1 for untextured triangles)
@@ -127,6 +131,7 @@ private:
     std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode
     unsigned m_glWhite = 0;
     std::unordered_map<int64_t, GLCell> m_glCells;
+    GLCell m_glPanorama;
     int m_glState = 0; // 0 unknown, 1 available, -1 unavailable
     void AddToCells(const Tri &t, const RTri &r);
     // Texture packs (0xb3300000) copied out of the stream; textures resolved by name hash.

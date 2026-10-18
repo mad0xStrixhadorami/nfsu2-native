@@ -28,8 +28,11 @@ void TrackWorld::ReleaseGL()
                 GLBridge::DeleteBuffers(1, &cell.buffer);
         for (auto &[hash, tex] : m_glTextures)
             glDeleteTextures(1, &tex);
+        if (m_glPanorama.buffer)
+            GLBridge::DeleteBuffers(1, &m_glPanorama.buffer);
     }
     m_glCells.clear();
+    m_glPanorama = GLCell();
     m_glTextures.clear();
 }
 
@@ -147,6 +150,64 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
 
     static std::vector<Vertex> scratch;
 
+    // Upload render triangles once: grouped by texture, one draw range per texture.
+    auto upload = [&](GLCell &cell, std::vector<RTri> &render) {
+        if (render.empty())
+            return;
+        std::stable_sort(render.begin(), render.end(), [](const RTri &a, const RTri &b) { return a.tex < b.tex; });
+        scratch.clear();
+        cell.ranges.clear();
+        for (size_t i = 0; i < render.size(); ++i) {
+            if (i == 0 || render[i].tex != render[i - 1].tex) {
+                unsigned tex = GLTexture(render[i].tex);
+                auto mode = m_glTextureMode.find(tex);
+                cell.ranges.push_back({tex, int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second});
+            }
+            for (const RVertex &v : render[i].v)
+                scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
+            cell.ranges.back().count += 3;
+        }
+        if (!cell.buffer)
+            GLBridge::GenBuffers(1, &cell.buffer);
+        GLBridge::BindArrayBuffer(cell.buffer);
+        GLBridge::ArrayBufferData(ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
+        cell.vertices = int(scratch.size());
+        std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
+    };
+    auto drawCell = [](const GLCell &cell, int pass) {
+        GLBridge::BindArrayBuffer(cell.buffer);
+        glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
+        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
+        glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
+        for (const GLRange &range : cell.ranges) {
+            if ((range.mode != 0) != (pass == 1))
+                continue;
+            if (pass == 1)
+                glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+            glBindTexture(GL_TEXTURE_2D, range.texture);
+            glDrawArrays(GL_TRIANGLES, range.first, range.count);
+        }
+    };
+
+    // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.
+    upload(m_glPanorama, m_panorama);
+    if (m_glPanorama.buffer) {
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glFrustum(-kNear * tanHalf, kNear * tanHalf, -kNear * tanHalf * aspect, kNear * tanHalf * aspect, kNear * 4,
+                  20000.0f);
+        glMatrixMode(GL_MODELVIEW);
+        glDisable(GL_FOG);
+        glDisable(GL_DEPTH_TEST);
+        drawCell(m_glPanorama, 0);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_FOG);
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+    }
+
     // World cells in range and inside the horizontal view cone.
     const int reach = int(std::ceil(kDrawDistance / kCellSize));
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
@@ -163,34 +224,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 across > along * coneSlope + kCellSize * 0.75f)
                 continue;
             GLCell &cell = m_glCells[it->first];
-            std::vector<RTri> &render = it->second.render;
-            if (!render.empty()) {
-                // Upload once: triangles grouped by texture, one draw range per texture.
-                std::stable_sort(render.begin(), render.end(),
-                                 [](const RTri &a, const RTri &b) { return a.tex < b.tex; });
-                scratch.clear();
-                cell.ranges.clear();
-                for (size_t i = 0; i < render.size(); ++i) {
-                    if (i == 0 || render[i].tex != render[i - 1].tex)
-                    {
-                        unsigned tex = GLTexture(render[i].tex);
-                        auto mode = m_glTextureMode.find(tex);
-                        cell.ranges.push_back({tex, int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second});
-                    }
-                    for (const RVertex &v : render[i].v)
-                        scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
-                    cell.ranges.back().count += 3;
-                }
-                if (!cell.buffer)
-                    GLBridge::GenBuffers(1, &cell.buffer);
-                GLBridge::BindArrayBuffer(cell.buffer);
-                GLBridge::ArrayBufferData(ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
-                cell.vertices = int(scratch.size());
-                std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
-            }
-            if (!cell.buffer)
-                continue;
-            drawn.push_back(&cell);
+            upload(cell, it->second.render);
+            if (cell.buffer)
+                drawn.push_back(&cell);
         }
     // Opaque and punch-through first, then blended/additive with depth writes off.
     for (int pass = 0; pass < 2; ++pass) {
@@ -198,20 +234,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             glEnable(GL_BLEND);
             glDepthMask(GL_FALSE);
         }
-        for (const GLCell *cell : drawn) {
-            GLBridge::BindArrayBuffer(cell->buffer);
-            glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
-            glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
-            glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
-            for (const GLRange &range : cell->ranges) {
-                if ((range.mode != 0) != (pass == 1))
-                    continue;
-                if (pass == 1)
-                    glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
-                glBindTexture(GL_TEXTURE_2D, range.texture);
-                glDrawArrays(GL_TRIANGLES, range.first, range.count);
-            }
-        }
+        for (const GLCell *cell : drawn)
+            drawCell(*cell, pass);
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);

@@ -38,12 +38,14 @@ template <typename F> void ForEachChunk(const uint8_t *d, size_t begin, size_t e
     }
 }
 
-enum Kind : uint8_t { kOther, kRoad, kTerrain, kBuilding, kSky, kBarrier };
+enum Kind : uint8_t { kOther, kRoad, kTerrain, kBuilding, kSky, kBarrier, kPanorama };
 
 Kind KindOf(const char *name)
 {
-    if (strstr(name, "SKY") || strstr(name, "Sky"))
+    if (strncmp(name, "SKYDOME", 7) == 0) // the sky dome solid is not in the region bundles
         return kSky;
+    if (strncmp(name, "PAN_", 4) == 0) // distant panorama backdrop (skyline, hills, hotels)
+        return kPanorama;
     if (strstr(name, "TrackBarrier"))
         return kBarrier;
     if (strstr(name, "Road") || strstr(name, "ROAD"))
@@ -319,6 +321,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
     const size_t n = stream.size();
     ReleaseGL();
     m_cells.clear();
+    m_panorama.clear();
+    m_panoramaVertices = 0;
     m_barriers.clear();
     m_packs.clear();
     m_tpkData.clear();
@@ -451,6 +455,10 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
                         v.r = w.shade[0], v.g = w.shade[1], v.b = w.shade[2];
                     }
                     v.a = 255;
+                }
+                if (kind == kPanorama) {
+                    m_panorama.push_back(rt);
+                    continue;
                 }
                 if (kind == kBarrier) {
                     if (m_barriers.empty() || memcmp(m_barriers.back().bbox, bbox, sizeof(bbox)) != 0) {
