@@ -907,6 +907,8 @@ int main(int argc, char **argv)
                 if (race.IsDrift())
                     race.DriftUpdate(car.Speed(), car.Yaw(), dt);
                 for (size_t i = 0; i < ai.size(); ++i)
+                    opponentCars[i].SetHold(!go);
+                for (size_t i = 0; i < ai.size(); ++i)
                     if (!aiOut[i])
                         ai[i].Update(world, dt, go);
                 // Knocked-out opponents stop driving and roll to a halt (ISSUES #117).
