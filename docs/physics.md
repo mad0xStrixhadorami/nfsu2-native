@@ -87,7 +87,10 @@ caches m (+0x164), 1/m (+0x168), inverse inertia (+0x170, `0x00152830` = 4x4 aff
   long = torque / radius, lateral = `0x003242b0`(load, |slip angle|): curves 0x51e068 + 0x18*band
   (7 bands of lateral force vs normalised load 0..10, band = |angle deg| * 12/[0] * 0.5,
   interpolated) * [2] * 2.5.
-* `0x00324408`: corrects the longitudinal force so wheel and body velocities agree.
+* `0x00324408`: corrects the longitudinal force so wheel and body velocities agree. **Stand-in** in
+  the native port: the demanded rolling force is `torque/r + I*slip/(r^2*h)`; if it fits the friction
+  left after the lateral force the wheel is pinned to the ground speed, otherwise the tyre slides
+  (spin up under power, lock under braking) and its spin is integrated.
 * Curves are built at run time by static initializer `0x00328738` (replay with
   `tools/mips_init_run.py ... 328738`; curve = {n, xmin, xmax, (n-1)/(xmax-xmin), data*},
   lookup `0x002edf48` clamps and lerps).

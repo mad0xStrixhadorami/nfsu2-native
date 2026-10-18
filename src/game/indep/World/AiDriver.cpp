@@ -31,7 +31,7 @@ float AiDriver::Update(const TrackWorld &world, float dt, bool go)
         const float speed = std::max(0.0f, car.Speed());
         // Target: a point ahead on the route, shifted into this driver's lane.
         float x, y, dx, dy;
-        m_route->Sample(s + 9.0f + speed * 0.55f, x, y, dx, dy);
+        m_route->Sample(s + 12.0f + speed * 0.55f, x, y, dx, dy);
         x += -dy * m_lane;
         y += dx * m_lane;
         float want = std::atan2(y - car.Y(), x - car.X());
@@ -46,7 +46,7 @@ float AiDriver::Update(const TrackWorld &world, float dt, bool go)
         float c0x = p1x - p0x, c0y = p1y - p0y, c1x = p2x - p1x, c1y = p2y - p1y;
         float norm = std::max(1e-3f, std::hypot(c0x, c0y) * std::hypot(c1x, c1y));
         float bend = std::acos(std::clamp((c0x * c1x + c0y * c1y) / norm, -1.0f, 1.0f));
-        float target = m_skill * (52.0f - 36.0f * std::min(1.0f, bend / 1.3f));
+        float target = m_skill * (52.0f - 44.0f * std::min(1.0f, bend / 1.05f));
         if (speed < target)
             throttle = 1.0f;
         else if (speed > target + 3.0f)

@@ -306,6 +306,8 @@ int main(int argc, char **argv)
     MusicStream music;
     EngineSound engineSound; // player car (ISSUES.md #124)
     int lastGear = 1;        // for gear-change sounds
+    const bool physTest = getenv("NFSU2_PHYS_TEST") != nullptr;
+    float physTestTime = 0;
     bool musicStarted = false;
     const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
     UiSound uiSound; // front-end clicks (ISSUES.md #126)
@@ -463,6 +465,11 @@ int main(int argc, char **argv)
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
         car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
+        // NFSU2_PHYSICS=ug2: the ported vehicle physics (ISSUES #129, in progress).
+        if (const char *ph = getenv("NFSU2_PHYSICS"); ph && !strcmp(ph, "ug2")) {
+            const uint8_t *rec = fe.CarRecordData(fe.PreviewCarName());
+            printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
+        }
         if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
             world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
@@ -757,6 +764,11 @@ int main(int argc, char **argv)
                         playerAi.Init(&car, &route, 0.0f, 1.0f);
                     playerAi.SetPower(power);
                     playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
+                } else if (physTest && go) {
+                    // NFSU2_PHYS_TEST: straight-line full throttle for 12 s, then full braking.
+                    physTestTime += dt;
+                    const bool accel = physTestTime < 12.0f;
+                    car.Update(world, accel ? 1.0f : 0.0f, accel ? 0.0f : 1.0f, 0.0f, dt, true, power);
                 } else {
                     car.Update(world, throttle, brake, steer, dt, true, power);
                 }

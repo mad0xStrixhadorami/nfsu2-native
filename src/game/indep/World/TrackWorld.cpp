@@ -99,10 +99,11 @@ template <typename F> void TrackWorld::ForNearbyTris(float x, float y, F &&f) co
         }
 }
 
-bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z) const
+bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *normal) const
 {
     bool found = false;
     float best = -1e30f;
+    float bestN[3] = {0, 0, 1};
     ForNearbyTris(x, y, [&](const Tri &t) {
         const float *a = t.v, *b = t.v + 3, *c = t.v + 6;
         // Quick reject on the XY bounds.
@@ -127,14 +128,19 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z) const
         if (h <= zMax && h > best) {
             best = h;
             found = true;
+            const float len = std::sqrt(nx * nx + ny * ny + nz * nz), sgn = nz < 0 ? -1.0f : 1.0f;
+            bestN[0] = sgn * nx / len, bestN[1] = sgn * ny / len, bestN[2] = sgn * nz / len;
         }
     });
-    if (found)
+    if (found) {
         z = best;
+        if (normal)
+            normal[0] = bestN[0], normal[1] = bestN[1], normal[2] = bestN[2];
+    }
     return found;
 }
 
-bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz) const
+bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal) const
 {
     const float dx = bx - ax, dy = by - ay, dz = bz - az;
     bool hit = false;
@@ -164,9 +170,18 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
             return;
         float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
         hit = tt >= 0 && tt <= 1;
-        if (hit && getenv("NFSU2_WORLD_DEBUG"))
-            printf("[World] wall (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f)\n", a[0], a[1], a[2], b[0], b[1], b[2],
-                   c[0], c[1], c[2]);
+        if (hit) {
+            const float len = std::sqrt(n2);
+            nx /= len, ny /= len, nz /= len;
+            // Face the segment start (the side the car is coming from).
+            if (nx * dx + ny * dy + nz * dz > 0)
+                nx = -nx, ny = -ny, nz = -nz;
+            if (normal)
+                normal[0] = nx, normal[1] = ny, normal[2] = nz;
+            if (getenv("NFSU2_WORLD_DEBUG"))
+                printf("[World] wall (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f) n(%.2f %.2f %.2f)\n", a[0], a[1],
+                       a[2], b[0], b[1], b[2], c[0], c[1], c[2], nx, ny, nz);
+        }
     });
     return hit;
 }

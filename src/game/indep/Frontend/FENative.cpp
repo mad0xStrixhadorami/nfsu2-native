@@ -675,6 +675,7 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 rec.folder = folder;
                 rec.manufacturer = manuf;
                 rec.traffic = *reinterpret_cast<const uint32_t *>(r + 0x84c) == 2;
+                rec.raw.assign(r, r + kCarRecord);
                 { // engine/chassis, stock tuning level (see PlayerCar::Performance)
                     PlayerCar::Performance &pf = rec.perf;
                     auto f = [r](size_t off) { float v; memcpy(&v, r + off, 4); return v; };

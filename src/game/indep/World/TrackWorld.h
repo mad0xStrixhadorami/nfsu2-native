@@ -43,9 +43,10 @@ public:
     bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height);
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
-    bool GroundHeight(float x, float y, float zMax, float &z) const;
-    // Does the segment a->b cross a steep (wall) triangle?
-    bool HitsWall(float ax, float ay, float az, float bx, float by, float bz) const;
+    bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
+    // Does the segment a->b cross a steep (wall) triangle? If hit, the surface normal (facing the
+    // segment start) is written to normal when non-null.
+    bool HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal = nullptr) const;
 
     // Cars drawn with the world: car-space triangles (kept by pointer, must outlive the world's
     // use), body colour, and the row-major 3x4 car-to-world transform from PlayerCar::Transform.

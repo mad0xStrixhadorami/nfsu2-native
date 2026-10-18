@@ -96,6 +96,12 @@ public:
             return folder;
         return it->second.manufacturer.empty() ? folder : it->second.manufacturer + " " + folder;
     }
+    // Raw database record of a car folder (nullptr if unknown).
+    const uint8_t *CarRecordData(const std::string &folder) const
+    {
+        auto it = m_carTable.find(folder);
+        return it != m_carTable.end() && it->second.raw.size() == 0x890 ? it->second.raw.data() : nullptr;
+    }
     // Database record index of a car folder = UG2's car type (-1 if unknown).
     int CarTypeIndex(const std::string &folder) const
     {
@@ -190,6 +196,7 @@ private:
         bool traffic = false; // chunk field +0x84c == 2: service/traffic vehicle, not selectable
         PlayerCar::Wheel wheels[4] = {};
         PlayerCar::Performance perf;
+        std::vector<uint8_t> raw; // the 0x890-byte record
     };
 
     Affine LocalTransform(const FEObject *obj) const;

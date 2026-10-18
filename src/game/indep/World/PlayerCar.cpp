@@ -182,6 +182,8 @@ void PlayerCar::Place(float x, float y, float z, float yaw)
 {
     m_x = x, m_y = y, m_z = z, m_yaw = yaw;
     m_speed = m_vz = m_pitch = m_roll = 0;
+    if (m_ug2.Valid())
+        m_ug2.Place(x, y, z + m_rideHeight, yaw);
     m_gear = 1;
     m_rpm = m_perf.idleRpm;
 }
@@ -191,6 +193,22 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
 {
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
+
+    if (m_ug2.Valid()) {
+        UG2Physics::Controls in;
+        in.throttle = std::clamp(throttle * power, 0.0f, 1.0f);
+        in.brake = std::clamp(brake, 0.0f, 1.0f);
+        in.steer = std::clamp(steer, -1.0f, 1.0f);
+        m_ug2.Update(world, in, dt);
+        const UG2Physics::Vec3 o = m_ug2.Origin();
+        m_x = o.x, m_y = o.y, m_z = o.z - m_rideHeight, m_yaw = m_ug2.Yaw();
+        m_speed = m_ug2.ForwardSpeed();
+        m_rpm = m_ug2.Rpm();
+        m_gear = m_ug2.Gear();
+        m_slip += (m_ug2.Slip() - m_slip) * std::min(1.0f, dt * 8.0f);
+        (void)walls;
+        return;
+    }
 
     if (m_perf.Valid()) {
         UpdateEngine(throttle, brake, dt, power);
@@ -259,6 +277,10 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
 
 void PlayerCar::Transform(float m[12]) const
 {
+    if (m_ug2.Valid()) {
+        m_ug2.Transform(m);
+        return;
+    }
     const float cy = std::cos(m_yaw), sy = std::sin(m_yaw);
     const float cp = std::cos(m_pitch), sp = std::sin(m_pitch);
     const float cr = std::cos(m_roll), sr = std::sin(m_roll);
