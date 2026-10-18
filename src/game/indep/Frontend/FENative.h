@@ -78,6 +78,14 @@ public:
             out[i] = it->second.wheels[i];
         return true;
     }
+    bool CarPerformance(const std::string &folder, PlayerCar::Performance &out) const
+    {
+        auto it = m_carTable.find(folder);
+        if (it == m_carTable.end() || !it->second.perf.Valid())
+            return false;
+        out = it->second.perf;
+        return true;
+    }
     // Quick Race cars in database order (GLOBALB 0x34600, service/traffic vehicles skipped).
     std::vector<std::string> RaceableCars() const
     {
@@ -163,6 +171,7 @@ private:
         std::string manufacturer;
         bool traffic = false; // chunk field +0x84c == 2: service/traffic vehicle, not selectable
         PlayerCar::Wheel wheels[4] = {};
+        PlayerCar::Performance perf;
     };
 
     Affine LocalTransform(const FEObject *obj) const;
@@ -170,6 +179,8 @@ private:
     SDL_Texture *TextureFor(uint32_t hash);
     bool LoadCarPreview(const char *model);
     void DrawCarPreviewLabel(FEPackage *pkg);
+    void UpdateStatBars(FEPackage *pkg);
+    std::string m_statBarsCar; // car the stat bars were last set for
     void DrawImage(FEObject *obj);
     void DrawString(FEObject *obj);
     void DrawQuad(const Affine &xform, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,

@@ -90,6 +90,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             AddWheel(solid, w.x, right ? -hub : hub, w.z, right, m_model, m_triTex);
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
+        m_wheelRadius = wheels[0].radius;
     } else if (body && frontWheel) {
         float radius = (frontWheel->bboxMax[2] - frontWheel->bboxMin[2]) * 0.5f;
         float front = body->bboxMax[0] - 0.85f, rear = body->bboxMin[0] + 0.95f;
@@ -104,10 +105,85 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     return !m_model.empty();
 }
 
+float PlayerCar::Torque(const Performance &p, float rpm)
+{
+    // 9 curve points spread evenly over idle..max rpm (the curve's shape -- rising to a peak and
+    // falling at the top -- matches each car's real figures, e.g. 350Z peak 0.37 kN*m).
+    float t = (rpm - p.idleRpm) / (p.maxRpm - p.idleRpm) * 8.0f;
+    if (t <= 0)
+        return p.torque[0];
+    if (t >= 8)
+        return rpm > p.maxRpm ? 0.0f : p.torque[8];
+    int i = int(t);
+    return p.torque[i] + (p.torque[i + 1] - p.torque[i]) * (t - i);
+}
+
+// Stand-in drivetrain from the database figures (UG2's own model, 0x0031d570 / 0x0031e0d0, is not
+// ported): engine torque through gear, final drive and drivetrain efficiency to the wheels, limited
+// by tyre grip; aero drag and rolling resistance from the record; an automatic gearbox shifting at
+// the redline. power scales the engine (the drag-race gearbox, ISSUES.md #115).
+void PlayerCar::UpdateEngine(float throttle, float brake, float dt, float power)
+{
+    const Performance &p = m_perf;
+    const float mass = p.mass * 1000.0f, g = 9.81f;
+    const float wheelRpm = std::fabs(m_speed) / (2.0f * 3.14159265f * m_wheelRadius) * 60.0f;
+    // Gear: reverse when braking at rest, otherwise automatic between redline and the drop below it.
+    if (m_speed < -0.5f || (brake > 0 && throttle <= 0 && m_speed < 0.5f))
+        m_gear = -1;
+    else if (m_gear < 1 && m_speed >= -0.1f && throttle > 0)
+        m_gear = 1;
+    if (m_gear >= 1) {
+        float rpm = wheelRpm * p.gears[m_gear - 1] * p.finalDrive;
+        if (rpm > p.redline && m_gear < p.numGears)
+            ++m_gear;
+        else if (m_gear > 1 && wheelRpm * p.gears[m_gear - 2] * p.finalDrive < p.redline * 0.62f)
+            --m_gear;
+    }
+    const float ratio = (m_gear >= 1 ? p.gears[m_gear - 1] : std::fabs(p.reverse)) * p.finalDrive;
+    m_rpm = std::clamp(wheelRpm * ratio, p.idleRpm, p.maxRpm);
+    // Clutch slip at launch: the engine runs up to 70% of the redline while the wheels are slow.
+    if (throttle > 0)
+        m_rpm = std::max(m_rpm, p.idleRpm + (p.redline * 0.7f - p.idleRpm) * throttle * (m_rpm < p.redline * 0.7f));
+    float drive = Torque(p, m_rpm) * 1000.0f * ratio * p.efficiency / m_wheelRadius * throttle * power;
+    drive = std::min(drive, p.grip * mass * g * 0.55f); // traction (driven axle carries ~55%)
+    if (m_gear == -1)
+        drive = -std::min(drive, mass * 4.0f);
+    float force = drive - p.aero * 1000.0f * m_speed * std::fabs(m_speed) -
+                  (m_speed > 0 ? 1.0f : m_speed < 0 ? -1.0f : 0.0f) * p.rolling * mass * g;
+    if (brake > 0 && m_gear != -1 && m_speed > 0.1f)
+        force -= p.grip * mass * g * 0.9f * brake;
+    float v = m_speed + force / mass * dt;
+    if (throttle <= 0 && (m_speed > 0) != (v > 0) && std::fabs(m_speed) > 0)
+        v = 0; // brakes and resistance stop the car rather than reverse it
+    if (p.limiter > 0 && v > p.limiter * 0.44704f)
+        v = std::max(m_speed - 2.0f * dt, p.limiter * 0.44704f); // speed limiter cuts the drive
+    m_speed = v;
+}
+
+void PlayerCar::Simulate(const Performance &p, float wheelRadius, float &zeroTo100, float &topSpeed)
+{
+    PlayerCar car;
+    car.SetPerformance(p);
+    car.m_wheelRadius = wheelRadius;
+    zeroTo100 = 0;
+    const float dt = 1.0f / 60.0f;
+    for (int step = 0; step < 60 * 120; ++step) {
+        float before = car.m_speed;
+        car.UpdateEngine(1.0f, 0.0f, dt, 1.0f);
+        if (!zeroTo100 && car.m_speed >= 100.0f / 3.6f)
+            zeroTo100 = (step + 1) * dt;
+        if (step > 600 && car.m_speed - before < 1e-4f)
+            break;
+    }
+    topSpeed = car.m_speed;
+}
+
 void PlayerCar::Place(float x, float y, float z, float yaw)
 {
     m_x = x, m_y = y, m_z = z, m_yaw = yaw;
     m_speed = m_vz = m_pitch = m_roll = 0;
+    m_gear = 1;
+    m_rpm = m_perf.idleRpm;
 }
 
 void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls,
@@ -116,15 +192,19 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
 
-    // Longitudinal: engine, brakes (reverse once stopped), aerodynamic drag and rolling resistance.
-    if (throttle > 0)
-        m_speed += kAccel * power * throttle * (1.0f - std::max(0.0f, m_speed) / kTopSpeed) * dt;
-    if (brake > 0)
-        m_speed -= (m_speed > 0.5f ? kBrake : kAccel * 0.5f) * brake * dt;
-    m_speed -= (kDrag * m_speed * std::fabs(m_speed) + (m_speed > 0 ? kRolling : m_speed < 0 ? -kRolling : 0)) * dt;
-    if (throttle <= 0 && brake <= 0 && std::fabs(m_speed) < 0.3f)
-        m_speed = 0;
-    m_speed = std::clamp(m_speed, kReverseMax, kTopSpeed);
+    if (m_perf.Valid()) {
+        UpdateEngine(throttle, brake, dt, power);
+    } else {
+        // Longitudinal (no database record): engine, brakes (reverse once stopped), drag, rolling.
+        if (throttle > 0)
+            m_speed += kAccel * power * throttle * (1.0f - std::max(0.0f, m_speed) / kTopSpeed) * dt;
+        if (brake > 0)
+            m_speed -= (m_speed > 0.5f ? kBrake : kAccel * 0.5f) * brake * dt;
+        m_speed -= (kDrag * m_speed * std::fabs(m_speed) + (m_speed > 0 ? kRolling : m_speed < 0 ? -kRolling : 0)) * dt;
+        if (throttle <= 0 && brake <= 0 && std::fabs(m_speed) < 0.3f)
+            m_speed = 0;
+        m_speed = std::clamp(m_speed, kReverseMax, kTopSpeed);
+    }
 
     // Steering: bicycle model with less lock at speed.
     float lock = 0.55f / (1.0f + std::fabs(m_speed) * 0.05f);

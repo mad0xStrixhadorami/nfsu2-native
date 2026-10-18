@@ -447,8 +447,8 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         FENativeInterface::SetVisible(m_hud, kCountdownText, false);
     }
 
-    // Speedometer (km/h, the PAL default) and the tachometer. A drag race shows the real manual
-    // gearbox (m_gear / m_rpm); otherwise a stand-in automatic for gear and needle.
+    // Speedometer (km/h, the PAL default) and the tachometer. A drag race shows its manual gearbox
+    // (m_gear / m_rpm); otherwise the car's own automatic, or a stand-in without a database record.
     const float speed = std::fabs(car.Speed());
     snprintf(text, sizeof(text), "%d", int(speed * 3.6f + 0.5f));
     FENativeInterface::SetString(m_hud, kSpeed, text);
@@ -457,6 +457,17 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         rpm = m_rpm;
         snprintf(text, sizeof(text), "%d", std::clamp(m_gear, 1, kGears));
         FENativeInterface::SetString(m_hud, kGear, text);
+    } else if (car.GetPerformance().Valid()) {
+        // The car's drivetrain from its database record (PlayerCar::UpdateEngine, ISSUES.md #120).
+        rpm = car.Rpm() * 8000.0f / car.GetPerformance().maxRpm; // needle scale: 8000 = full sweep
+        if (car.Gear() < 0)
+            FENativeInterface::SetString(m_hud, kGear, "R");
+        else if (speed < 0.5f && car.Gear() == 1)
+            FENativeInterface::SetString(m_hud, kGear, "N");
+        else {
+            snprintf(text, sizeof(text), "%d", car.Gear());
+            FENativeInterface::SetString(m_hud, kGear, text);
+        }
     } else {
         constexpr float kGearSpan = 11.0f; // m/s per gear
         int gear = std::min(6, 1 + int(speed / kGearSpan));

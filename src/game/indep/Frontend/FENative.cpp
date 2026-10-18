@@ -191,6 +191,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
         float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
         SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
         float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
+        UpdateStatBars(pkg);
         if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255}, &m_carPreviewSlots,
                         m_carPreviewWheels)) {
             DrawCarPreviewLabel(pkg);
@@ -266,6 +267,55 @@ void FENativeInterface::RenderCarPreviewOverlay()
                        static_cast<int>(m_carPreviewSplats.size()), nullptr, 0);
 
     DrawCarPreviewLabel(pkg);
+}
+
+// Car-select stat bars (UI_QRCarSelect: "accel_*", "top_speed_*", "handling_*" slider widgets set
+// up by 0x001f4130, drawn by 0x002614e0). UG2 feeds them 0..1 values from its car physics model
+// (0x0031ce90 / 0x0031cdd8 / 0x0031d060, not ported); here they come from the database drivetrain:
+// 0-100 km/h time (12 s -> 4.5 s), simulated top speed (170 -> 270 km/h) and tyre grip per tonne.
+// Layout as 0x002614e0: the track starts 46 units into the 256-wide backing and is 164 long; the
+// "cur" fill starts 4 units further and grows with the value, the handle sits at its end.
+void FENativeInterface::UpdateStatBars(FEPackage *pkg)
+{
+    if (m_statBarsCar == m_previewCarName)
+        return;
+    m_statBarsCar = m_previewCarName;
+    PlayerCar::Performance p;
+    PlayerCar::Wheel w[4];
+    float values[3] = {0.5f, 0.5f, 0.5f};
+    if (CarPerformance(m_previewCarName, p)) {
+        float t100, vmax;
+        PlayerCar::Simulate(p, CarWheels(m_previewCarName, w) ? w[0].radius : 0.32f, t100, vmax);
+        values[0] = (12.0f - t100) / (12.0f - 4.5f);
+        values[1] = (vmax * 3.6f - 170.0f) / (270.0f - 170.0f);
+        values[2] = (p.grip - 0.15f * (p.mass - 1.0f) - 0.9f) / (1.25f - 0.9f);
+    }
+    static const char *const kBars[3] = {"ACCEL", "TOP_SPEED", "HANDLING"};
+    constexpr float kInset = 46.0f, kTrack = 164.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float v = std::clamp(values[i], 0.03f, 1.0f);
+        std::string base = kBars[i];
+        FEObject *backing = pkg->FindObjectByHash(bStringHash((base + "_BACKING").c_str()));
+        FEObject *cur = pkg->FindObjectByHash(bStringHash((base + "_CUR").c_str()));
+        FEObject *handle = pkg->FindObjectByHash(bStringHash((base + "_HANDLE").c_str()));
+        if (!backing || !cur)
+            continue;
+        float bx, by, bw, bh, cx, cy, cw, ch;
+        GetCenter(backing, bx, by);
+        GetSize(backing, bw, bh);
+        GetCenter(cur, cx, cy);
+        GetSize(cur, cw, ch);
+        const float left = bx - bw * 0.5f + kInset;
+        SetSize(cur, kTrack * v, ch);
+        SetCenter(cur, left + 4.0f + kTrack * v * 0.5f, cy);
+        if (handle) {
+            float hx, hy;
+            GetCenter(handle, hx, hy);
+            SetCenter(handle, left + kTrack * v, hy);
+        }
+    }
+    printf("[CarSelect] %s stats: accel %.2f top speed %.2f handling %.2f\n", m_previewCarName.c_str(), values[0],
+           values[1], values[2]);
 }
 
 // Real car-name label from the GLOBALB car table (chunk 0x34600): "<manufacturer> <model>". The
@@ -619,6 +669,18 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 rec.folder = folder;
                 rec.manufacturer = manuf;
                 rec.traffic = *reinterpret_cast<const uint32_t *>(r + 0x84c) == 2;
+                { // engine/chassis, stock tuning level (see PlayerCar::Performance)
+                    PlayerCar::Performance &pf = rec.perf;
+                    auto f = [r](size_t off) { float v; memcpy(&v, r + off, 4); return v; };
+                    pf.mass = f(0x228), pf.efficiency = f(0x2c8), pf.finalDrive = f(0x2d0), pf.reverse = f(0x2e8);
+                    for (int gi = 0; gi < 6; ++gi)
+                        if ((pf.gears[gi] = f(0x2f0 + gi * 4)) > 0)
+                            pf.numGears = gi + 1;
+                    pf.idleRpm = f(0x308), pf.redline = f(0x30c), pf.maxRpm = f(0x310);
+                    for (int ti = 0; ti < 9; ++ti)
+                        pf.torque[ti] = f(0x318 + ti * 4);
+                    pf.aero = f(0x378), pf.grip = f(0x388), pf.rolling = f(0x3c8), pf.limiter = f(0x3a8);
+                }
                 for (int w = 0; w < 4; ++w) { // wheels: 0x30-byte records from +0x128
                     const uint8_t *wr = r + 0x128 + w * 0x30;
                     memcpy(&rec.wheels[w].x, wr, 12);

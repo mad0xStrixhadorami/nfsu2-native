@@ -17,6 +17,31 @@ public:
     struct Wheel {
         float x, y, z, radius, width;
     };
+    // Engine and chassis from the car database record (GLOBALB 0x34600, stock tuning level).
+    struct Performance {
+        float mass = 0;           // +0x228 tonnes
+        float efficiency = 0.8f;  // +0x2c8 drivetrain
+        float finalDrive = 0;     // +0x2d0
+        float reverse = 0;        // +0x2e8 (negative)
+        float gears[6] = {};      // +0x2f0.., 0 = no such gear
+        int numGears = 0;
+        float idleRpm = 0, redline = 0, maxRpm = 0; // +0x308 / +0x30c / +0x310
+        float torque[9] = {};     // +0x318: kN*m at 9 evenly spaced points from idle to max rpm
+        float aero = 0;           // +0x378: kN per (m/s)^2
+        float grip = 1;           // +0x388 tyre friction
+        float rolling = 0.015f;   // +0x3c8
+        float limiter = 0;        // +0x3a8 top speed limit, mph (155 for most cars, Hummer 125)
+        bool Valid() const { return mass > 0 && finalDrive > 0 && numGears > 0 && maxRpm > idleRpm; }
+    };
+    void SetPerformance(const Performance &p) { m_perf = p; m_gear = 1; m_rpm = p.idleRpm; }
+    const Performance &GetPerformance() const { return m_perf; }
+    int Gear() const { return m_gear; }  // 1.. forward, -1 reverse, 0 neutral
+    float Rpm() const { return m_rpm; }
+    // Engine torque (kN*m) at rpm from the curve.
+    static float Torque(const Performance &p, float rpm);
+    // Straight-line run with this drivetrain at full throttle: 0-100 km/h time (s) and top speed (m/s).
+    static void Simulate(const Performance &p, float wheelRadius, float &zeroTo100, float &topSpeed);
+
     // Assemble the stock body (KIT00 + BASE, highest LOD) from CARS\<name>\GEOMETRY.BIN.
     // wheels (optional): placement from the car database; otherwise estimated from the body.
     bool LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels = nullptr);
@@ -48,9 +73,11 @@ public:
     void ScaleSpeed(float f) { m_speed *= f; }
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_rideHeight = other.m_rideHeight,
-                                                 m_wheelStart = other.m_wheelStart; }
+                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
 
 private:
+    void UpdateEngine(float throttle, float brake, float dt, float power);
+
     std::vector<SolidMesh::Triangle> m_model;
     std::vector<uint32_t> m_triTex;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
@@ -59,4 +86,8 @@ private:
     float m_vz = 0;    // vertical speed while airborne
     float m_rideHeight = 0;
     size_t m_wheelStart = 0;
+    Performance m_perf;
+    int m_gear = 1;
+    float m_rpm = 0;
+    float m_wheelRadius = 0.32f;
 };

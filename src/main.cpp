@@ -399,6 +399,8 @@ int main(int argc, char **argv)
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
         PlayerCar::Wheel wheels[4];
+        PlayerCar::Performance perf;
+        car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
         if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()),
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
             world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
@@ -429,6 +431,8 @@ int main(int argc, char **argv)
                 std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
                 std::string path = "CARS\\" + name + "\\GEOMETRY.BIN";
                 PlayerCar::Wheel oppWheels[4];
+                PlayerCar::Performance oppPerf;
+                opponentCars[i].SetPerformance(fe.CarPerformance(name, oppPerf) ? oppPerf : PlayerCar::Performance());
                 if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str()),
                                                fe.CarWheels(name, oppWheels) ? oppWheels : nullptr))
                     opponentCars[i].SetModel(car);
@@ -487,6 +491,18 @@ int main(int argc, char **argv)
         }
         inWorld = true;
     };
+    if (getenv("NFSU2_CAR_TEST")) // dev aid: drivetrain figures of every Quick Race car
+        for (const std::string &name : fe.RaceableCars()) {
+            PlayerCar::Performance p;
+            PlayerCar::Wheel w[4];
+            if (!fe.CarPerformance(name, p))
+                continue;
+            float t100, vmax;
+            PlayerCar::Simulate(p, fe.CarWheels(name, w) ? w[0].radius : 0.32f, t100, vmax);
+            printf("[CarTest] %-12s %.2f t  %d gears  %4.0f/%4.0f rpm  peak %.0f Nm  0-100 %.1f s  top %.0f km/h\n",
+                   name.c_str(), p.mass, p.numGears, p.redline, p.maxRpm,
+                   1000 * *std::max_element(p.torque, p.torque + 9), t100, vmax * 3.6f);
+        }
     if (const char *region = getenv("NFSU2_WORLD"))
         enterWorld(region);
 
