@@ -9,10 +9,13 @@
 namespace SolidMesh {
 struct Point {
     float x, y, z;
+    float u = 0, v = 0;                         // VU 0x1d.. (two vertices per V4-16 qword), 1.0 = 4096
+    uint8_t r = 128, g = 128, b = 128, a = 128; // pre-lit colour, VU 0x2d.. (V4-8 unsigned, 128 = 1.0)
 };
 
 struct Triangle {
     Point v[3];
+    int8_t tex = -1; // strip TextureNumber: index into the solid's 0x134012 (hash, 0) pairs
 };
 
 // One strip entry's VIF block -> its NumVerts positions.
@@ -20,7 +23,7 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
                  std::vector<Point> &out);
 // NumVerts strip vertices -> NumPolys triangles (seam bridges dropped by longest edge).
 void BuildStripTriangles(const std::vector<Point> &p, unsigned nverts, unsigned numpoly,
-                         std::vector<Triangle> &out);
+                         std::vector<Triangle> &out, int tex = -1);
 // One 0x80134100 mesh chunk body.
 void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size, std::vector<Triangle> &out);
 // Every 0x80134100 mesh under [begin, end), descending into container chunks.

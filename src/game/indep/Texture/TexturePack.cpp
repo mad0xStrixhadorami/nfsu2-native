@@ -66,6 +66,8 @@ static TextureInfo ReadInfoRecord(const uint8_t *e)
     t.width = U16(e + 68);
     t.height = U16(e + 70);
     t.bitsPerPixel = e[74];
+    t.alphaUsage = e[0x55];
+    t.alphaBlend = e[0x56];
     return t;
 }
 

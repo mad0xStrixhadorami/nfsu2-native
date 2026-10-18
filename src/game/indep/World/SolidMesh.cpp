@@ -26,6 +26,8 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
     float bounds[2][3] = {};
     bool haveBounds[2] = {};
     float step = 0.0f; // VU address 1 .y: world solids 1/256 m per unit, car solids 0 (Q15 bounds)
+    uint8_t colours[32][4] = {};
+    bool haveColours = false;
     size_t p = start, end = std::min(dataSize, start + size);
     while (p + 4 <= end) {
         uint16_t imm = uint16_t(d[p]) | (uint16_t(d[p + 1]) << 8);
@@ -66,6 +68,11 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
                                         (uint16_t(d[p + k * elem + c * 2 + 1]) << 8);
                         positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
                     }
+            }
+            if (bits == 8 && comps == 4 && addr >= 0x2d && addr < 0x2d + 32) {
+                for (unsigned k = 0; k < num && addr - 0x2d + k < 32; ++k)
+                    memcpy(colours[addr - 0x2d + k], d + p + k * 4, 4);
+                haveColours = true;
             }
             p += (elem * num + 3) & ~size_t(3);
         } else if (cmd == 0x20) {
@@ -119,6 +126,16 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
             out.push_back(pt);
         }
     }
+    // UVs: fixed VU layout, two vertices per qword from 0x1d (positions[] is indexed by address - 5).
+    for (unsigned i = 0; i < nverts && i < out.size(); ++i) {
+        Point &pt = out[out.size() - nverts + i];
+        const Vec4s &uv = positions[0x1d - 5 + i / 2];
+        pt.u = uv.v[(i & 1) * 2] / 4096.0f;
+        pt.v = uv.v[(i & 1) * 2 + 1] / 4096.0f;
+        if (haveColours && i < 32) {
+            pt.r = colours[i][0], pt.g = colours[i][1], pt.b = colours[i][2], pt.a = colours[i][3];
+        }
+    }
     return true;
 }
 
@@ -127,7 +144,7 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
 // "bridge" triangles are skipped at each internal run seam. The seams are not stored, so drop the
 // (NumVerts-2)-NumPolys largest-longest-edge triangles as the bridges.
 void BuildStripTriangles(const std::vector<Point> &p, unsigned nverts, unsigned numpoly,
-                         std::vector<Triangle> &out)
+                         std::vector<Triangle> &out, int tex)
 {
     if (nverts < 3 || p.size() != nverts)
         return;
@@ -150,7 +167,10 @@ void BuildStripTriangles(const std::vector<Point> &p, unsigned nverts, unsigned 
                      [](const Tri &l, const Tri &r) { return l.longest < r.longest; });
     for (unsigned i = 0; i < keep; ++i) {
         const Point &a = p[tris[i].a], &b = p[tris[i].b], &c = p[tris[i].c];
-        out.push_back({{{a.x, a.y, a.z}, {b.x, b.y, b.z}, {c.x, c.y, c.z}}});
+        Triangle t;
+        t.v[0] = a, t.v[1] = b, t.v[2] = c;
+        t.tex = int8_t(tex);
+        out.push_back(t);
     }
 }
 
@@ -185,13 +205,14 @@ void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size,
         size_t e = table + 4 + i * 16;
         unsigned nverts = d[e + 2], numpoly = d[e + 3];
         unsigned dq = uint16_t(d[e + 8]) | (uint16_t(d[e + 9]) << 8);
+        int tex = static_cast<int8_t>(d[e + 14]); // eStripEntry::TextureNumber
         unsigned qwords = d[e + 12];
         size_t offset = vif + size_t(dq) * 16, bytes = size_t(qwords) * 16;
         if (offset > vif + vifSize || bytes > vif + vifSize - offset)
             continue;
         points.clear();
         if (DecodeStrip(d, dataSize, offset, bytes, nverts, points))
-            BuildStripTriangles(points, nverts, numpoly, out);
+            BuildStripTriangles(points, nverts, numpoly, out, tex);
     }
 }
 

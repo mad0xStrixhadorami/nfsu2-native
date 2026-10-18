@@ -3,6 +3,7 @@
 #include <SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -32,14 +33,28 @@ int main(int argc, char **argv)
             printf("cannot decode %s (%d bpp)\n", pack.At(i).name.c_str(), pack.At(i).bitsPerPixel);
         }
     }
-    for (int a = 3; a < argc; ++a) {
-        const TextureInfo *info = pack.Find(argv[a]);
+    // NAME "*": every texture; "#HASH" (hex): by name hash.
+    std::vector<std::string> names(argv + 3, argv + argc);
+    if (names.size() == 1 && names[0] == "*") {
+        names.clear();
+        for (size_t i = 0; i < pack.Count(); ++i)
+            names.push_back(pack.At(i).name);
+    }
+    for (std::string &n : names)
+        if (n[0] == '#')
+            for (size_t i = 0; i < pack.Count(); ++i)
+                if (pack.At(i).nameHash == strtoul(n.c_str() + 1, nullptr, 16))
+                    n = pack.At(i).name;
+    for (const std::string &name : names) {
+        const char *arg = name.c_str();
+        const TextureInfo *info = pack.Find(arg);
         DecodedTexture t;
         if (!info || !pack.Decode(*info, t))
             continue;
         SDL_Surface *s = SDL_CreateRGBSurfaceWithFormatFrom(t.rgba.data(), t.width, t.height, 32, t.width * 4,
                                                             SDL_PIXELFORMAT_ABGR8888);
-        SDL_SaveBMP(s, (std::string(argv[2]) + "/" + argv[a] + ".bmp").c_str());
+        printf("%s %dx%d %d bpp\n", arg, t.width, t.height, info->bitsPerPixel);
+        SDL_SaveBMP(s, (std::string(argv[2]) + "/" + arg + ".bmp").c_str());
         SDL_FreeSurface(s);
     }
     printf("texture_test: %d decoded, %d failed\n", ok, failed);

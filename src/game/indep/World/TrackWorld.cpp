@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/SolidMesh.h"
 
 namespace {
@@ -168,11 +169,13 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
 
 void TrackWorld::ClearCars() { m_cars.clear(); }
 
-void TrackWorld::AddToCells(const Tri &w)
+void TrackWorld::AddToCells(const Tri &w, const RTri &r)
 {
     float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
     int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
-    m_cells[CellKey(gx, gy)].tris.push_back(w);
+    Cell &cell = m_cells[CellKey(gx, gy)];
+    cell.tris.push_back(w);
+    cell.render.push_back(r);
     ++m_triangleCount;
 }
 
@@ -181,9 +184,10 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
     size_t enabled = 0;
     for (Barrier &b : m_barriers)
         if (!b.tris.empty() && keep(b.bbox)) {
-            for (const Tri &t : b.tris)
-                AddToCells(t);
+            for (size_t i = 0; i < b.tris.size(); ++i)
+                AddToCells(b.tris[i], b.render[i]);
             b.tris.clear(); // enabled once per load
+            b.render.clear();
             ++enabled;
         }
     printf("[World] %zu of %zu race barriers enabled\n", enabled, m_barriers.size());
@@ -265,8 +269,12 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
 {
     const uint8_t *d = stream.data();
     const size_t n = stream.size();
+    ReleaseGL();
     m_cells.clear();
     m_barriers.clear();
+    m_packs.clear();
+    m_tpkData.clear();
+    m_textures.clear();
     m_triangleCount = m_instances = 0;
 
     // Solids by name hash (UG2 solid loader 0x001bf3b8 keeps the same per-solid chunk layout).
@@ -274,6 +282,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
         size_t body, size;
         bool decoded = false;
         std::vector<SolidMesh::Triangle> tris;
+        std::vector<uint32_t> textures; // 0x134012: (name hash, 0) pairs, indexed by TextureNumber
     };
     std::unordered_map<uint32_t, SolidRef> solids;
     std::vector<std::pair<size_t, size_t>> sections;
@@ -282,13 +291,30 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
             ForEachChunk(d, body, body + len, [&](uint32_t sid, size_t sbody, size_t slen) {
                 if (sid != kChunkSolid)
                     return;
+                SolidRef ref{sbody, slen, false, {}, {}};
+                uint32_t hash = 0;
                 ForEachChunk(d, sbody, sbody + slen, [&](uint32_t hid, size_t hbody, size_t hlen) {
                     if (hid == kChunkSolidHeader && hlen >= 0x14)
-                        solids[Read32(d + hbody + 0x10)] = {sbody, slen, false, {}};
+                        hash = Read32(d + hbody + 0x10);
+                    if (hid == 0x134012)
+                        for (size_t k = 0; k + 8 <= hlen; k += 8)
+                            ref.textures.push_back(Read32(d + hbody + k));
                 });
+                if (hash)
+                    solids[hash] = std::move(ref);
             });
         } else if (id == kChunkScenerySection) {
             sections.emplace_back(body, len);
+        } else if (id == 0xb3300000) {
+            // Texture pack: keep a copy (the stream buffer is freed after loading).
+            auto data = std::make_unique<std::vector<uint8_t>>(d + body - 8, d + body + len);
+            auto pack = std::make_unique<TexturePack>();
+            if (pack->Parse(data->data(), data->size())) {
+                for (size_t i = 0; i < pack->Count(); ++i)
+                    m_textures[pack->At(i).nameHash] = {pack.get(), i};
+                m_tpkData.push_back(std::move(data));
+                m_packs.push_back(std::move(pack));
+            }
         }
     });
 
@@ -361,18 +387,37 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
                 }
                 if (!Shade(w, br, bg, bb))
                     continue; // degenerate
+                RTri rt;
+                rt.tex = t.tex >= 0 && size_t(t.tex) < s.textures.size() && m_textures.count(s.textures[t.tex])
+                             ? s.textures[t.tex]
+                             : 0;
+                for (int k = 0; k < 3; ++k) {
+                    const SolidMesh::Point &p = t.v[k];
+                    RVertex &v = rt.v[k];
+                    v.x = w.v[k * 3], v.y = w.v[k * 3 + 1], v.z = w.v[k * 3 + 2];
+                    v.u = p.u, v.v = p.v;
+                    if (rt.tex) { // PS2 vertex colour: 128 = 1.0
+                        v.r = uint8_t(std::min(255, p.r * 2)), v.g = uint8_t(std::min(255, p.g * 2));
+                        v.b = uint8_t(std::min(255, p.b * 2));
+                    } else {
+                        v.r = w.shade[0], v.g = w.shade[1], v.b = w.shade[2];
+                    }
+                    v.a = 255;
+                }
                 if (kind == kBarrier) {
                     if (m_barriers.empty() || memcmp(m_barriers.back().bbox, bbox, sizeof(bbox)) != 0) {
                         m_barriers.emplace_back();
                         memcpy(m_barriers.back().bbox, bbox, sizeof(bbox));
                     }
                     m_barriers.back().tris.push_back(w);
+                    m_barriers.back().render.push_back(rt);
                     continue;
                 }
-                AddToCells(w);
+                AddToCells(w, rt);
             }
         }
     }
+    printf("[World] %zu texture packs, %zu textures\n", m_packs.size(), m_textures.size());
     printf("[World] %zu solids, %zu scenery sections, %zu instances placed (%zu skipped), %zu triangles, %zu cells\n",
            solids.size(), sections.size(), m_instances, unresolved, m_triangleCount, m_cells.size());
     if (!m_instances)

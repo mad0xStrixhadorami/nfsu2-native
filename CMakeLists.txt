@@ -53,7 +53,8 @@ add_executable(nfsu2 ${NFSU2_SOURCES})
 target_include_directories(nfsu2 PRIVATE include src)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswresample)
-target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng PkgConfig::FFMPEG)
+find_package(OpenGL REQUIRED)
+target_link_libraries(nfsu2 PRIVATE SDL2::SDL2 bware feng PkgConfig::FFMPEG OpenGL::GL)
 target_compile_options(nfsu2 PRIVATE -Wall -Wextra)
 
 

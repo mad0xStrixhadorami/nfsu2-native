@@ -20,6 +20,9 @@ struct TextureInfo {
     uint32_t dataOffset, paletteOffset, dataSize, paletteSize;
     uint16_t width, height;
     uint8_t bitsPerPixel;
+    // As MW's TextureInfo +0x55/+0x56: usage 0 none, 1 punch-through, 2 modulated; blend 0 copy,
+    // 1 blend, 2 additive, ... (roads use "modulated + copy": their alpha is not opacity).
+    uint8_t alphaUsage = 0, alphaBlend = 0;
     const uint8_t *pixels = nullptr;  // resolved at parse time (inside the bundle or a decompressed copy)
     const uint8_t *palette = nullptr;
 };

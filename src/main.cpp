@@ -130,6 +130,10 @@ int main(int argc, char **argv)
         }
     }
     // FEng screen space is 640x480; open at 2x.
+    // The world renderer draws with OpenGL inside SDL's OpenGL render backend; it needs a depth
+    // buffer (ISSUES.md #108). The FEng screens keep using the SDL_Renderer API.
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_Window *win = SDL_CreateWindow("Need for Speed Underground 2 (native)", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, 1280, 960, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -564,7 +568,8 @@ int main(int argc, char **argv)
             SDL_GetRendererOutputSize(ren, &w, &h);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
-            world.Render(ren, camera, w, h);
+            if (!world.RenderGL(ren, camera, w, h))
+                world.Render(ren, camera, w, h);
             SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             engine->Render();
             static Uint32 fpsStart = now, fpsFrames = 0;

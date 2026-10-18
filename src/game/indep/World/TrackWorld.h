@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +36,9 @@ public:
     // The race's first single marker (start/finish line) position.
     bool LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const;
     void Render(SDL_Renderer *renderer, const Camera &cam, int width, int height);
+    // Hardware path (TrackWorldGL.cpp): draws the world with OpenGL and a depth buffer between
+    // SDL_Renderer batches. Returns false when the renderer is not SDL's OpenGL backend.
+    bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height);
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z) const;
@@ -60,8 +64,19 @@ private:
         uint8_t shade[3]; // base colour from the surface normal and the solid kind
         uint8_t ground;   // normal within ~37 deg of vertical: drawn before cars
     };
+    // Render data (textured): world-space vertices with UV and pre-lit colour, and the texture
+    // name hash (0 = untextured, drawn in the flat shade colour).
+    struct RVertex {
+        float x, y, z, u, v;
+        uint8_t r, g, b, a;
+    };
+    struct RTri {
+        RVertex v[3];
+        uint32_t tex;
+    };
     struct Cell {
-        std::vector<Tri> tris;
+        std::vector<Tri> tris;    // positions for physics and the software renderer
+        std::vector<RTri> render; // consumed by the GL upload
     };
     static constexpr float kCellSize = 64.0f;
     static int64_t CellKey(int cx, int cy) { return (int64_t(cx) << 32) ^ uint32_t(cy); }
@@ -83,7 +98,30 @@ private:
     struct Barrier {
         float bbox[6];
         std::vector<Tri> tris;
+        std::vector<RTri> render;
     };
     std::vector<Barrier> m_barriers;
-    void AddToCells(const Tri &t);
+    // OpenGL vertex buffers per cell, built on first use (TrackWorldGL.cpp).
+    struct GLRange {
+        unsigned texture; // GL texture name (a white 1x1 for untextured triangles)
+        int first, count;
+        int mode;         // 0 opaque / punch-through, 1 alpha blend, 2 additive
+    };
+    struct GLCell {
+        unsigned buffer = 0;
+        int vertices = 0;
+        std::vector<GLRange> ranges; // per texture
+    };
+    unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
+    void ReleaseGL();
+    std::unordered_map<uint32_t, unsigned> m_glTextures;
+    std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode
+    unsigned m_glWhite = 0;
+    std::unordered_map<int64_t, GLCell> m_glCells;
+    int m_glState = 0; // 0 unknown, 1 available, -1 unavailable
+    void AddToCells(const Tri &t, const RTri &r);
+    // Texture packs (0xb3300000) copied out of the stream; textures resolved by name hash.
+    std::vector<std::unique_ptr<std::vector<uint8_t>>> m_tpkData;
+    std::vector<std::unique_ptr<class TexturePack>> m_packs;
+    std::unordered_map<uint32_t, std::pair<const class TexturePack *, size_t>> m_textures;
 };
