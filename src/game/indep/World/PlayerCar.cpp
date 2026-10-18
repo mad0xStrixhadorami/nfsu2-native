@@ -110,14 +110,15 @@ void PlayerCar::Place(float x, float y, float z, float yaw)
     m_speed = m_vz = m_pitch = m_roll = 0;
 }
 
-void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls)
+void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls,
+                       float power)
 {
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
 
     // Longitudinal: engine, brakes (reverse once stopped), aerodynamic drag and rolling resistance.
     if (throttle > 0)
-        m_speed += kAccel * throttle * (1.0f - std::max(0.0f, m_speed) / kTopSpeed) * dt;
+        m_speed += kAccel * power * throttle * (1.0f - std::max(0.0f, m_speed) / kTopSpeed) * dt;
     if (brake > 0)
         m_speed -= (m_speed > 0.5f ? kBrake : kAccel * 0.5f) * brake * dt;
     m_speed -= (kDrag * m_speed * std::fabs(m_speed) + (m_speed > 0 ? kRolling : m_speed < 0 ? -kRolling : 0)) * dt;

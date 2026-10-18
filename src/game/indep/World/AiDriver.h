@@ -14,6 +14,9 @@ public:
     float Update(const TrackWorld &world, float dt, bool go);
     float Progress() const { return m_progress; }
     PlayerCar *Car() const { return m_car; }
+    // Engine torque scale passed to the car (the drag gearbox drives the player's route-following
+    // driver under NFSU2_AUTODRIVE / NFSU2_DRAG_AUTO; ISSUES #115).
+    void SetPower(float p) { m_power = p; }
 
 private:
     PlayerCar *m_car = nullptr;
@@ -24,4 +27,5 @@ private:
     float m_progress = 0;
     float m_steer = 0;
     float m_stuck = 0; // seconds without progress while trying to drive
+    float m_power = 1; // engine torque scale (drag gearbox)
 };

@@ -116,15 +116,33 @@ float RaceRoute::Project(float x, float y, float hint, float window) const
     for (size_t i = 0; i < edges; ++i) {
         const Point &a = m_points[i], &b = m_points[(i + 1) % n];
         float s0 = m_dist[i];
-        if (hint >= 0 && std::fabs(Delta(hint, s0)) > window + 40.0f)
-            continue;
         float ex = b.x - a.x, ey = b.y - a.y, len2 = ex * ex + ey * ey;
+        float elen = std::sqrt(len2);
+        // Keep only edges whose distance *range* [s0, s0+elen] is within the window. Comparing the
+        // hint against the edge start alone drops long edges that contain the hint (the drag strip's
+        // ~240 m edges made progress jump a whole edge, ISSUES #115).
+        if (hint >= 0) {
+            float gap;
+            if (m_closed) {
+                auto rel = [&](float s) {
+                    float d = std::fmod(s - hint, m_length);
+                    return d < 0 ? d + m_length : d;
+                };
+                float ra = rel(s0), rb = rel(s0 + elen);
+                gap = ra <= rb ? std::min(ra, m_length - rb) : 0.0f;
+            } else {
+                float s1 = s0 + elen;
+                gap = hint < s0 ? s0 - hint : hint > s1 ? hint - s1 : 0.0f;
+            }
+            if (gap > window + 40.0f)
+                continue;
+        }
         float t = len2 > 0 ? std::clamp(((x - a.x) * ex + (y - a.y) * ey) / len2, 0.0f, 1.0f) : 0.0f;
         float px = a.x + ex * t, py = a.y + ey * t;
         float d = Dist(x, y, px, py);
         if (d < best) {
             best = d;
-            bestS = s0 + t * std::sqrt(len2);
+            bestS = s0 + t * elen;
         }
     }
     if (hint >= 0 && best > 1e29f)

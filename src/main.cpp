@@ -279,6 +279,7 @@ int main(int argc, char **argv)
     RaceSession::Config raceConfig;
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
+    const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
     auto enterWorld = [&](const std::string &region) {
         // LoadingRegion (0x002ddb40): show Loading.fng while the region streams in.
         if (engine->PushPackage("Loading.fng", 0, 0xff)) {
@@ -309,6 +310,9 @@ int main(int argc, char **argv)
             raceNumber = atoi(n);
         raceConfig = RaceSession::Config();
         raceConfig.laps = startup.RaceLaps();
+        raceConfig.type = startup.RaceType();
+        if (const char *t = getenv("NFSU2_RACETYPE"))
+            raceConfig.type = atoi(t);
         for (const RaceInfo &r : fe.Races())
             if (r.number == raceNumber)
                 raceConfig.trackLength = float(r.length);
@@ -354,9 +358,14 @@ int main(int argc, char **argv)
             raceConfig.dirX = std::cos(camera.yaw);
             raceConfig.dirY = std::sin(camera.yaw);
             raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY);
-            if (route.Valid())
+            if (route.Valid()) {
                 raceConfig.lineS = route.Project(raceConfig.hasLine ? raceConfig.lineX : grid[0].x,
                                                  raceConfig.hasLine ? raceConfig.lineY : grid[0].y);
+                if (getenv("NFSU2_WORLD_DEBUG"))
+                    printf("[World] line %s %.1f,%.1f lineS %.1f grid0 %.1f,%.1f s %.1f\n",
+                           raceConfig.hasLine ? "marker" : "grid", raceConfig.lineX, raceConfig.lineY,
+                           raceConfig.lineS, grid[0].x, grid[0].y, route.Project(grid[0].x, grid[0].y));
+            }
             camera.z += 2.0f;
         }
         // The player car (stand-in for the unported car loader / physics, ISSUES.md #105).
@@ -511,24 +520,37 @@ int main(int argc, char **argv)
                 // Drive: Up throttle, Down brake/reverse, Left/Right steer (eased for digital input).
                 float target = (pad & FENativeInterface::kPadLeft) ? 1.0f : (pad & FENativeInterface::kPadRight) ? -1.0f : 0.0f;
                 steer += std::clamp(target - steer, -4.0f * dt, 4.0f * dt);
-                float throttle = (autoDrive || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
+                // inputThrottle also revs the drag gearbox during the countdown (the car still gets
+                // no throttle until green, below).
+                const float inputThrottle = (autoDrive || dragAuto || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
+                float throttle = inputThrottle;
                 float brake = (pad & FENativeInterface::kPadDown) ? 1.0f : 0.0f;
                 std::vector<float> rivals;
                 for (size_t i = 0; i < ai.size(); ++i)
                     rivals.push_back(race.RaceDistance(aiStartS[i], ai[i].Progress()));
                 if (!race.Update(car, rivals, dt)) {
-                    // Countdown, or race over: no throttle; brake to a stop after the finish.
+                    // Countdown, or race over: no throttle; brake to a stop after the finish
+                    // (braking at rest would drive the car backwards).
                     throttle = 0;
-                    brake = race.GetPhase() == RaceSession::kFinished ? 1.0f : 0.0f;
+                    brake = race.GetPhase() == RaceSession::kFinished && car.Speed() > 0.5f ? 1.0f : 0.0f;
                 }
                 const bool go = race.GetPhase() != RaceSession::kCountdown;
-                if (autoDrive && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
+                // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
+                float power = 1.0f;
+                if (race.IsDrag() && race.GetPhase() != RaceSession::kFinished) {
+                    bool shift = (pressed & (FENativeInterface::kPadRTrigger | FENativeInterface::kPadAccept)) != 0;
+                    if (dragAuto && race.NeedShift())
+                        shift = true;
+                    power = race.DragUpdate(car.Speed(), inputThrottle, shift, dt);
+                }
+                if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.
                     if (playerAi.Car() != &car)
                         playerAi.Init(&car, &route, 0.0f, 0.95f);
+                    playerAi.SetPower(power);
                     playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
                 } else {
-                    car.Update(world, throttle, brake, steer, dt);
+                    car.Update(world, throttle, brake, steer, dt, true, power);
                 }
                 for (AiDriver &d : ai)
                     d.Update(world, dt, go);
@@ -588,6 +610,8 @@ int main(int argc, char **argv)
                            race.RaceDistance(aiStartS[i], ai[i].Progress()));
                 printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s race %.1f m\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
                        car.X(), car.Y(), car.Z(), car.Speed(), race.PlayerDistance());
+                if (race.IsDrag() && getenv("NFSU2_WORLD_DEBUG"))
+                    printf("[Drag] gear %d rpm %.0f\n", race.Gear(), race.Rpm());
                 fpsStart = now;
                 fpsFrames = 0;
             }

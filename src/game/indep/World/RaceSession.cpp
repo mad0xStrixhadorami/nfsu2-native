@@ -37,6 +37,28 @@ std::string FormatTime(float seconds)
     snprintf(text, sizeof(text), "%d:%05.2f", minutes, seconds - minutes * 60.0f);
     return text;
 }
+
+// Drag gearbox curves (stand-in, see RaceSession::IsDrag): the wheel speed at the rev limiter in
+// each gear (within the arcade car's ~45 m/s realistic top speed, so a clean run uses all six),
+// and an engine torque curve with a power band that rewards shifting at the right time.
+const float kGearTop[] = {11.0f, 20.0f, 30.0f, 40.0f, 49.0f, 58.0f};
+// Revs a held throttle settles at during the countdown / at low speed: inside the perfect-launch
+// window (digital buttons cannot hold a partial throttle, so a full hold is the "perfect" launch).
+constexpr float kLaunchRev = 6900.0f;
+float EngineTorque(float rpm)
+{
+    constexpr float kIdle = 1000.0f, kRedline = 7600.0f;
+    if (rpm > kRedline)
+        return 0.0f;
+    if (rpm < kIdle)
+        return 0.5f;
+    float t = (rpm - kIdle) / (kRedline - kIdle);
+    if (t < 0.35f)
+        return 0.55f + 0.6f * (t / 0.35f);
+    if (t < 0.85f)
+        return 1.15f;
+    return 1.15f - 0.3f * ((t - 0.85f) / 0.15f);
+}
 } // namespace
 
 void RaceSession::Begin(FEPackage *hud, const Config &config)
@@ -55,9 +77,14 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_progress = 0;
     m_position = 1;
     m_wrongWay = 0;
+    m_gear = 1;
+    m_rpm = kIdle;
+    m_launchRpm = 0;
+    m_launchBoost = 1;
+    m_boostTime = 0;
     SetupHud();
-    printf("[Race] begin: %d laps, track %.0f m, line %s\n", m_config.laps, config.trackLength,
-           config.hasLine ? "from markers" : "none");
+    printf("[Race] begin: %d laps, type %d, track %.0f m, line %s\n", m_config.laps, config.type,
+           config.trackLength, config.hasLine ? "from markers" : "none");
 }
 
 void RaceSession::SetupHud()
@@ -112,6 +139,39 @@ void RaceSession::CompleteLap()
     }
 }
 
+void RaceSession::Shift()
+{
+    if (m_phase == kRacing && m_gear < kGears)
+        ++m_gear;
+}
+
+// Drag transmission: free-rev during the countdown, then a wheel-speed-driven rev in the current
+// gear; the returned torque scale feeds PlayerCar::Update, so not upshifting pins the car to the
+// limiter. The launch boost comes from the revs held at green (a "perfect launch").
+float RaceSession::DragUpdate(float speed, float throttle, bool shift, float dt)
+{
+    if (m_phase == kCountdown) {
+        float target = kIdle + std::clamp(throttle, 0.0f, 1.0f) * (kLaunchRev - kIdle);
+        m_rpm += (target - m_rpm) * std::min(1.0f, 6.0f * dt);
+        m_launchRpm = m_rpm;
+        return 0.0f;
+    }
+    if (shift)
+        Shift();
+    float ratio = std::clamp(speed / kGearTop[std::clamp(m_gear - 1, 0, kGears - 1)], 0.0f, 1.1f);
+    float engaged = kIdle + ratio * (kRedline - kIdle);
+    // Clutch slip: below ~5 m/s the engine follows the throttle rather than the wheels.
+    float clutch = std::clamp(1.0f - speed / 5.0f, 0.0f, 1.0f);
+    float free = kIdle + std::clamp(throttle, 0.0f, 1.0f) * (kLaunchRev - kIdle);
+    m_rpm = engaged * (1.0f - clutch) + free * clutch;
+    float boost = 1.0f;
+    if (m_boostTime > 0) {
+        boost = m_launchBoost;
+        m_boostTime = std::max(0.0f, m_boostTime - dt);
+    }
+    return EngineTorque(m_rpm) * boost;
+}
+
 // Progress along the decoded route: laps, finish, position and wrong way.
 void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &opponents, float dt)
 {
@@ -163,6 +223,9 @@ bool RaceSession::Update(const PlayerCar &car, const std::vector<float> &opponen
         if (m_countdown <= 0) {
             m_phase = kRacing;
             m_goShown = 1.0f;
+            // Launch quality from the revs held at green: a window around 5500-7000 rpm is good.
+            m_launchBoost = m_launchRpm >= 5200.0f && m_launchRpm <= 7000.0f ? 1.2f : m_launchRpm > 4200.0f ? 1.0f : 0.75f;
+            m_boostTime = 1.5f;
         }
     } else if (m_phase == kRacing) {
         m_lapTime += dt;
@@ -195,22 +258,30 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         FENativeInterface::SetVisible(m_hud, kCountdownText, false);
     }
 
-    // Speedometer (km/h, the PAL default) and a stand-in automatic gearbox for gear and needle.
+    // Speedometer (km/h, the PAL default) and the tachometer. A drag race shows the real manual
+    // gearbox (m_gear / m_rpm); otherwise a stand-in automatic for gear and needle.
     const float speed = std::fabs(car.Speed());
     snprintf(text, sizeof(text), "%d", int(speed * 3.6f + 0.5f));
     FENativeInterface::SetString(m_hud, kSpeed, text);
-    constexpr float kGearSpan = 11.0f; // m/s per gear
-    int gear = std::min(6, 1 + int(speed / kGearSpan));
-    float rpm = car.Speed() < -0.5f ? 1000.0f + speed / 12.0f * 5000.0f
-                                    : 1000.0f + std::fmod(speed, kGearSpan) / kGearSpan * 6500.0f;
-    if (gear == 6 && speed > 6 * kGearSpan)
-        rpm = 7500.0f;
-    const char *gearText = car.Speed() < -0.5f ? "R" : speed < 0.5f ? "N" : nullptr;
-    if (gearText)
-        FENativeInterface::SetString(m_hud, kGear, gearText);
-    else {
-        snprintf(text, sizeof(text), "%d", gear);
+    float rpm;
+    if (IsDrag()) {
+        rpm = m_rpm;
+        snprintf(text, sizeof(text), "%d", std::clamp(m_gear, 1, kGears));
         FENativeInterface::SetString(m_hud, kGear, text);
+    } else {
+        constexpr float kGearSpan = 11.0f; // m/s per gear
+        int gear = std::min(6, 1 + int(speed / kGearSpan));
+        rpm = car.Speed() < -0.5f ? 1000.0f + speed / 12.0f * 5000.0f
+                                  : 1000.0f + std::fmod(speed, kGearSpan) / kGearSpan * 6500.0f;
+        if (gear == 6 && speed > 6 * kGearSpan)
+            rpm = 7500.0f;
+        const char *gearText = car.Speed() < -0.5f ? "R" : speed < 0.5f ? "N" : nullptr;
+        if (gearText)
+            FENativeInterface::SetString(m_hud, kGear, gearText);
+        else {
+            snprintf(text, sizeof(text), "%d", gear);
+            FENativeInterface::SetString(m_hud, kGear, text);
+        }
     }
     // Needle sweep as MW's CalcAngleForRPM (66..294 degrees over 0..max rpm).
     if (FEObject *needle = m_hud->FindObjectByHash(kNeedle))
@@ -221,6 +292,8 @@ void RaceSession::UpdateHud(const PlayerCar &car)
             d->Rot.z = std::sin(angle * 0.5f);
             d->Rot.w = std::cos(angle * 0.5f);
         }
+    // Drag shift light (part of the HUD package, ISSUES #106): on near the limiter.
+    FENativeInterface::SetVisible(m_hud, kShiftLight, IsDrag() && m_phase == kRacing && ShiftLight());
 
     // Lap counter and lap time.
     snprintf(text, sizeof(text), "%d", std::min(m_lap, m_config.laps));

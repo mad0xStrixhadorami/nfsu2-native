@@ -62,6 +62,6 @@ float AiDriver::Update(const TrackWorld &world, float dt, bool go)
         }
     }
     m_steer += std::clamp(steer - m_steer, -4.0f * dt, 4.0f * dt);
-    car.Update(world, throttle, brake, m_steer, dt, /*walls=*/false);
+    car.Update(world, throttle, brake, m_steer, dt, /*walls=*/false, m_power);
     return m_progress;
 }

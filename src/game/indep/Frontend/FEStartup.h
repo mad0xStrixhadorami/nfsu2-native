@@ -47,6 +47,7 @@ public:
     int RaceNumber() const { return m_raceNumber; } // chosen track, 0 for Free Run
     // Back from a race (stand-in for the pause menu's Quit Race / post-race Continue): UI_Main.fng.
     void ReturnFromRace();
+    int RaceType() const { return m_raceType; } // DAT_004f13b0: 0 circuit .. 10 street x
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
 

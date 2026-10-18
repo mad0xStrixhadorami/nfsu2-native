@@ -13,6 +13,7 @@ class RaceSession {
 public:
     struct Config {
         int laps = 2;
+        int type = 0;             // DAT_004f13b0: 0 circuit, 1 sprint, 2 drag, 3 drift, 4 URL, 10 street x
         float trackLength = 0;    // metres, race record +0x98
         bool hasLine = false;     // start/finish line from the race's TrackPosMarkers
         float lineX = 0, lineY = 0;
@@ -36,12 +37,27 @@ public:
     float TotalTime() const { return m_totalTime; }
     float BestLap() const { return m_bestLap; }
 
+    // Drag race (type 2): a manual gearbox. UG2's transmission (0x0031d570 physics / 0x0025d4d8
+    // race setup) is not ported, so this is a stand-in -- throttle free-revs the engine during the
+    // countdown, the launch quality comes from the revs at green, and the player upshifts (Shift)
+    // to stay off the limiter. DragUpdate returns the engine torque scale for PlayerCar::Update.
+    bool IsDrag() const { return m_config.type == 2; }
+    void Shift();
+    float DragUpdate(float speed, float throttle, bool shift, float dt);
+    int Gear() const { return m_gear; }
+    float Rpm() const { return m_rpm; }
+    bool NeedShift() const { return m_rpm > kAutoShiftRpm; } // test aid (NFSU2_DRAG_AUTO)
+    bool ShiftLight() const { return m_rpm > kRedline * 0.92f; }
+
 private:
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
     void UpdateRoute(const PlayerCar &car, const std::vector<float> &opponents, float dt);
     void UpdateLine(const PlayerCar &car);
     void CompleteLap();
+
+    static constexpr float kIdle = 1000.0f, kRedline = 7600.0f, kAutoShiftRpm = 7300.0f;
+    static constexpr int kGears = 6;
 
     FEPackage *m_hud = nullptr;
     Config m_config;
@@ -60,4 +76,10 @@ private:
     float m_progress = 0;      // unwrapped metres driven along the route
     int m_position = 1;
     float m_wrongWay = 0;      // seconds spent driving against the route
+    // Drag gearbox (see IsDrag).
+    int m_gear = 1;
+    float m_rpm = kIdle;
+    float m_launchRpm = 0;     // engine speed when the countdown hit green
+    float m_launchBoost = 1;   // torque multiplier from the launch quality
+    float m_boostTime = 0;     // seconds the launch boost still applies
 };
