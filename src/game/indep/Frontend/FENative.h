@@ -1,4 +1,5 @@
 #pragma once
+#include "game/indep/World/SolidMesh.h"
 #include <SDL.h>
 
 #include <cstdint>
@@ -193,6 +194,7 @@ private:
     std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     std::vector<PreviewTriangle> m_carPreviewTris;
+    std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;

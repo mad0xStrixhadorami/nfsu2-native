@@ -11,24 +11,9 @@
 #include <SDL_opengl.h>
 
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/GLBridge.h"
 
 namespace {
-typedef void(APIENTRY *PFNGENBUFFERS)(GLsizei, GLuint *);
-typedef void(APIENTRY *PFNBINDBUFFER)(GLenum, GLuint);
-typedef void(APIENTRY *PFNBUFFERDATA)(GLenum, ptrdiff_t, const void *, GLenum);
-typedef void(APIENTRY *PFNUSEPROGRAM)(GLuint);
-typedef void(APIENTRY *PFNDELETEBUFFERS)(GLsizei, const GLuint *);
-PFNDELETEBUFFERS pglDeleteBuffers;
-PFNGENBUFFERS pglGenBuffers;
-PFNBINDBUFFER pglBindBuffer;
-PFNBUFFERDATA pglBufferData;
-PFNUSEPROGRAM pglUseProgram;
-
-constexpr GLenum kArrayBuffer = 0x8892;       // GL_ARRAY_BUFFER
-constexpr GLenum kStaticDraw = 0x88E4;        // GL_STATIC_DRAW
-constexpr GLenum kCurrentProgram = 0x8B8D;    // GL_CURRENT_PROGRAM
-constexpr GLenum kArrayBufferBinding = 0x8894; // GL_ARRAY_BUFFER_BINDING
-
 struct Vertex {
     float x, y, z, u, v;
     uint8_t r, g, b, a;
@@ -39,8 +24,8 @@ void TrackWorld::ReleaseGL()
 {
     if (m_glState == 1) {
         for (auto &[key, cell] : m_glCells)
-            if (cell.buffer && pglDeleteBuffers)
-                pglDeleteBuffers(1, &cell.buffer);
+            if (cell.buffer)
+                GLBridge::DeleteBuffers(1, &cell.buffer);
         for (auto &[hash, tex] : m_glTextures)
             glDeleteTextures(1, &tex);
     }
@@ -92,52 +77,17 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
 
 bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height)
 {
-    if (m_glState == 0) {
-        SDL_RendererInfo info;
-        m_glState = -1;
-        if (!getenv("NFSU2_SOFTWARE_WORLD") && SDL_GetRendererInfo(renderer, &info) == 0 &&
-            strcmp(info.name, "opengl") == 0) {
-            pglGenBuffers = reinterpret_cast<PFNGENBUFFERS>(SDL_GL_GetProcAddress("glGenBuffers"));
-            pglBindBuffer = reinterpret_cast<PFNBINDBUFFER>(SDL_GL_GetProcAddress("glBindBuffer"));
-            pglBufferData = reinterpret_cast<PFNBUFFERDATA>(SDL_GL_GetProcAddress("glBufferData"));
-            pglUseProgram = reinterpret_cast<PFNUSEPROGRAM>(SDL_GL_GetProcAddress("glUseProgram"));
-            pglDeleteBuffers = reinterpret_cast<PFNDELETEBUFFERS>(SDL_GL_GetProcAddress("glDeleteBuffers"));
-            int depth = 0;
-            SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depth);
-            if (pglGenBuffers && pglBindBuffer && pglBufferData && pglUseProgram && depth >= 16)
-                m_glState = 1;
-            printf("[World] OpenGL renderer %s (%s, depth %d)\n", m_glState == 1 ? "on" : "unavailable",
-                   glGetString(GL_RENDERER) ? reinterpret_cast<const char *>(glGetString(GL_RENDERER)) : "?", depth);
-        }
-    }
+    if (m_glState == 0)
+        m_glState = GLBridge::Available(renderer) ? 1 : -1;
     if (m_glState != 1)
         return false;
 
     constexpr float kDrawDistance = 900.0f, kNear = 0.3f, kFogStart = 200.0f;
     const float fogColour[4] = {0.55f, 0.62f, 0.72f, 1.0f};
 
-    // Let SDL submit its queued commands (the clear), then take over the GL state.
-    SDL_RenderFlush(renderer);
-    GLint program = 0, arrayBuffer = 0;
-    glGetIntegerv(kCurrentProgram, &program);
-    glGetIntegerv(kArrayBufferBinding, &arrayBuffer);
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-    glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glMatrixMode(GL_TEXTURE);
-    glPushMatrix();
-    glLoadIdentity();
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    pglUseProgram(0);
-
+    GLBridge::Scope scope(renderer);
     glViewport(0, 0, width, height);
-    glDisable(GL_SCISSOR_TEST);
     glDisable(GL_TEXTURE_2D);
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE); // strip winding is not known
-    glDisable(GL_LIGHTING);
     glShadeModel(GL_FLAT);
 
     // Sky: vertical gradient over the whole view.
@@ -239,9 +189,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                     cell.ranges.back().count += 3;
                 }
                 if (!cell.buffer)
-                    pglGenBuffers(1, &cell.buffer);
-                pglBindBuffer(kArrayBuffer, cell.buffer);
-                pglBufferData(kArrayBuffer, ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data(), kStaticDraw);
+                    GLBridge::GenBuffers(1, &cell.buffer);
+                GLBridge::BindArrayBuffer(cell.buffer);
+                GLBridge::ArrayBufferData(ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
                 cell.vertices = int(scratch.size());
                 std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
             }
@@ -256,7 +206,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             glDepthMask(GL_FALSE);
         }
         for (const GLCell *cell : drawn) {
-            pglBindBuffer(kArrayBuffer, cell->buffer);
+            GLBridge::BindArrayBuffer(cell->buffer);
             glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
             glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
@@ -274,7 +224,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glDepthMask(GL_TRUE);
 
     // Cars: rebuilt every frame from client memory (untextured: white texture).
-    pglBindBuffer(kArrayBuffer, 0);
+    GLBridge::BindArrayBuffer(0);
     glBindTexture(GL_TEXTURE_2D, GLTexture(0));
     glShadeModel(GL_FLAT);
     for (const Car &car : m_cars) {
@@ -287,16 +237,5 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDrawArrays(GL_TRIANGLES, 0, GLsizei(scratch.size()));
     }
 
-    // Hand the state back to SDL.
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
-    glMatrixMode(GL_TEXTURE);
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glPopClientAttrib();
-    glPopAttrib();
-    pglBindBuffer(kArrayBuffer, GLuint(arrayBuffer));
-    pglUseProgram(GLuint(program));
     return true;
 }

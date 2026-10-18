@@ -24,6 +24,8 @@ extern FEMultiPool ObjDataPool; // FEObject.cpp: pool for FEObject transform dat
 #include "game/bWare/bCompression.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/ModelViewGL.h"
+#include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/SolidMesh.h"
 
 void SetActiveFEngineForWrapper(FEngine *engine);
@@ -130,6 +132,11 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         fprintf(stderr, "[CarPreview] no geometry decoded from %s\n", path.c_str());
         return false;
     }
+    // The stock body as assembled for racing (PlayerCar), drawn with GL when available.
+    PlayerCar assembled;
+    m_carPreviewModel.clear();
+    if (assembled.LoadModel(geometry))
+        m_carPreviewModel = assembled.Model();
     m_carPreviewTris.clear();
     m_carPreviewSplatsBuilt = false;
     m_carPreviewTris.reserve(decoded.size());
@@ -167,6 +174,24 @@ void FENativeInterface::RenderCarPreviewOverlay()
     }
     if (m_carPreviewTris.empty())
         return;
+
+    // GL path: the assembled car, slowly turning, in the screen's preview area (FEng 160..480 x
+    // 190..390, mapped to window pixels).
+    if (!m_carPreviewModel.empty()) {
+        int x0, y0, x1, y1;
+        SDL_RenderLogicalToWindow(m_renderer, 150.0f, 180.0f, &x0, &y0);
+        SDL_RenderLogicalToWindow(m_renderer, 490.0f, 395.0f, &x1, &y1);
+        int winW, winH, outW, outH;
+        SDL_GetWindowSize(SDL_RenderGetWindow(m_renderer), &winW, &winH);
+        SDL_GetRendererOutputSize(m_renderer, &outW, &outH);
+        float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
+        SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
+        float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
+        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255})) {
+            DrawCarPreviewLabel(pkg);
+            return;
+        }
+    }
 
     // Draw the decoded vertices as depth-sorted splats. Strip triangle topology is not
     // recoverable without executing the mesh VU microprogram, and the best-effort triangle
