@@ -42,6 +42,13 @@ constexpr uint32_t kDriftBestTime = 0x06e9a0fe; // BestLapTimeText
 constexpr uint32_t kDriftAngleDeg = 0x30787b84; // Angle_degrees
 constexpr uint32_t kDriftAngleData = 0xb5c6103b;// Angle_Indicator_DATA
 constexpr uint32_t kCommentData = 0xd555b3ab;   // Comment_DATA
+// Standings board (LeaderBoardGroup) used by URL races; the row children are anonymous, addressed by
+// their ordinal hash. Position number strings and the name strings of the four rows.
+constexpr uint32_t kLeaderBoardGroup = 0x5ed609a1;
+constexpr uint32_t kBoardPos[4] = {0x4183e0a1, 0x4183e0a2, 0x4183e0a3, 0x4183e0a4};
+constexpr uint32_t kBoardName[4] = {0x2af89fd7, 0x2af89fd8, 0x2af89fd9, 0x2af89fda};
+constexpr uint32_t kBoardPlate[4] = {0x4fddd64c, 0x4fddd64d, 0x4fddd64e, 0x4fddd64f};
+constexpr uint32_t kBoardIcon[4] = {0xfa3d7b71, 0xfa3d7b72, 0xfa3d7b73, 0xfa3d7b74};
 
 std::string FormatTime(float seconds)
 {
@@ -104,6 +111,12 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_driftAngle = m_driftChain = m_driftTotal = m_driftTime = m_driftIdle = 0;
     m_driftMult = 1;
     m_haveYaw = false;
+    m_eliminated.assign(std::max(0, m_config.racers - 1), false);
+    m_leaderboard.clear();
+    m_knockoutEvent = -1;
+    m_playerOut = false;
+    if (IsKnockout())
+        m_config.laps = std::max(1, m_config.racers - 1); // one elimination per lap, down to one
     SetupHud();
     printf("[Race] begin: %d laps, type %d, track %.0f m, line %s\n", m_config.laps, config.type,
            config.trackLength, config.hasLine ? "from markers" : "none");
@@ -124,6 +137,13 @@ void RaceSession::SetupHud()
     for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext()) {
         bool shown = std::find(std::begin(kShown), std::end(kShown), o->NameHash) != std::end(kShown);
         if (IsDrift() && std::find(std::begin(kDriftShown), std::end(kDriftShown), o->NameHash) != std::end(kDriftShown))
+            shown = true;
+        // URL races show the standings board (the row children are set in UpdateHud).
+        if (IsKnockout() && (o->NameHash == kLeaderBoardGroup ||
+                             std::find(std::begin(kBoardPos), std::end(kBoardPos), o->NameHash) != std::end(kBoardPos) ||
+                             std::find(std::begin(kBoardName), std::end(kBoardName), o->NameHash) != std::end(kBoardName) ||
+                             std::find(std::begin(kBoardPlate), std::end(kBoardPlate), o->NameHash) != std::end(kBoardPlate) ||
+                             std::find(std::begin(kBoardIcon), std::end(kBoardIcon), o->NameHash) != std::end(kBoardIcon)))
             shown = true;
         FENativeInterface::SetObjectVisible(o, shown && !(sprint && o->NameHash == kLapGroup));
     }
@@ -154,21 +174,73 @@ float RaceSession::RaceDistance(float startS, float progress) const
     return r ? r->Delta(m_config.lineS, startS) + progress : progress;
 }
 
+void RaceSession::Finish()
+{
+    if (IsDrift() && m_driftChain > 0)
+        BankDrift();
+    m_phase = kFinished;
+    printf("[Race] finished %d of %d in %s (best lap %s)\n", m_position, m_config.racers,
+           FormatTime(m_totalTime).c_str(), FormatTime(m_bestLap).c_str());
+    if (IsKnockout() && m_playerOut)
+        printf("[Race] knocked out on lap %d\n", m_lap - 1);
+    if (IsDrift())
+        printf("[Drift] final score %d\n", int(m_driftTotal));
+}
+
+// Active racers: the player (unless knocked out) plus every opponent still in.
+int RaceSession::ActiveRacers() const
+{
+    int n = m_playerOut ? 0 : 1;
+    for (bool out : m_eliminated)
+        n += out ? 0 : 1;
+    return n;
+}
+
+// Standings (leader first) from the player's race distance and the opponents'; knocked-out
+// opponents are left out so they drop off the board and out of the position count.
+void RaceSession::BuildStandings(float playerDist, const std::vector<float> &opponents)
+{
+    m_leaderboard.clear();
+    if (!m_playerOut)
+        m_leaderboard.push_back(0);
+    for (size_t i = 0; i < opponents.size(); ++i)
+        if (!IsEliminated(int(i)))
+            m_leaderboard.push_back(int(i) + 1);
+    std::sort(m_leaderboard.begin(), m_leaderboard.end(), [&](int a, int b) {
+        float da = a == 0 ? playerDist : opponents[size_t(a - 1)];
+        float db = b == 0 ? playerDist : opponents[size_t(b - 1)];
+        return da > db;
+    });
+}
+
 void RaceSession::CompleteLap()
 {
     printf("[Race] lap %d: %s\n", m_lap, FormatTime(m_lapTime).c_str());
     m_bestLap = m_bestLap > 0 ? std::min(m_bestLap, m_lapTime) : m_lapTime;
     m_lapDistance = 0;
     m_lapTime = 0;
-    if (++m_lap > m_config.laps) {
-        if (IsDrift() && m_driftChain > 0)
-            BankDrift();
-        m_phase = kFinished;
-        printf("[Race] finished %d of %d in %s (best lap %s)\n", m_position, m_config.racers,
-               FormatTime(m_totalTime).c_str(), FormatTime(m_bestLap).c_str());
-        if (IsDrift())
-            printf("[Drift] final score %d\n", int(m_driftTotal));
+    ++m_lap;
+    const bool finalLap = m_lap > m_config.laps;
+    // URL: knock out the last racer across the line each lap; the race ends when one remains.
+    if (IsKnockout() && !m_playerOut && !m_leaderboard.empty()) {
+        int last = m_leaderboard.back();
+        if (last == 0) {
+            m_playerOut = true;
+            m_position = std::max(1, ActiveRacers() + 1);
+            Finish();
+            return;
+        }
+        m_eliminated[size_t(last - 1)] = true;
+        m_knockoutEvent = last - 1;
+        printf("[Race] car %d knocked out (last on lap %d)\n", last, m_lap - 1);
+        if (ActiveRacers() <= 1) {
+            m_position = 1;
+            Finish();
+            return;
+        }
     }
+    if (finalLap)
+        Finish();
 }
 
 void RaceSession::Shift()
@@ -249,14 +321,16 @@ void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &op
     m_progress += route.Delta(m_routeS, s);
     m_routeS = s;
     const float dist = RaceDistance(m_startS, m_progress);
+    // Standings (leader first): the player's position and, for URL, the knockout order.
+    if (m_phase == kRacing)
+        BuildStandings(dist, opponents);
     if (m_phase == kRacing && dist >= m_lap * LapLength())
         CompleteLap();
-    // Position: opponents further along the route are ahead.
-    int ahead = 0;
-    for (float o : opponents)
-        ahead += o > dist;
-    if (m_phase == kRacing)
-        m_position = 1 + ahead;
+    // Position: opponents further along the route are ahead (knocked-out ones are out of the count).
+    if (m_phase == kRacing) {
+        auto it = std::find(m_leaderboard.begin(), m_leaderboard.end(), 0);
+        m_position = it == m_leaderboard.end() ? ActiveRacers() + 1 : int(it - m_leaderboard.begin()) + 1;
+    }
     // Wrong way: moving against the route direction for a second.
     float x, y, dx, dy;
     route.Sample(s, x, y, dx, dy);
@@ -390,6 +464,34 @@ void RaceSession::UpdateHud(const PlayerCar &car)
     static const char *const kNth[] = {"th", "st", "nd", "rd"};
     FENativeInterface::SetString(m_hud, kPositionNth, kNth[m_position >= 1 && m_position <= 3 ? m_position : 0]);
     FENativeInterface::SetVisible(m_hud, kWrongWay, m_wrongWay > 1.0f && m_phase == kRacing);
+    // URL: the racer count on the position display drops as cars are knocked out.
+    if (IsKnockout()) {
+        snprintf(text, sizeof(text), "/%d", ActiveRacers());
+        FENativeInterface::SetString(m_hud, kNumberRacers, text);
+    }
+
+    // URL standings board: the running order, one row per remaining racer (knocked-out racers drop
+    // off). The row children are anonymous, so they are addressed by their ordinal hash.
+    if (IsKnockout()) {
+        for (int r = 0; r < 4; ++r) {
+            const bool have = r < int(m_leaderboard.size());
+            FENativeInterface::SetVisible(m_hud, kBoardPos[r], have);
+            FENativeInterface::SetVisible(m_hud, kBoardName[r], have);
+            FENativeInterface::SetVisible(m_hud, kBoardPlate[r], have);
+            FENativeInterface::SetVisible(m_hud, kBoardIcon[r], have);
+            if (!have)
+                continue;
+            int id = m_leaderboard[r];
+            snprintf(text, sizeof(text), "%d", r + 1);
+            FENativeInterface::SetString(m_hud, kBoardPos[r], text);
+            if (id == 0)
+                FENativeInterface::SetString(m_hud, kBoardName[r], "YOU");
+            else {
+                snprintf(text, sizeof(text), "CPU %d", id);
+                FENativeInterface::SetString(m_hud, kBoardName[r], text);
+            }
+        }
+    }
 
     const bool over = m_phase == kFinished;
     FENativeInterface::SetVisible(m_hud, kRaceOverMessage, over);
@@ -398,6 +500,8 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         static const char *const kNth[] = {"th", "st", "nd", "rd"};
         if (IsDrift())
             snprintf(text, sizeof(text), "DRIFT %d PTS", int(m_driftTotal));
+        else if (IsKnockout() && m_playerOut)
+            snprintf(text, sizeof(text), "KNOCKED OUT");
         else
             snprintf(text, sizeof(text), "%d%s PLACE  %s", m_position,
                      kNth[m_position >= 1 && m_position <= 3 ? m_position : 0], FormatTime(m_totalTime).c_str());

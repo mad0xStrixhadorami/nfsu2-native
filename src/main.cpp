@@ -269,6 +269,7 @@ int main(int argc, char **argv)
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
     std::vector<AiDriver> ai;
+    std::vector<bool> aiOut; // URL knockout (ISSUES #117): opponents eliminated this race
     AiDriver playerAi; // NFSU2_AUTODRIVE with a route
     std::vector<float> aiStartS;
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift;
@@ -381,6 +382,7 @@ int main(int argc, char **argv)
         opponentCars.clear();
         ai.clear();
         aiStartS.clear();
+        aiOut.clear();
         std::string carPath = "CARS\\" + fe.PreviewCarName() + "\\GEOMETRY.BIN";
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
@@ -410,6 +412,7 @@ int main(int argc, char **argv)
             pool.erase(std::remove(pool.begin(), pool.end(), fe.PreviewCarName()), pool.end());
             opponentCars.resize(opponents);
             ai.resize(opponents);
+            aiOut.assign(opponents, false);
             for (int i = 0; i < opponents; ++i) {
                 const TrackWorld::Camera &slot = grid[i];
                 std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
@@ -427,7 +430,12 @@ int main(int argc, char **argv)
                 float x, y, dx, dy;
                 route.Sample(route.Project(slot.x, slot.y), x, y, dx, dy);
                 float lane = std::clamp(-(slot.x - x) * dy + (slot.y - y) * dx, -4.5f, 4.5f);
-                ai[i].Init(&opponentCars[i], &route, lane, 0.86f + 0.04f * float(opponents - i) / opponents);
+                // NFSU2_AI_SKILL scales the opponents' pace (test aid: set the field slower so an
+                // automated player can lead, e.g. to exercise the URL knockout).
+                float skill = 0.86f + 0.04f * float(opponents - i) / opponents;
+                if (const char *s = getenv("NFSU2_AI_SKILL"))
+                    skill *= std::clamp(float(atof(s)), 0.1f, 2.0f);
+                ai[i].Init(&opponentCars[i], &route, lane, skill);
                 aiStartS.push_back(route.Project(slot.x, slot.y));
                 printf("[World] opponent %d: %s\n", i + 1, name.c_str());
             }
@@ -547,6 +555,10 @@ int main(int argc, char **argv)
                     throttle = 0;
                     brake = race.GetPhase() == RaceSession::kFinished && car.Speed() > 0.5f ? 1.0f : 0.0f;
                 }
+                // URL knockout (ISSUES #117): park any opponent eliminated at the last line.
+                for (int k = race.TakeKnockout(); k >= 0; k = race.TakeKnockout())
+                    if (k < int(aiOut.size()))
+                        aiOut[k] = true;
                 const bool go = race.GetPhase() != RaceSession::kCountdown;
                 // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
                 float power = 1.0f;
@@ -559,7 +571,7 @@ int main(int argc, char **argv)
                 if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.
                     if (playerAi.Car() != &car)
-                        playerAi.Init(&car, &route, 0.0f, 0.95f);
+                        playerAi.Init(&car, &route, 0.0f, 1.0f);
                     playerAi.SetPower(power);
                     playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
                 } else {
@@ -569,8 +581,13 @@ int main(int argc, char **argv)
                 // the route-following test aid.
                 if (race.IsDrift())
                     race.DriftUpdate(car.Speed(), car.Yaw(), dt);
-                for (AiDriver &d : ai)
-                    d.Update(world, dt, go);
+                for (size_t i = 0; i < ai.size(); ++i)
+                    if (!aiOut[i])
+                        ai[i].Update(world, dt, go);
+                // Knocked-out opponents stop driving and roll to a halt (ISSUES #117).
+                for (size_t i = 0; i < aiOut.size(); ++i)
+                    if (aiOut[i] && opponentCars[i].Speed() > 0.0f)
+                        opponentCars[i].ScaleSpeed(0.97f);
                 // Car-to-car contact: push overlapping cars apart (2 m radius each); a car running
                 // into the back of another loses a little speed.
                 std::vector<PlayerCar *> cars{&car};

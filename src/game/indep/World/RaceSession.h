@@ -60,12 +60,26 @@ public:
     int DriftMultiplier() const { return m_driftMult; }
     float DriftAngle() const { return m_driftAngle; } // slip angle in degrees
 
+    // URL (type 4): a lap knockout -- the last racer across the line each lap is eliminated, and the
+    // race ends when one remains (or the laps run out). IsEliminated reports opponents knocked out;
+    // TakeKnockout returns (once) the opponent index eliminated this frame and PlayerKnockedOut the
+    // player's elimination.
+    bool IsKnockout() const { return m_config.type == 4; }
+    int ActiveRacers() const;
+    bool IsEliminated(int opponentIndex) const {
+        return opponentIndex >= 0 && opponentIndex < int(m_eliminated.size()) && m_eliminated[opponentIndex];
+    }
+    int TakeKnockout() { int k = m_knockoutEvent; m_knockoutEvent = -1; return k; }
+    bool PlayerKnockedOut() const { return m_playerOut; }
+
 private:
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
     void UpdateRoute(const PlayerCar &car, const std::vector<float> &opponents, float dt);
     void UpdateLine(const PlayerCar &car);
     void CompleteLap();
+    void BuildStandings(float playerDist, const std::vector<float> &opponents);
+    void Finish();
 
     static constexpr float kIdle = 1000.0f, kRedline = 7600.0f, kAutoShiftRpm = 7300.0f;
     static constexpr int kGears = 6;
@@ -103,4 +117,9 @@ private:
     float m_prevYaw = 0;
     bool m_haveYaw = false;
     void BankDrift();
+    // URL knockout (see IsKnockout).
+    std::vector<bool> m_eliminated; // per opponent: knocked out
+    std::vector<int> m_leaderboard;  // active racers, leader first (0 = player, i+1 = opponent i)
+    int m_knockoutEvent = -1;        // opponent eliminated this frame (for the caller), else -1
+    bool m_playerOut = false;
 };
