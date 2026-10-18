@@ -365,7 +365,8 @@ int main(int argc, char **argv)
         // that only they contain (ISSUES.md #121). Read for the load only.
         std::vector<std::vector<uint8_t>> neighbourData;
         std::vector<const std::vector<uint8_t> *> neighbours;
-        for (const char *other : {"L4RA", "L4RB", "L4RC", "L4RD"})
+        // L4RG is the garage region. It also carries a few city solids referenced by L4RA.
+        for (const char *other : {"L4RA", "L4RB", "L4RC", "L4RD", "L4RG"})
             if (region != other && region.compare(0, 2, other, 2) == 0) {
                 neighbourData.push_back(ReadGameFile(*fs, (std::string("TRACKS\\STREAM") + other + ".BUN").c_str()));
                 if (neighbourData.back().empty())
