@@ -35,6 +35,13 @@ def gi(name):  # gpr index
 def fi(name): return int(name[1:])
 def s16(x): return x - 0x10000 if x & 0x8000 else x
 
+M64 = (1 << 64) - 1
+def sext32(x):
+    x &= 0xffffffff
+    return (x | ~0xffffffff) & M64 if x & 0x80000000 else x
+def s64(x): return x - (1 << 64) if x & (1 << 63) else x
+def rd(a, n): return int.from_bytes(mem[a - base:a - base + n], 'little')
+
 cache = {}
 def insn(pc):
     if pc not in cache:
@@ -42,56 +49,93 @@ def insn(pc):
     return cache[pc]
 
 def step(pc):
-    """Executes the instruction at pc; returns a branch target or None."""
+    """Executes the instruction at pc (64-bit registers, R5900 subset); returns control flow or None."""
+    w = u32(pc)
+    if w >> 26 in (0x1e, 0x1f):  # R5900 lq / sq (capstone cannot decode them); upper 64 bits dropped
+        rt, rs, off = (w >> 16) & 31, (w >> 21) & 31, s16(w & 0xffff)
+        a = ((R[rs] + off) & 0xffffffff) & ~15
+        if w >> 26 == 0x1f:
+            store(a, R[rt].to_bytes(8, 'little') + bytes(8))
+        elif rt:
+            R[rt] = rd(a, 8)
+        return None
     i = insn(pc)
     m, ops = i.mnemonic, i.operands
     def r(k): return R[gi(reg(ops[k]))]
+    def r32(k): return R[gi(reg(ops[k]))] & 0xffffffff
     def setr(k, v):
         n = gi(reg(ops[k]))
-        if n: R[n] = v & 0xffffffff
+        if n: R[n] = v & M64
     def mema(k): return (R[gi(md.reg_name(ops[k].mem.base))] + ops[k].mem.disp) & 0xffffffff
     if m in ('nop', 'sync', 'sync.p'): return None
-    if m == 'lui': setr(0, ops[1].imm << 16)
-    elif m in ('addiu', 'daddiu'): setr(0, r(1) + ops[2].imm)
+    if m == 'lui': setr(0, sext32(ops[1].imm << 16))
+    elif m == 'addiu': setr(0, sext32(r32(1) + ops[2].imm))
+    elif m == 'daddiu': setr(0, r(1) + ops[2].imm)
     elif m == 'ori': setr(0, r(1) | (ops[2].imm & 0xffff))
     elif m == 'andi': setr(0, r(1) & (ops[2].imm & 0xffff))
-    elif m in ('addu', 'daddu'): setr(0, r(1) + r(2))
-    elif m in ('subu', 'dsubu'): setr(0, r(1) - r(2))
+    elif m == 'addu': setr(0, sext32(r32(1) + r32(2)))
+    elif m == 'daddu': setr(0, r(1) + r(2))
+    elif m == 'subu': setr(0, sext32(r32(1) - r32(2)))
+    elif m == 'dsubu': setr(0, r(1) - r(2))
     elif m == 'or': setr(0, r(1) | r(2))
-    elif m in ('move',): setr(0, r(1))
-    elif m == 'sll': setr(0, r(1) << ops[2].imm)
-    elif m == 'srl': setr(0, r(1) >> ops[2].imm)
-    elif m == 'slti': setr(0, int(struct.unpack('<i', struct.pack('<I', r(1)))[0] < ops[2].imm))
-    elif m == 'sw': store(mema(1), struct.pack('<I', r(0)))
+    elif m == 'move': setr(0, r(1))
+    elif m == 'sll': setr(0, sext32(r32(1) << ops[2].imm))
+    elif m == 'srl': setr(0, sext32(r32(1) >> ops[2].imm))
+    elif m == 'slti': setr(0, int(s64(r(1)) < ops[2].imm))
+    elif m == 'sw': store(mema(1), struct.pack('<I', r32(0)))
     elif m == 'sh': store(mema(1), struct.pack('<H', r(0) & 0xffff))
     elif m == 'sb': store(mema(1), bytes([r(0) & 0xff]))
-    elif m == 'lw': setr(0, u32(mema(1)))
-    elif m == 'lhu': setr(0, struct.unpack_from('<H', mem, mema(1) - base)[0])
-    elif m == 'lbu': setr(0, mem[mema(1) - base])
+    elif m == 'sd': store(mema(1), r(0).to_bytes(8, 'little'))
+    elif m == 'lw': setr(0, sext32(u32(mema(1))))
+    elif m == 'ld': setr(0, rd(mema(1), 8))
+    elif m == 'lhu': setr(0, rd(mema(1), 2))
+    elif m == 'lbu': setr(0, rd(mema(1), 1))
+    elif m in ('ldl', 'ldr', 'sdl', 'sdr'):  # little-endian unaligned doubleword halves
+        a = mema(1)
+        k, dw = a & 7, a & ~7
+        old = r(0)
+        if m == 'ldr':
+            n = 8 - k
+            setr(0, (old & ~((1 << 8 * n) - 1)) | rd(a, n))
+        elif m == 'ldl':
+            n = k + 1
+            setr(0, (old & ((1 << 8 * (8 - n)) - 1)) | (rd(dw, n) << 8 * (8 - n)))
+        elif m == 'sdr':
+            store(a, (old & ((1 << 8 * (8 - k)) - 1)).to_bytes(8 - k, 'little'))
+        else:
+            store(dw, (old >> 8 * (7 - k)).to_bytes(k + 1, 'little'))
     elif m == 'swc1': store(mema(1), struct.pack('<I', F[fi(reg(ops[0]))]))
     elif m == 'lwc1': F[fi(reg(ops[0]))] = u32(mema(1))
-    elif m == 'mtc1': F[fi(reg(ops[1]))] = r(0)
-    elif m == 'mfc1': setr(0, F[fi(reg(ops[1]))])
+    elif m == 'mtc1': F[fi(reg(ops[1]))] = r32(0)
+    elif m == 'mfc1': setr(0, sext32(F[fi(reg(ops[1]))]))
     elif m == 'mov.s': F[fi(reg(ops[0]))] = F[fi(reg(ops[1]))]
-    elif m == 'sd': store(mema(1), struct.pack('<II', r(0), 0))
-    elif m == 'ld': setr(0, u32(mema(1)))
-    elif m == 'sq': store(mema(1), struct.pack('<IIII', r(0), 0, 0, 0))
-    elif m == 'jal':
-        return ('call', ops[0].imm)
+    elif m == 'jal': return ('call', ops[0].imm)
     elif m == 'jalr': return ('call', None)
-    elif m == 'j': return ('jump', ops[0].imm)
-    elif m == 'b': return ('jump', ops[0].imm)
+    elif m in ('j', 'b'): return ('jump', ops[0].imm)
     elif m == 'jr': return ('ret', None)
     elif m in ('bne', 'beq', 'bnel', 'beql'):
         t = (r(0) != r(1)) if m.startswith('bne') else (r(0) == r(1))
         return ('br', ops[2].imm if t else None, m.endswith('l'))
-    elif m in ('bgez', 'bltz', 'blez', 'bgtz', 'bnez', 'beqz'):
-        x = struct.unpack('<i', struct.pack('<I', r(0)))[0]
-        t = {'bgez': x >= 0, 'bltz': x < 0, 'blez': x <= 0, 'bgtz': x > 0, 'bnez': x != 0, 'beqz': x == 0}[m]
-        return ('br', ops[1].imm if t else None, False)
+    elif m in ('bgez', 'bltz', 'blez', 'bgtz', 'bnez', 'beqz', 'bnezl', 'beqzl'):
+        x = s64(r(0))
+        mm = m.rstrip('l') if m.endswith('zl') else m
+        t = {'bgez': x >= 0, 'bltz': x < 0, 'blez': x <= 0, 'bgtz': x > 0, 'bnez': x != 0, 'beqz': x == 0}[mm]
+        return ('br', ops[1].imm if t else None, m.endswith('zl'))
     else:
         raise RuntimeError('unhandled %s %s at %x' % (m, i.op_str, pc))
     return None
+
+def f32(bits): return struct.unpack('<f', struct.pack('<I', bits))[0]
+def curve_set_range():
+    # 0x0013f250(xmin f12, xmax f13, curve a0): curve = {n, xmin, xmax, (n-1)/(xmax-xmin), data*}
+    c = R[4]
+    store(c + 4, struct.pack('<I', F[12]))
+    store(c + 8, struct.pack('<I', F[13]))
+    n = u32(c)
+    span = f32(F[13]) - f32(F[12])
+    store(c + 12, struct.pack('<f', (n - 1) / span if span else 0.0))
+# Callees run natively instead of being stubbed (they fill in data the tables need).
+HOOKS = {0x13f250: curve_set_range}
 
 pc = int(sys.argv[2], 16)
 steps = 0
@@ -107,6 +151,8 @@ while steps < 2_000_000:
         continue
     step(pc + 4)  # delay slot
     if kind == 'call':
+        if ctl[1] in HOOKS:
+            HOOKS[ctl[1]]()
         R[2] = R[4]  # stub: return the object (constructors)
         pc += 8
     elif kind == 'ret':

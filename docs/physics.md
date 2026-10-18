@@ -57,6 +57,41 @@ limit = DAT_00568c68 * (+0x188) * (+0x164) * (+0x180) * surface[+0x114].mu (tabl
 +0x128 lat) is scaled onto the circle; +0x170 = |F| / limit (saturation, 1 when not grounded).
 DAT_00568c88 selects the force-frame mode (1..4).
 
+## RigidBody (ctor `0x00321fd8`, vtable 0x00480610)
+
+State (0x20 floats from +0x20): position +0x20, orientation 4x4 +0x30..+0x6f (rows = body axes),
+linear momentum +0x70, angular momentum +0x80, +0x90 rest/sleep scalar. Params P+0x110 = rec+0x228:
+mass (t) +0, dimensions +4..+0xc, inertia 4x4 +0x10 (diagonal, z scaled by rec+0x278); `0x00322348`
+caches m (+0x164), 1/m (+0x168), inverse inertia (+0x170, `0x00152830` = 4x4 affine inverse).
+* derivative `0x00322c98`: dpos = v (+0xa0); dR = `0x00322b38`(omega +0xc0, R); dP = F (+0x110);
+  dL = torque (+0x120) - L * curve(|omega|, 0x51df38) when +0x154; d(+0x90) = 0.1 if +0x90 <
+  curve(max(|v|/4, |omega|/2), 0x51df70) else -10; when +0x150: extra damping dL -= 2*rest*L,
+  dP -= 8*rest*P; yaw torque clamp +0x200. A low-speed "parking" grip term uses rec values via
+  +0x204/+0x208 (1.9, 1.03, 0.3, 1/3, 2.236).
+* post-step `0x00323030`: v = P/m (|v| capped at 200 m/s); omega = R Iinv R^T L (|omega| <= 250);
+  keeps previous F/T in +0x130/+0x140, clears F/T, adds gravity F = (0,0,-9.8 m) via `0x00322540`
+  (apply force at a point). Orientation is re-orthonormalised each substep (`0x001e0e40`).
+* Constants: g = 9.8 (gp-0xbb8), substep 0.0044 s (DAT_00568b70).
+
+## Tyre (ctor `0x00323410`, vtable 0x004805c0)
+
++0x14 wheel geometry (rec+0x128 + 0x30i: x, y, z, +0x10 radius, +0x14 width), +0x18 axle params
+(rec+0x1e8 front / +0x208 rear: [0] slip-angle scale 12, [1] load normaliser, [2] lateral scale,
+[3] friction-circle mu, [4] longitudinal mu), +0x1c brakes (rec+0x388: [1] brake, [2] handbrake),
++0x20 vehicle. +0x28 wheel spin (rad/s), +0x108 wheel torque, +0x164 load, +0x178 brake input,
++0x17c handbrake input, +0x180/+0x184/+0x188/+0x190/+0x194 grip multipliers (1).
+* `0x00323eb0` slip/forces: brake torques 4*brake*[1], 10*handbrake*[2] oppose spin; ground
+  velocity in wheel frame (vx, vy); slip speed = spin*radius - vx (+0x118); lock test
+  `0x00323d78`; if sliding (|slip| > 0.5 or lateral beyond [0] or locked): force along the slip
+  vector with magnitude load * mu (mu = [4] * multipliers * surface[+0x114]), else rolling:
+  long = torque / radius, lateral = `0x003242b0`(load, |slip angle|): curves 0x51e068 + 0x18*band
+  (7 bands of lateral force vs normalised load 0..10, band = |angle deg| * 12/[0] * 0.5,
+  interpolated) * [2] * 2.5.
+* `0x00324408`: corrects the longitudinal force so wheel and body velocities agree.
+* Curves are built at run time by static initializer `0x00328738` (replay with
+  `tools/mips_init_run.py ... 328738`; curve = {n, xmin, xmax, (n-1)/(xmax-xmin), data*},
+  lookup `0x002edf48` clamps and lerps).
+
 ## Not yet read
 
 RigidBody (0x321xxx-0x322xxx), Tyre slip 0x323eb0, Drivetrain 0x30c950/0x30d*, Engine 0x30bf90,
