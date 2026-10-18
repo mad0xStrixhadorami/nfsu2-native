@@ -778,9 +778,17 @@ void FEStartupSequence::ApplyOptionsPreamble()
     // 0x00259ee8 / 0x00259f08 resolve through 0x00292980, which also searches library packages.
     // Object names hash uppercase (0x00284610).
     m_fe->SetVisible(0x010cba23, false);
-    m_fe->SetVisible(0x97b71dde, false); // JOY_EVENT_BUTTON1
-    m_fe->SetVisible(0x7326e44c, false); // Player 1
-    m_fe->SetVisible(0xc90dc4ab, false); // Player Select
+    // 0x00203b18 (Player) re-shows the "Player 1"/"Player Select" (0xc90dc4ab) header and the
+    // 0x97b71dde icon; every other category hides them.
+    const bool player = m_optionCategory == 3;
+    m_fe->SetVisible(0x97b71dde, player);
+    m_fe->SetVisible(0x7326e44c, player); // Player 1
+    m_fe->SetVisible(0xc90dc4ab, player); // Player Select / EA Messenger (texture set below)
+    if (player) {
+        // 0x00203b18: mode 8 shows "EA Messenger" (0xb0fcf98e), otherwise "Player Select" (0xb35b3ac3).
+        if (FEObject *o = m_fe->FindObject(0xc90dc4ab))
+            FENativeInterface::SetTextureHash(o, m_raceMode == 8 ? 0xb0fcf98eu : 0xb35b3ac3u);
+    }
     // Video (0x00203770) is the only category that keeps the colour-calibration layer on screen
     // (it re-shows ColorCal_Logo/Blurb/Backing via 0x00259eb0); every other category hides it.
     const bool calibration = m_optionCategory == 1;
@@ -917,6 +925,58 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
                          l = kModes[m_saveState % 3];
                      },
                      [this](int dir) { m_saveState = (m_saveState + (dir < 0 ? 2 : 1)) % 3; }});
+    } else if (cat == 3) {
+        // FUN_00203b18: the player/HUD options, in AddOption order. Most rows switch the player
+        // block byte 0x004f1330 + idx*0x40 (idx 0 here); Camera/Steer/Split are 0x004f1354/1350/1358.
+        auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
+        // 0x00256480/0x002563f8: Auto (0x61cb0720) / Manual (0x1b3a2485).
+        w.push_back({0xD31407E7, // Transmission
+                     [this](uint32_t &l, std::string &) { l = m_pTransmissionManual ? 0x1b3a2485u : 0x61cb0720u; },
+                     [this](int) { m_pTransmissionManual = !m_pTransmissionManual; }});
+        // 0x00256328/0x002562a8: On/Off.
+        w.push_back({0xDF06ED22, // Stability Control
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pStability); },
+                     [this](int) { m_pStability = !m_pStability; }});
+        // 0x002561c8/0x00256108: Bumper / Hood / Close / Far / Super Far.
+        w.push_back({0xF6CCDC5F, // Camera
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0xC3E9AE58u, 0x414F19D7u, 0x5AE3441Fu, 0x1EA4CEC2u,
+                                                           0x916039B4u};
+                         l = kModes[m_pCamera % 5];
+                     },
+                     [this](int dir) { m_pCamera = (m_pCamera + (dir < 0 ? 4 : 1)) % 5; }});
+        // 0x00255820/0x00255788: left stick (0x32675d4f) / right stick (0x649da17f); shows "Wheel"
+        // (0xe8f3d566) when a wheel is plugged in, which the native build never has.
+        w.push_back({0x93FEE5ED, // Steer With:
+                     [this](uint32_t &l, std::string &) { l = m_pSteerRight ? 0x649DA17Fu : 0x32675D4Fu; },
+                     [this](int) { m_pSteerRight = !m_pSteerRight; }});
+        // 0x00256048/0x00255fe8: On/Off.
+        w.push_back({0xAC148579, // Gauges
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pGauges); },
+                     [this](int) { m_pGauges = !m_pGauges; }});
+        w.push_back({0x82CD8F92, // Race Position
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pRacePosition); },
+                     [this](int) { m_pRacePosition = !m_pRacePosition; }});
+        w.push_back({0x969F96A5, // Lap Info
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pLapInfo); },
+                     [this](int) { m_pLapInfo = !m_pLapInfo; }});
+        // 0x00255ba8/0x00255af0: Leader / Lap Record / Best Lap / Last Lap / Off.
+        w.push_back({0x084BC378, // Split Time
+                     [this](uint32_t &l, std::string &) {
+                         static const uint32_t kModes[] = {0xD93F8F55u, 0xC44D3943u, 0x17FAFC32u, 0x1EA459F8u,
+                                                           0x0000CCFAu};
+                         l = kModes[m_pSplitTime % 5];
+                     },
+                     [this](int dir) { m_pSplitTime = (m_pSplitTime + (dir < 0 ? 4 : 1)) % 5; }});
+        w.push_back({0xC03F9F19, // Score
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pScore); },
+                     [this](int) { m_pScore = !m_pScore; }});
+        w.push_back({0xC93FBFB5, // Leaderboard
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pLeaderboard); },
+                     [this](int) { m_pLeaderboard = !m_pLeaderboard; }});
+        w.push_back({0xBFB34120, // Ask for Transmission
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pAskTransmission); },
+                     [this](int) { m_pAskTransmission = !m_pAskTransmission; }});
     }
     printf("[Menu] Options: category %d, %zu rows\n", cat, w.size());
     m_widgets.Setup(pkg, std::move(w));

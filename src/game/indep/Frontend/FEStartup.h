@@ -136,6 +136,19 @@ private:
     bool m_widescreen = false;
     int m_brightness = 0;
     int m_contrast = 0;
+    // UI_Options Player settings (0x00203b18), one 0x40-byte block per player (0x004f1330 + idx*0x40;
+    // Camera/Steer/Split live at 0x004f1354/0x004f1350/0x004f1358 + idx*0x10). Index 0 only here.
+    bool m_pTransmissionManual = false; // 0x004f1359: 0 Auto / 1 Manual
+    bool m_pStability = false;          // 0x004f135a: Stability Control
+    int m_pCamera = 0;                  // 0x004f1354: 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far
+    bool m_pSteerRight = false;         // 0x004f1350: 0 left stick / 1 right stick
+    bool m_pGauges = false;             // 0x004f1330
+    bool m_pRacePosition = false;       // 0x004f1334
+    bool m_pLapInfo = false;            // 0x004f1338
+    int m_pSplitTime = 0;               // 0x004f1358: 0 Leader / 1 Lap Record / 2 Best Lap / 3 Last Lap / 4 Off
+    bool m_pScore = false;              // 0x004f133c
+    bool m_pLeaderboard = false;        // 0x004f1344
+    bool m_pAskTransmission = false;    // 0x004f1348
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
