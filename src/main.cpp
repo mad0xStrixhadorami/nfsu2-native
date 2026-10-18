@@ -365,8 +365,11 @@ int main(int argc, char **argv)
         ai.clear();
         aiStartS.clear();
         std::string carPath = "CARS\\" + fe.PreviewCarName() + "\\GEOMETRY.BIN";
+        // Car textures: the shared pack and the player's (opponents add theirs below).
+        world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
+        world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
         if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()))) {
-            world.AddCar(&car.Model(), SDL_Color{40, 90, 200, 255});
+            world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);
@@ -393,11 +396,12 @@ int main(int argc, char **argv)
                 std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
                 std::string path = "CARS\\" + name + "\\GEOMETRY.BIN";
                 if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str())))
-                    opponentCars[i].SetModel(car.Model());
+                    opponentCars[i].SetModel(car);
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
-                world.AddCar(&opponentCars[i].Model(), kPaints[i % 5]);
+                world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5]);
+                world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + name + "\\TEXTURES.BIN").c_str()));
                 // Lane: keep each car on its own side of the route line; faster cars at the front.
                 float x, y, dx, dy;
                 route.Sample(route.Project(slot.x, slot.y), x, y, dx, dy);

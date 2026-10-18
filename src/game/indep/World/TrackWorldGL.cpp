@@ -145,13 +145,6 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glAlphaFunc(GL_GREATER, 0.25f);
     glShadeModel(GL_SMOOTH);
 
-    auto toVertices = [](const std::vector<Tri> &tris, std::vector<Vertex> &out) {
-        out.clear();
-        out.reserve(tris.size() * 3);
-        for (const Tri &t : tris)
-            for (int k = 0; k < 3; ++k)
-                out.push_back({t.v[k * 3], t.v[k * 3 + 1], t.v[k * 3 + 2], 0, 0, t.shade[0], t.shade[1], t.shade[2], 255});
-    };
     static std::vector<Vertex> scratch;
 
     // World cells in range and inside the horizontal view cone.
@@ -223,19 +216,26 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
 
-    // Cars: rebuilt every frame from client memory (untextured: white texture).
+    // Cars: rebuilt every frame from client memory, one draw per texture run.
     GLBridge::BindArrayBuffer(0);
-    glBindTexture(GL_TEXTURE_2D, GLTexture(0));
-    glShadeModel(GL_FLAT);
     for (const Car &car : m_cars) {
-        if (car.tris.empty())
+        if (car.render.empty())
             continue;
-        toVertices(car.tris, scratch);
+        scratch.clear();
+        for (const RTri &t : car.render)
+            for (const RVertex &v : t.v)
+                scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
         glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &scratch[0].x);
         glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &scratch[0].u);
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &scratch[0].r);
-        glDrawArrays(GL_TRIANGLES, 0, GLsizei(scratch.size()));
+        for (size_t first = 0; first < car.render.size();) {
+            size_t last = first;
+            while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
+                ++last;
+            glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
+            glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
+            first = last;
+        }
     }
-
     return true;
 }

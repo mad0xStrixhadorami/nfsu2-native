@@ -135,8 +135,10 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     // The stock body as assembled for racing (PlayerCar), drawn with GL when available.
     PlayerCar assembled;
     m_carPreviewModel.clear();
-    if (assembled.LoadModel(geometry))
+    if (assembled.LoadModel(geometry)) {
         m_carPreviewModel = assembled.Model();
+        m_carPreviewSlots = assembled.TriangleTextures();
+    }
     m_carPreviewTris.clear();
     m_carPreviewSplatsBuilt = false;
     m_carPreviewTris.reserve(decoded.size());
@@ -187,7 +189,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
         float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
         SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
         float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
-        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255})) {
+        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255}, &m_carPreviewSlots)) {
             DrawCarPreviewLabel(pkg);
             return;
         }

@@ -195,6 +195,7 @@ private:
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
+    std::vector<uint32_t> m_carPreviewSlots;            // its material slot hashes
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;

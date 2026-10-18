@@ -46,6 +46,7 @@ struct NamedSolid {
     uint32_t hash = 0;
     float bboxMin[3] = {}, bboxMax[3] = {};
     std::vector<Triangle> tris;
+    std::vector<uint32_t> textures; // 0x134012 texture name hashes, indexed by Triangle::tex
 };
 std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size);
 } // namespace SolidMesh

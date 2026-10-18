@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/CarMaterial.h"
 #include "game/indep/World/SolidMesh.h"
 
 namespace {
@@ -193,10 +194,44 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
     printf("[World] %zu of %zu race barriers enabled\n", enabled, m_barriers.size());
 }
 
-size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, SDL_Color paint)
+size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
+                          SDL_Color paint)
 {
-    m_cars.push_back({model, paint, {}});
+    Car car{model, textures, paint, {}, {}, {}};
+    car.order.resize(model->size());
+    for (size_t i = 0; i < car.order.size(); ++i)
+        car.order[i] = i;
+    if (textures && textures->size() == model->size())
+        std::stable_sort(car.order.begin(), car.order.end(),
+                         [textures](size_t a, size_t b) { return (*textures)[a] < (*textures)[b]; });
+    m_cars.push_back(std::move(car));
     return m_cars.size() - 1;
+}
+
+void TrackWorld::AddTexturePack(std::vector<uint8_t> data)
+{
+    auto owned = std::make_unique<std::vector<uint8_t>>(std::move(data));
+    auto pack = std::make_unique<TexturePack>();
+    if (!pack->Parse(owned->data(), owned->size()))
+        return;
+    for (size_t i = 0; i < pack->Count(); ++i)
+        m_textures.emplace(pack->At(i).nameHash, std::make_pair(pack.get(), i));
+    m_tpkData.push_back(std::move(owned));
+    m_packs.push_back(std::move(pack));
+}
+
+// Fixed slots (windows, lights) get stand-in colours; slots with a texture in a loaded pack
+// (badging, tires, misc) are textured; the paint skin and anything unresolved use the paint.
+uint32_t TrackWorld::CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const
+{
+    if (CarMaterial::SlotColour(hash, rgb))
+        return 0;
+    if (hash && m_textures.count(hash)) {
+        rgb[0] = rgb[1] = rgb[2] = 1.0f;
+        return hash;
+    }
+    rgb[0] = paint.r / 255.0f, rgb[1] = paint.g / 255.0f, rgb[2] = paint.b / 255.0f;
+    return 0;
 }
 
 void TrackWorld::SetCarTransform(size_t index, const float m[12])
@@ -205,14 +240,27 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         return;
     Car &car = m_cars[index];
     car.tris.clear();
+    car.render.clear();
     car.tris.reserve(car.model->size());
-    for (const SolidMesh::Triangle &t : *car.model) {
+    car.render.reserve(car.model->size());
+    const bool textured = car.textures && car.textures->size() == car.model->size();
+    for (size_t i : car.order) {
+        const SolidMesh::Triangle &t = (*car.model)[i];
+        float rgb[3];
+        uint32_t tex = CarMaterial(textured ? (*car.textures)[i] : 0, car.paint, rgb);
         Tri w;
         for (int k = 0; k < 3; ++k)
             for (int a = 0; a < 3; ++a)
                 w.v[k * 3 + a] = t.v[k].x * m[a] + t.v[k].y * m[4 + a] + t.v[k].z * m[8 + a] + m[3 + 4 * a];
-        if (Shade(w, car.paint.r / 255.0f, car.paint.g / 255.0f, car.paint.b / 255.0f))
-            car.tris.push_back(w);
+        if (!Shade(w, rgb[0], rgb[1], rgb[2]))
+            continue;
+        RTri r;
+        r.tex = tex;
+        for (int k = 0; k < 3; ++k)
+            r.v[k] = {w.v[k * 3], w.v[k * 3 + 1], w.v[k * 3 + 2], t.v[k].u, t.v[k].v, w.shade[0], w.shade[1],
+                      w.shade[2], 255};
+        car.tris.push_back(w);
+        car.render.push_back(r);
     }
 }
 

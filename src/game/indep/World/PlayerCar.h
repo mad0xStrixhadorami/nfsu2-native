@@ -15,6 +15,8 @@ public:
     // Assemble the stock body (KIT00 + BASE, highest LOD) from CARS\<name>\GEOMETRY.BIN.
     bool LoadModel(const std::vector<uint8_t> &geometry);
     const std::vector<SolidMesh::Triangle> &Model() const { return m_model; }
+    // Texture name hash of each Model() triangle (0 = none): resolved from its part's 0x134012 list.
+    const std::vector<uint32_t> &TriangleTextures() const { return m_triTex; }
 
     void Place(float x, float y, float z, float yaw);
     // throttle/brake/steer in [-1, 1]; dt in seconds. walls: collide with steep world triangles
@@ -33,10 +35,11 @@ public:
     void Nudge(float dx, float dy) { m_x += dx, m_y += dy; }
     void ScaleSpeed(float f) { m_speed *= f; }
     // Shares another car's assembled model (opponents of the same make).
-    void SetModel(const std::vector<SolidMesh::Triangle> &model) { m_model = model; }
+    void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex; }
 
 private:
     std::vector<SolidMesh::Triangle> m_model;
+    std::vector<uint32_t> m_triTex;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

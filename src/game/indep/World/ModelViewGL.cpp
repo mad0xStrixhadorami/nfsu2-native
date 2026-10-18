@@ -3,10 +3,11 @@
 #include <algorithm>
 #include <cmath>
 
+#include "game/indep/World/CarMaterial.h"
 #include "game/indep/World/GLBridge.h"
 
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
-                 float yaw, SDL_Color paint)
+                 float yaw, SDL_Color paint, const std::vector<uint32_t> *textures)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -58,7 +59,9 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
     // Flat shading by the triangle normal against a light from above-front.
     const float lx = 0.45f, ly = 0.35f, lz = 0.82f;
     glBegin(GL_TRIANGLES);
-    for (const SolidMesh::Triangle &t : model) {
+    const bool slots = textures && textures->size() == model.size();
+    for (size_t i = 0; i < model.size(); ++i) {
+        const SolidMesh::Triangle &t = model[i];
         const SolidMesh::Point &a = t.v[0], &b = t.v[1], &c = t.v[2];
         float ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z, vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
         float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
@@ -66,7 +69,10 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
         if (len < 1e-9f)
             continue;
         float lit = 0.3f + 0.7f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
-        glColor3ub(GLubyte(paint.r * lit), GLubyte(paint.g * lit), GLubyte(paint.b * lit));
+        float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
+        if (slots)
+            CarMaterial::SlotColour((*textures)[i], rgb);
+        glColor3ub(GLubyte(255 * rgb[0] * lit), GLubyte(255 * rgb[1] * lit), GLubyte(255 * rgb[2] * lit));
         glVertex3f(a.x, a.y, a.z);
         glVertex3f(b.x, b.y, b.z);
         glVertex3f(c.x, c.y, c.z);

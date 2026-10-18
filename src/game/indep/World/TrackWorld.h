@@ -48,7 +48,11 @@ public:
     // Cars drawn with the world: car-space triangles (kept by pointer, must outlive the world's
     // use), body colour, and the row-major 3x4 car-to-world transform from PlayerCar::Transform.
     void ClearCars();
-    size_t AddCar(const std::vector<SolidMesh::Triangle> *model, SDL_Color paint);
+    size_t AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
+                  SDL_Color paint);
+    // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
+    // world's by name hash.
+    void AddTexturePack(std::vector<uint8_t> data);
     void SetCarTransform(size_t car, const float m[12]);
 
     // Race barriers (XO_TrackBarrier* scenery) are kept out of the world until a race enables the
@@ -91,9 +95,14 @@ private:
     std::vector<SDL_Vertex> m_frame; // per-frame vertex buffer
     struct Car {
         const std::vector<SolidMesh::Triangle> *model;
+        const std::vector<uint32_t> *textures; // per model triangle
         SDL_Color paint;
-        std::vector<Tri> tris; // model in world space, rebuilt by SetCarTransform
+        std::vector<size_t> order;  // model triangles grouped by texture
+        std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
+        std::vector<RTri> render;   // same, textured and lit, in `order`
     };
+    // Car material slot -> texture (0 = untextured) and base colour.
+    uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;
     std::vector<Car> m_cars;
     struct Barrier {
         float bbox[6];

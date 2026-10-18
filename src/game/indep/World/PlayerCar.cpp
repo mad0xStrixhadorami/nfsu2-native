@@ -21,18 +21,22 @@ bool Contains(const std::string &s, const char *part) { return s.find(part) != s
 // Wheel solids are modelled around their own hub (the attachment points come from the unported
 // car attribute data), so they are placed at estimated axle positions from the body bounds.
 void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, bool mirror,
-              std::vector<SolidMesh::Triangle> &out)
+              std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
 {
     for (const SolidMesh::Triangle &t : wheel.tris) {
-        SolidMesh::Triangle w;
-        for (int k = 0; k < 3; ++k)
-            w.v[k] = {t.v[k].x + x, (mirror ? -t.v[k].y : t.v[k].y) + y, t.v[k].z + z};
+        SolidMesh::Triangle w = t;
+        for (int k = 0; k < 3; ++k) {
+            w.v[k].x += x;
+            w.v[k].y = (mirror ? -t.v[k].y : t.v[k].y) + y;
+            w.v[k].z += z;
+        }
         out.push_back(w);
+        tex.push_back(t.tex >= 0 && size_t(t.tex) < wheel.textures.size() ? wheel.textures[t.tex] : 0);
     }
 }
 // Drop triangles reaching outside the part's header bounds (a guard against mis-decoded vertices;
 // with the exact strip topology, ISSUES.md #110, none are expected).
-void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle> &out)
+void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
 {
     auto inside = [&s](const SolidMesh::Point &p) {
         constexpr float m = 0.05f;
@@ -40,14 +44,17 @@ void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle
                p.y <= s.bboxMax[1] + m && p.z >= s.bboxMin[2] - m && p.z <= s.bboxMax[2] + m;
     };
     for (const SolidMesh::Triangle &t : s.tris)
-        if (inside(t.v[0]) && inside(t.v[1]) && inside(t.v[2]))
+        if (inside(t.v[0]) && inside(t.v[1]) && inside(t.v[2])) {
             out.push_back(t);
+            tex.push_back(t.tex >= 0 && size_t(t.tex) < s.textures.size() ? s.textures[t.tex] : 0);
+        }
 }
 } // namespace
 
 bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry)
 {
     m_model.clear();
+    m_triTex.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
@@ -66,7 +73,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry)
             continue;
         if (Contains(n, "_BODY_"))
             body = &s;
-        AddFiltered(s, m_model);
+        AddFiltered(s, m_model, m_triTex);
     }
     if (!rearWheel)
         rearWheel = frontWheel;
@@ -75,10 +82,10 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry)
         float front = body->bboxMax[0] - 0.85f, rear = body->bboxMin[0] + 0.95f;
         float side = std::max(0.3f, body->bboxMax[1] - 0.2f);
         float z = radius;
-        AddWheel(*frontWheel, front, side - 0.2f, z, false, m_model);
-        AddWheel(*frontWheel, front, -side + 0.2f, z, true, m_model);
-        AddWheel(*rearWheel, rear, side - 0.2f, z, false, m_model);
-        AddWheel(*rearWheel, rear, -side + 0.2f, z, true, m_model);
+        AddWheel(*frontWheel, front, side - 0.2f, z, false, m_model, m_triTex);
+        AddWheel(*frontWheel, front, -side + 0.2f, z, true, m_model, m_triTex);
+        AddWheel(*rearWheel, rear, side - 0.2f, z, false, m_model, m_triTex);
+        AddWheel(*rearWheel, rear, -side + 0.2f, z, true, m_model, m_triTex);
     }
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();

@@ -329,6 +329,9 @@ void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t 
                     memcpy(s.bboxMax, h + 0x30, 12);
                     s.name.assign(reinterpret_cast<const char *>(h + 0xa4), strnlen(reinterpret_cast<const char *>(h + 0xa4), clen - 0xa4));
                 }
+                if (cid == 0x134012) // (texture name hash, 0) pairs
+                    for (size_t k = 0; k + 8 <= clen; k += 8)
+                        s.textures.push_back(ReadLE32(d + q + 8, k));
                 q += 8 + clen;
             }
             DecodeChunks(d, dataSize, body, body + len, s.tris);
