@@ -272,7 +272,7 @@ int main(int argc, char **argv)
     std::vector<bool> aiOut; // URL knockout (ISSUES #117): opponents eliminated this race
     AiDriver playerAi; // NFSU2_AUTODRIVE with a route
     std::vector<float> aiStartS;
-    std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift;
+    std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false;
     FEPackage *hud = nullptr;
     RaceSession race;
@@ -297,6 +297,10 @@ int main(int argc, char **argv)
             inGameDrift = ReadGameFile(*fs, "GLOBAL\\INGAMEDRIFT.BUN");
             if (!inGameDrift.empty())
                 fe.AddBundle(inGameDrift.data(), inGameDrift.size(), "GLOBAL\\INGAMEDRIFT.BUN");
+            // Free run / outrun use the free-roam bundle (HUD_SingleRace.fng), ISSUES #118.
+            inGameFreeRoam = ReadGameFile(*fs, "GLOBAL\\INGAMEFREEROAM.BUN");
+            if (!inGameFreeRoam.empty())
+                fe.AddBundle(inGameFreeRoam.data(), inGameFreeRoam.size(), "GLOBAL\\INGAMEFREEROAM.BUN");
             if (getenv("NFSU2_LIST_INGAME"))
                 for (const std::string &n : fe.PackageNames())
                     printf("[World] package %s\n", n.c_str());
@@ -325,15 +329,22 @@ int main(int argc, char **argv)
             for (const RaceInfo &r : fe.Races())
                 printf("[RaceDB] %d %s cat %d flags %08x%s len %.0f\n", r.number, r.region, r.category,
                        r.typeFlags, r.special ? " special" : "", double(r.length));
+        // Free run (type 9): roam the region with no race layout -- no route, no barriers, no
+        // opponents, no countdown (ISSUES #118).
+        const bool freeRoam = raceConfig.type == 9;
         // The race route (Tracks\Routes<region>\Paths<race>.bin, ISSUES.md #107).
         char pathsPath[64];
         snprintf(pathsPath, sizeof(pathsPath), "TRACKS\\ROUTES%s\\PATHS%d.BIN", region.c_str(), raceNumber);
         route = RaceRoute();
-        if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath)))
+        if (freeRoam)
+            raceNumber = 0;
+        else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath)))
             raceConfig.route = &route;
         // Barriers the route runs through belong to other races' layouts; keep the rest (side
-        // streets closed). Without a route every barrier stays.
+        // streets closed). Without a route every barrier stays. Free run opens the whole region.
         world.EnableBarriers([&](const float *bb) {
+            if (freeRoam)
+                return false;
             if (!route.Valid())
                 return true;
             float cx = (bb[0] + bb[3]) * 0.5f, cy = (bb[1] + bb[4]) * 0.5f, x, y, dx, dy;
@@ -360,7 +371,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        const int opponents = grid.empty() || flyCamera ? 0 : std::min<int>(startup.RaceOpponents(), int(grid.size()) - 1);
+        const int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(startup.RaceOpponents(), int(grid.size()) - 1);
         if (!grid.empty()) {
             camera = grid[std::min<size_t>(opponents, grid.size() - 1)];
             printf("[World] race %d: grid of %zu, %d opponents\n", raceNumber, grid.size(), opponents);

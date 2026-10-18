@@ -93,8 +93,9 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_config = config;
     if (m_config.route && m_config.route->Valid() && !m_config.route->Closed())
         m_config.laps = 1; // sprint
-    m_phase = kCountdown;
-    m_countdown = 3.0f;
+    // Free run (type 9): drive at once, no countdown (ISSUES #118).
+    m_phase = IsFreeRun() ? kRacing : kCountdown;
+    m_countdown = IsFreeRun() ? 0.0f : 3.0f;
     m_goShown = 0;
     m_lap = 1;
     m_lapTime = m_totalTime = m_bestLap = m_lapDistance = 0;
@@ -149,6 +150,11 @@ void RaceSession::SetupHud()
     }
     for (uint32_t h : {kTurboGroup, kNosLine, kNosFill, kNosGameBreaker, kShiftLight})
         FENativeInterface::SetVisible(m_hud, h, false);
+    // Free run keeps only the gauges and minimap (ISSUES #118).
+    if (IsFreeRun())
+        for (uint32_t h : {kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText,
+                           kRaceOverMessage, kRaceOverBacking, kWrongWay})
+            FENativeInterface::SetVisible(m_hud, h, false);
     char text[16];
     snprintf(text, sizeof(text), "/%d", m_config.laps);
     FENativeInterface::SetString(m_hud, kNumberLaps, text);
@@ -454,7 +460,9 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         FENativeInterface::SetString(m_hud, kCommentData, comment);
     }
 
-    // Lap counter and lap time.
+    // Lap counter and lap time (free run has neither, ISSUES #118).
+    if (IsFreeRun())
+        return;
     snprintf(text, sizeof(text), "%d", std::min(m_lap, m_config.laps));
     FENativeInterface::SetString(m_hud, kLapNumber, text);
     FENativeInterface::SetString(m_hud, kCurrentLapTime, FormatTime(m_lapTime).c_str());

@@ -72,6 +72,10 @@ public:
     int TakeKnockout() { int k = m_knockoutEvent; m_knockoutEvent = -1; return k; }
     bool PlayerKnockedOut() const { return m_playerOut; }
 
+    // Free run (type 9): roam the region with no race -- no countdown, laps, position or timer, and
+    // the race HUD elements hidden (ISSUES #118).
+    bool IsFreeRun() const { return m_config.type == 9; }
+
 private:
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
