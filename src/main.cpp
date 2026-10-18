@@ -77,6 +77,13 @@ static std::vector<uint8_t> ReadGameFile(const ZipFileSystem &fs, const char *ga
     return data;
 }
 
+// CARS\<name>\GEOMETRY.BIN, or the GEOMETRY.LZC (JDLZ) that each car record also names.
+static std::vector<uint8_t> ReadCarGeometry(const ZipFileSystem &fs, const std::string &car)
+{
+    std::vector<uint8_t> data = ReadGameFile(fs, ("CARS\\" + car + "\\GEOMETRY.BIN").c_str());
+    return data.empty() ? ReadGameFile(fs, ("CARS\\" + car + "\\GEOMETRY.LZC").c_str()) : data;
+}
+
 // --dump GAME_PATH OUT: write a file from the disc archive, decompressed if needed.
 static int DumpFile(const ZipFileSystem &fs, const char *gamePath, const char *outPath)
 {
@@ -408,14 +415,13 @@ int main(int argc, char **argv)
         ai.clear();
         aiStartS.clear();
         aiOut.clear();
-        std::string carPath = "CARS\\" + fe.PreviewCarName() + "\\GEOMETRY.BIN";
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
         car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
-        if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()),
+        if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
             world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
             float ground = camera.z - 2.0f;
@@ -442,14 +448,21 @@ int main(int argc, char **argv)
             aiOut.assign(opponents, false);
             for (int i = 0; i < opponents; ++i) {
                 const TrackWorld::Camera &slot = grid[i];
-                std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
-                std::string path = "CARS\\" + name + "\\GEOMETRY.BIN";
-                PlayerCar::Wheel oppWheels[4];
+                // Some database cars have no files on the PAL disc (CIVIC, RSX): take the next one.
+                std::string name = fe.PreviewCarName();
+                bool loaded = false;
+                for (size_t attempt = 0; attempt < pool.size() && !loaded; ++attempt) {
+                    name = pool[(i * 7 + raceNumber + attempt) % pool.size()];
+                    PlayerCar::Wheel oppWheels[4];
+                    loaded = opponentCars[i].LoadModel(ReadCarGeometry(*fs, name),
+                                                       fe.CarWheels(name, oppWheels) ? oppWheels : nullptr);
+                }
+                if (!loaded) {
+                    name = fe.PreviewCarName();
+                    opponentCars[i].SetModel(car);
+                }
                 PlayerCar::Performance oppPerf;
                 opponentCars[i].SetPerformance(fe.CarPerformance(name, oppPerf) ? oppPerf : PlayerCar::Performance());
-                if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str()),
-                                               fe.CarWheels(name, oppWheels) ? oppWheels : nullptr))
-                    opponentCars[i].SetModel(car);
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);

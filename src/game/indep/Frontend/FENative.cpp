@@ -127,6 +127,12 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         return false;
     std::string path = "CARS\\" + std::string(model) + "\\GEOMETRY.BIN";
     std::vector<uint8_t> geometry = m_readFile(path.c_str());
+    if (geometry.empty()) {
+        // The record also names a JDLZ-compressed GEOMETRY.LZC (no car on the PAL disc uses it;
+        // CIVIC and RSX have no files at all).
+        path.replace(path.size() - 3, 3, "LZC");
+        geometry = m_readFile(path.c_str());
+    }
     std::vector<SolidMesh::Triangle> decoded = SolidMesh::DecodeGeometry(geometry.data(), geometry.size());
     if (decoded.empty()) {
         fprintf(stderr, "[CarPreview] no geometry decoded from %s\n", path.c_str());
