@@ -108,6 +108,8 @@ void Traffic::Update(const TrackWorld &world, float dt, const std::vector<const 
             if (fwd > 0 && fwd < 22.0f && std::fabs(side) < 3.0f)
                 target = std::min(target, std::max(0.0f, (fwd - 7.0f) * 0.6f));
         }
+        if (m_net->NearJunction(car.X(), car.Y(), 22.0f))
+            target = std::min(target, 7.0f); // ease through junctions
         float speed = std::max(0.0f, car.Speed());
         float throttle = speed < target ? 0.6f : 0.0f;
         float brake = speed > target + 1.0f ? std::min(1.0f, (speed - target) / 6.0f) : 0.0f;

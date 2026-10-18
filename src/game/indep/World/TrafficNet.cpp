@@ -8,6 +8,7 @@
 bool TrafficNet::Load(const std::vector<uint8_t> &paths)
 {
     m_links.clear();
+    m_junctions.clear();
     size_t o = 8;
     if (paths.size() < 16)
         return false;
@@ -21,6 +22,20 @@ bool TrafficNet::Load(const std::vector<uint8_t> &paths)
         memcpy(&size, &paths[o + 4], 4);
         if (o + 8 + size > paths.size())
             break;
+        if (id == 0x3414a) {
+            for (size_t r = 0; r + 0x44 <= size;) {
+                const uint8_t *p = &paths[o + 8 + r];
+                int16_t rec;
+                memcpy(&rec, p + 0x42, 2);
+                if (rec < 0x44 || r + size_t(rec) > size)
+                    break;
+                Junction j;
+                memcpy(&j.x, p + 4, 4);
+                memcpy(&j.y, p + 8, 4);
+                m_junctions.push_back(j);
+                r += size_t(rec);
+            }
+        }
         if (id == 0x3414d) {
             for (size_t r = 0; r + 36 <= size; r += 36) {
                 const uint8_t *p = &paths[o + 8 + r];
@@ -53,4 +68,12 @@ void TrafficNet::Sample(int i, float t, float &x, float &y, float &dx, float &dy
     y = l.y0 + (l.y1 - l.y0) * f;
     dx = l.length > 1e-3f ? (l.x1 - l.x0) / l.length : 1.0f;
     dy = l.length > 1e-3f ? (l.y1 - l.y0) / l.length : 0.0f;
+}
+
+bool TrafficNet::NearJunction(float x, float y, float radius) const
+{
+    for (const Junction &j : m_junctions)
+        if (std::hypot(j.x - x, j.y - y) < radius)
+            return true;
+    return false;
 }

@@ -18,9 +18,15 @@ public:
     bool Load(const std::vector<uint8_t> &paths);
     bool Valid() const { return !m_links.empty(); }
     const std::vector<Link> &Links() const { return m_links; }
+    // Intersection centres (chunk 0x3414a, 100-byte records: u32 type (6/20); float centre x, y; float dir x, y;
+    // float id; ...; u16 arm count (+0x40) = 4, s16 record size (+0x42); then 4 arms of 2 points).
+    struct Junction { float x, y; };
+    const std::vector<Junction> &Junctions() const { return m_junctions; }
+    bool NearJunction(float x, float y, float radius) const;
     // Position and unit direction at distance t along link i.
     void Sample(int i, float t, float &x, float &y, float &dx, float &dy) const;
 
 private:
     std::vector<Link> m_links;
+    std::vector<Junction> m_junctions;
 };
