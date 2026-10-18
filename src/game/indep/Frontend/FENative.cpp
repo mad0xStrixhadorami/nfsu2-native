@@ -728,6 +728,10 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
     if (padIndex != 0)
         return 0;
     u32 mask = m_simulatedPadMask;
+    // NFSU2_NOINPUT=1: scripted input only (automated runs ignore keys pressed in the window).
+    static const bool scriptedOnly = getenv("NFSU2_NOINPUT") != nullptr;
+    if (scriptedOnly)
+        return mask;
     int numKeys = 0;
     if (const Uint8 *keys = SDL_GetKeyboardState(&numKeys)) {
         if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_KP_8])

@@ -27,7 +27,9 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
+#include "game/indep/World/RaceRoute.h"
 #include "game/indep/World/RaceSession.h"
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
@@ -260,6 +262,11 @@ int main(int argc, char **argv)
     TrackWorld world;
     TrackWorld::Camera camera;
     PlayerCar car;
+    RaceRoute route;
+    std::vector<PlayerCar> opponentCars;
+    std::vector<AiDriver> ai;
+    AiDriver playerAi; // NFSU2_AUTODRIVE with a route
+    std::vector<float> aiStartS;
     std::vector<uint8_t> inGameCommon, inGameRace;
     bool inWorld = false, flyCamera = false;
     FEPackage *hud = nullptr;
@@ -292,35 +299,111 @@ int main(int argc, char **argv)
             return;
         }
         camera = world.StartCamera();
-        std::string markersPath = "TRACKS\\ROUTES" + region + "\\TRACKPOSMARKERSALL.BIN";
+        flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
         int raceNumber = startup.RaceNumber();
         if (const char *n = getenv("NFSU2_RACE"))
             raceNumber = atoi(n);
         raceConfig = RaceSession::Config();
         raceConfig.laps = startup.RaceLaps();
+        for (const RaceInfo &r : fe.Races())
+            if (r.number == raceNumber)
+                raceConfig.trackLength = float(r.length);
+        // The race route (Tracks\Routes<region>\Paths<race>.bin, ISSUES.md #107).
+        char pathsPath[64];
+        snprintf(pathsPath, sizeof(pathsPath), "TRACKS\\ROUTES%s\\PATHS%d.BIN", region.c_str(), raceNumber);
+        route = RaceRoute();
+        if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath)))
+            raceConfig.route = &route;
+        // Barriers the route runs through belong to other races' layouts; keep the rest (side
+        // streets closed). Without a route every barrier stays.
+        world.EnableBarriers([&](const float *bb) {
+            if (!route.Valid())
+                return true;
+            float cx = (bb[0] + bb[3]) * 0.5f, cy = (bb[1] + bb[4]) * 0.5f, x, y, dx, dy;
+            route.Sample(route.Project(cx, cy), x, y, dx, dy);
+            return std::hypot(cx - x, cy - y) > 6.0f;
+        });
+        // Start grid: of the race's grids, the one heading along the route (the other is for the
+        // reverse direction); the player starts at the back, opponents ahead.
+        std::string markersPath = "TRACKS\\ROUTES" + region + "\\TRACKPOSMARKERSALL.BIN";
         std::vector<uint8_t> markers = ReadGameFile(*fs, markersPath.c_str());
-        if (raceNumber && world.StartFromMarkers(markers, raceNumber, camera)) {
-            printf("[World] race %d start grid\n", raceNumber);
+        std::vector<TrackWorld::Camera> grid;
+        if (raceNumber) {
+            float best = -2.0f;
+            for (auto &g : world.GridsFromMarkers(markers, raceNumber)) {
+                float align = 1.0f;
+                if (route.Valid()) {
+                    float x, y, dx, dy;
+                    route.Sample(route.Project(g[0].x, g[0].y), x, y, dx, dy);
+                    align = std::cos(g[0].yaw) * dx + std::sin(g[0].yaw) * dy;
+                }
+                if (align > best) {
+                    best = align;
+                    grid = g;
+                }
+            }
+        }
+        const int opponents = grid.empty() || flyCamera ? 0 : std::min<int>(startup.RaceOpponents(), int(grid.size()) - 1);
+        if (!grid.empty()) {
+            camera = grid[std::min<size_t>(opponents, grid.size() - 1)];
+            printf("[World] race %d: grid of %zu, %d opponents\n", raceNumber, grid.size(), opponents);
             raceConfig.dirX = std::cos(camera.yaw);
             raceConfig.dirY = std::sin(camera.yaw);
             raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY);
-            for (const RaceInfo &r : fe.Races())
-                if (r.number == raceNumber)
-                    raceConfig.trackLength = float(r.length);
+            if (route.Valid())
+                raceConfig.lineS = route.Project(raceConfig.hasLine ? raceConfig.lineX : grid[0].x,
+                                                 raceConfig.hasLine ? raceConfig.lineY : grid[0].y);
             camera.z += 2.0f;
         }
         // The player car (stand-in for the unported car loader / physics, ISSUES.md #105).
-        flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
+        world.ClearCars();
+        opponentCars.clear();
+        ai.clear();
+        aiStartS.clear();
         std::string carPath = "CARS\\" + fe.PreviewCarName() + "\\GEOMETRY.BIN";
         if (!flyCamera && car.LoadModel(ReadGameFile(*fs, carPath.c_str()))) {
-            world.SetCar(car.Model(), SDL_Color{40, 90, 200, 255});
+            world.AddCar(&car.Model(), SDL_Color{40, 90, 200, 255});
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);
+            if (getenv("NFSU2_WORLD_DEBUG"))
+                for (float zMax : {16.0f, 18.0f, 18.5f, 19.0f, 19.5f, 20.0f, 21.0f, 25.0f}) {
+                    float h = -1;
+                    bool ok = world.GroundHeight(camera.x, camera.y, zMax, h);
+                    printf("[World] ground under start, zMax %.1f: %s %.2f\n", zMax, ok ? "found" : "none", h);
+                }
             chaseYaw = camera.yaw;
         } else {
             flyCamera = true;
         }
+        // Opponents (ISSUES.md #107): other database cars on the grid slots ahead of the player.
+        if (!flyCamera && route.Valid() && opponents > 0) {
+            static const SDL_Color kPaints[] = {{200, 40, 40, 255}, {230, 200, 40, 255}, {40, 170, 70, 255},
+                                                {220, 220, 225, 255}, {150, 60, 190, 255}};
+            std::vector<std::string> pool = fe.RaceableCars();
+            pool.erase(std::remove(pool.begin(), pool.end(), fe.PreviewCarName()), pool.end());
+            opponentCars.resize(opponents);
+            ai.resize(opponents);
+            for (int i = 0; i < opponents; ++i) {
+                const TrackWorld::Camera &slot = grid[i];
+                std::string name = pool.empty() ? fe.PreviewCarName() : pool[(i * 7 + raceNumber) % pool.size()];
+                std::string path = "CARS\\" + name + "\\GEOMETRY.BIN";
+                if (!opponentCars[i].LoadModel(ReadGameFile(*fs, path.c_str())))
+                    opponentCars[i].SetModel(car.Model());
+                float ground = slot.z;
+                world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
+                opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
+                world.AddCar(&opponentCars[i].Model(), kPaints[i % 5]);
+                // Lane: keep each car on its own side of the route line; faster cars at the front.
+                float x, y, dx, dy;
+                route.Sample(route.Project(slot.x, slot.y), x, y, dx, dy);
+                float lane = std::clamp(-(slot.x - x) * dy + (slot.y - y) * dx, -4.5f, 4.5f);
+                ai[i].Init(&opponentCars[i], &route, lane, 0.86f + 0.04f * float(opponents - i) / opponents);
+                aiStartS.push_back(route.Project(slot.x, slot.y));
+                printf("[World] opponent %d: %s\n", i + 1, name.c_str());
+            }
+        }
+        raceConfig.racers = 1 + int(ai.size());
         if (const char *cam = getenv("NFSU2_WORLD_CAM"))
             sscanf(cam, "%f,%f,%f,%f,%f", &camera.x, &camera.y, &camera.z, &camera.yaw, &camera.pitch);
         printf("[World] camera %.1f %.1f %.1f yaw %.2f\n", camera.x, camera.y, camera.z, camera.yaw);
@@ -418,15 +501,51 @@ int main(int argc, char **argv)
                 steer += std::clamp(target - steer, -4.0f * dt, 4.0f * dt);
                 float throttle = (autoDrive || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
                 float brake = (pad & FENativeInterface::kPadDown) ? 1.0f : 0.0f;
-                if (!race.Update(car, dt)) {
+                std::vector<float> rivals;
+                for (size_t i = 0; i < ai.size(); ++i)
+                    rivals.push_back(race.RaceDistance(aiStartS[i], ai[i].Progress()));
+                if (!race.Update(car, rivals, dt)) {
                     // Countdown, or race over: no throttle; brake to a stop after the finish.
                     throttle = 0;
                     brake = race.GetPhase() == RaceSession::kFinished ? 1.0f : 0.0f;
                 }
-                car.Update(world, throttle, brake, steer, dt);
-                float m[12];
-                car.Transform(m);
-                world.SetCarTransform(m);
+                const bool go = race.GetPhase() != RaceSession::kCountdown;
+                if (autoDrive && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
+                    // Test aid: the player car follows the route like an opponent.
+                    if (playerAi.Car() != &car)
+                        playerAi.Init(&car, &route, 0.0f, 0.95f);
+                    playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
+                } else {
+                    car.Update(world, throttle, brake, steer, dt);
+                }
+                for (AiDriver &d : ai)
+                    d.Update(world, dt, go);
+                // Car-to-car contact: push overlapping cars apart (2 m radius each); a car running
+                // into the back of another loses a little speed.
+                std::vector<PlayerCar *> cars{&car};
+                for (PlayerCar &o : opponentCars)
+                    cars.push_back(&o);
+                for (size_t i = 0; i < cars.size(); ++i)
+                    for (size_t j = i + 1; j < cars.size(); ++j) {
+                        float dx = cars[j]->X() - cars[i]->X(), dy = cars[j]->Y() - cars[i]->Y();
+                        float d = std::hypot(dx, dy);
+                        if (d >= 4.0f || d < 1e-3f || std::fabs(cars[j]->Z() - cars[i]->Z()) > 2.0f)
+                            continue;
+                        float push = (4.0f - d) * 0.5f / d;
+                        cars[i]->Nudge(-dx * push, -dy * push);
+                        cars[j]->Nudge(dx * push, dy * push);
+                        // The one behind (moving towards the other) slows to the other's pace.
+                        float iTowards = std::cos(cars[i]->Yaw()) * dx + std::sin(cars[i]->Yaw()) * dy;
+                        PlayerCar *behind = iTowards > 0 ? cars[i] : cars[j];
+                        PlayerCar *ahead = behind == cars[i] ? cars[j] : cars[i];
+                        if (behind->Speed() > ahead->Speed() + 1.0f)
+                            behind->ScaleSpeed(0.98f);
+                    }
+                for (size_t i = 0; i < cars.size(); ++i) {
+                    float m[12];
+                    cars[i]->Transform(m);
+                    world.SetCarTransform(i, m);
+                }
                 // Chase camera: behind and above, lagging the car's heading.
                 float diff = std::remainder(car.Yaw() - chaseYaw, 6.2831853f);
                 chaseYaw += diff * std::min(1.0f, 5.0f * dt);
@@ -450,8 +569,12 @@ int main(int argc, char **argv)
             engine->Render();
             static Uint32 fpsStart = now, fpsFrames = 0;
             if (++fpsFrames == 60) {
-                printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
-                       car.X(), car.Y(), car.Z(), car.Speed());
+                for (size_t i = 0; i < ai.size() && getenv("NFSU2_WORLD_DEBUG"); ++i)
+                    printf("[World]   opp %zu at %.1f %.1f %.1f speed %.1f race %.1f m\n", i + 1, opponentCars[i].X(),
+                           opponentCars[i].Y(), opponentCars[i].Z(), opponentCars[i].Speed(),
+                           race.RaceDistance(aiStartS[i], ai[i].Progress()));
+                printf("[World] %.1f fps  car %.1f %.1f %.1f speed %.1f m/s race %.1f m\n", 60000.0 / std::max<Uint32>(1, now - fpsStart),
+                       car.X(), car.Y(), car.Z(), car.Speed(), race.PlayerDistance());
                 fpsStart = now;
                 fpsFrames = 0;
             }

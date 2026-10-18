@@ -17,8 +17,10 @@ public:
     const std::vector<SolidMesh::Triangle> &Model() const { return m_model; }
 
     void Place(float x, float y, float z, float yaw);
-    // throttle/brake/steer in [-1, 1]; dt in seconds.
-    void Update(const TrackWorld &world, float throttle, float brake, float steer, float dt);
+    // throttle/brake/steer in [-1, 1]; dt in seconds. walls: collide with steep world triangles
+    // (route-following opponents skip it: bridge slivers from the topology approximation, #90,
+    // would stop them).
+    void Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls = true);
 
     // Row-major 3x4 car-to-world transform: rows are the forward, left, up axes; column 3 the position.
     void Transform(float m[12]) const;
@@ -27,6 +29,11 @@ public:
     float Z() const { return m_z; }
     float Yaw() const { return m_yaw; }
     float Speed() const { return m_speed; }
+    // Car-to-car contact (resolved by the caller): move without physics, scale the speed.
+    void Nudge(float dx, float dy) { m_x += dx, m_y += dy; }
+    void ScaleSpeed(float f) { m_speed *= f; }
+    // Shares another car's assembled model (opponents of the same make).
+    void SetModel(const std::vector<SolidMesh::Triangle> &model) { m_model = model; }
 
 private:
     std::vector<SolidMesh::Triangle> m_model;

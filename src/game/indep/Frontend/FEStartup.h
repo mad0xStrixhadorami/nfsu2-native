@@ -48,6 +48,7 @@ public:
     // Back from a race (stand-in for the pause menu's Quit Race / post-race Continue): UI_Main.fng.
     void ReturnFromRace();
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
+    int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
 
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();

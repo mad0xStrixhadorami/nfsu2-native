@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,11 +27,11 @@ public:
     bool Load(const std::vector<uint8_t> &stream);
     // A drivable spot to start from: the centre of a road instance near the middle of the map.
     Camera StartCamera() const { return m_start; }
-    // Race start grid from Tracks\Routes<region>\TrackPosMarkersAll.bin (chunk 0x34146, 48-byte
+    // Race start grids from Tracks\Routes<region>\TrackPosMarkersAll.bin (chunk 0x34146, 48-byte
     // markers: name hash +8, float x/y/z +0x10, u16 heading +0x20 (65536 = 360 deg, 0 = +X),
-    // u16 race number +0x24). Each race has an 8-car forward grid and a reverse grid under two
-    // name hashes, plus single start/finish markers; the first 8-marker group is taken.
-    bool StartFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, Camera &out) const;
+    // u16 race number +0x24). Each race has an 8-car grid per direction under its own name hash,
+    // plus single start/finish markers. Returns each grid's slots in file order.
+    std::vector<std::vector<Camera>> GridsFromMarkers(const std::vector<uint8_t> &markers, int raceNumber) const;
     // The race's first single marker (start/finish line) position.
     bool LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const;
     void Render(SDL_Renderer *renderer, const Camera &cam, int width, int height);
@@ -40,10 +41,15 @@ public:
     // Does the segment a->b cross a steep (wall) triangle?
     bool HitsWall(float ax, float ay, float az, float bx, float by, float bz) const;
 
-    // The player car, drawn with the world: car-space triangles, body colour, and the row-major
-    // 3x4 car-to-world transform from PlayerCar::Transform.
-    void SetCar(const std::vector<SolidMesh::Triangle> &model, SDL_Color paint);
-    void SetCarTransform(const float m[12]);
+    // Cars drawn with the world: car-space triangles (kept by pointer, must outlive the world's
+    // use), body colour, and the row-major 3x4 car-to-world transform from PlayerCar::Transform.
+    void ClearCars();
+    size_t AddCar(const std::vector<SolidMesh::Triangle> *model, SDL_Color paint);
+    void SetCarTransform(size_t car, const float m[12]);
+
+    // Race barriers (XO_TrackBarrier* scenery) are kept out of the world until a race enables the
+    // ones it needs (UG2 selects barrier groups per race; see ISSUES.md #107). keep(bbox[6]).
+    void EnableBarriers(const std::function<bool(const float *bbox)> &keep);
 
     size_t TriangleCount() const { return m_triangleCount; }
     size_t InstanceCount() const { return m_instances; }
@@ -52,6 +58,7 @@ private:
     struct Tri {
         float v[9];
         uint8_t shade[3]; // base colour from the surface normal and the solid kind
+        uint8_t ground;   // normal within ~37 deg of vertical: drawn before cars
     };
     struct Cell {
         std::vector<Tri> tris;
@@ -67,7 +74,16 @@ private:
     size_t m_triangleCount = 0;
     size_t m_instances = 0;
     std::vector<SDL_Vertex> m_frame; // per-frame vertex buffer
-    std::vector<SolidMesh::Triangle> m_carModel;
-    std::vector<Tri> m_carTris; // m_carModel in world space, rebuilt by SetCarTransform
-    SDL_Color m_carPaint{40, 90, 200, 255};
+    struct Car {
+        const std::vector<SolidMesh::Triangle> *model;
+        SDL_Color paint;
+        std::vector<Tri> tris; // model in world space, rebuilt by SetCarTransform
+    };
+    std::vector<Car> m_cars;
+    struct Barrier {
+        float bbox[6];
+        std::vector<Tri> tris;
+    };
+    std::vector<Barrier> m_barriers;
+    void AddToCells(const Tri &t);
 };

@@ -36,12 +36,14 @@ template <typename F> void ForEachChunk(const uint8_t *d, size_t begin, size_t e
     }
 }
 
-enum Kind : uint8_t { kOther, kRoad, kTerrain, kBuilding, kSky };
+enum Kind : uint8_t { kOther, kRoad, kTerrain, kBuilding, kSky, kBarrier };
 
 Kind KindOf(const char *name)
 {
     if (strstr(name, "SKY") || strstr(name, "Sky"))
         return kSky;
+    if (strstr(name, "TrackBarrier"))
+        return kBarrier;
     if (strstr(name, "Road") || strstr(name, "ROAD"))
         return kRoad;
     if (strstr(name, "Terrain") || strstr(name, "TERRAIN") || strstr(name, "TRN_"))
@@ -72,6 +74,7 @@ bool TrackWorld::Shade(Tri &w, float r, float g, float b)
     if (len < 1e-6f)
         return false;
     float lit = 0.35f + 0.65f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
+    w.ground = std::fabs(nz) > 0.8f * len;
     w.shade[0] = uint8_t(std::min(255.0f, r * lit * 255.0f));
     w.shade[1] = uint8_t(std::min(255.0f, g * lit * 255.0f));
     w.shade[2] = uint8_t(std::min(255.0f, b * lit * 255.0f));
@@ -163,82 +166,98 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
     return hit;
 }
 
-void TrackWorld::SetCar(const std::vector<SolidMesh::Triangle> &model, SDL_Color paint)
+void TrackWorld::ClearCars() { m_cars.clear(); }
+
+void TrackWorld::AddToCells(const Tri &w)
 {
-    m_carModel = model;
-    m_carPaint = paint;
-    m_carTris.clear();
+    float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
+    int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
+    m_cells[CellKey(gx, gy)].tris.push_back(w);
+    ++m_triangleCount;
 }
 
-void TrackWorld::SetCarTransform(const float m[12])
+void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &keep)
 {
-    m_carTris.clear();
-    m_carTris.reserve(m_carModel.size());
-    for (const SolidMesh::Triangle &t : m_carModel) {
+    size_t enabled = 0;
+    for (Barrier &b : m_barriers)
+        if (!b.tris.empty() && keep(b.bbox)) {
+            for (const Tri &t : b.tris)
+                AddToCells(t);
+            b.tris.clear(); // enabled once per load
+            ++enabled;
+        }
+    printf("[World] %zu of %zu race barriers enabled\n", enabled, m_barriers.size());
+}
+
+size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, SDL_Color paint)
+{
+    m_cars.push_back({model, paint, {}});
+    return m_cars.size() - 1;
+}
+
+void TrackWorld::SetCarTransform(size_t index, const float m[12])
+{
+    if (index >= m_cars.size())
+        return;
+    Car &car = m_cars[index];
+    car.tris.clear();
+    car.tris.reserve(car.model->size());
+    for (const SolidMesh::Triangle &t : *car.model) {
         Tri w;
         for (int k = 0; k < 3; ++k)
             for (int a = 0; a < 3; ++a)
                 w.v[k * 3 + a] = t.v[k].x * m[a] + t.v[k].y * m[4 + a] + t.v[k].z * m[8 + a] + m[3 + 4 * a];
-        if (Shade(w, m_carPaint.r / 255.0f, m_carPaint.g / 255.0f, m_carPaint.b / 255.0f))
-            m_carTris.push_back(w);
+        if (Shade(w, car.paint.r / 255.0f, car.paint.g / 255.0f, car.paint.b / 255.0f))
+            car.tris.push_back(w);
     }
+}
+
+// Markers of one race in TrackPosMarkersAll.bin (see TrackWorld.h), grouped by name hash.
+static std::vector<std::vector<TrackWorld::Camera>> MarkerGroups(const std::vector<uint8_t> &markers, int raceNumber)
+{
+    std::vector<std::vector<TrackWorld::Camera>> groups;
+    if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
+        return groups;
+    size_t p = 8;
+    while (p < markers.size() && markers[p] == 0x11)
+        ++p;
+    std::vector<uint32_t> hashes;
+    for (; p + 0x30 <= markers.size(); p += 0x30) {
+        uint16_t number, heading;
+        memcpy(&number, markers.data() + p + 0x24, 2);
+        if (number != raceNumber)
+            continue;
+        uint32_t hash = Read32(markers.data() + p + 8);
+        float pos[3];
+        memcpy(pos, markers.data() + p + 0x10, 12);
+        memcpy(&heading, markers.data() + p + 0x20, 2);
+        size_t g = std::find(hashes.begin(), hashes.end(), hash) - hashes.begin();
+        if (g == hashes.size()) {
+            hashes.push_back(hash);
+            groups.emplace_back();
+        }
+        groups[g].push_back({pos[0], pos[1], pos[2], heading * (6.2831853f / 65536.0f), -0.12f});
+    }
+    return groups;
+}
+
+std::vector<std::vector<TrackWorld::Camera>> TrackWorld::GridsFromMarkers(const std::vector<uint8_t> &markers,
+                                                                          int raceNumber) const
+{
+    std::vector<std::vector<Camera>> grids;
+    for (auto &g : MarkerGroups(markers, raceNumber))
+        if (g.size() >= 4)
+            grids.push_back(std::move(g));
+    return grids;
 }
 
 bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const
 {
-    if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
-        return false;
-    size_t p = 8;
-    while (p < markers.size() && markers[p] == 0x11)
-        ++p;
-    std::vector<std::pair<uint32_t, size_t>> group;
-    for (; p + 0x30 <= markers.size(); p += 0x30) {
-        uint16_t number;
-        memcpy(&number, markers.data() + p + 0x24, 2);
-        if (number == raceNumber)
-            group.emplace_back(Read32(markers.data() + p + 8), p);
-    }
-    for (const auto &[hash, at] : group) {
-        size_t count = 0;
-        for (const auto &g : group)
-            count += g.first == hash;
-        if (count != 1)
-            continue;
-        float pos[2];
-        memcpy(pos, markers.data() + at + 0x10, 8);
-        x = pos[0], y = pos[1];
-        return true;
-    }
-    return false;
-}
-
-bool TrackWorld::StartFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, Camera &out) const
-{
-    if (markers.size() < 8 || Read32(markers.data()) != 0x34146)
-        return false;
-    size_t p = 8;
-    while (p < markers.size() && markers[p] == 0x11)
-        ++p;
-    std::vector<std::pair<uint32_t, size_t>> group; // markers of this race, in file order
-    for (; p + 0x30 <= markers.size(); p += 0x30) {
-        uint16_t number;
-        memcpy(&number, markers.data() + p + 0x24, 2);
-        if (number == raceNumber)
-            group.emplace_back(Read32(markers.data() + p + 8), p);
-    }
-    for (const auto &[hash, first] : group) {
-        size_t count = 0;
-        for (const auto &g : group)
-            count += g.first == hash;
-        if (count < 4)
-            continue; // a single start/finish marker, not a grid
-        float pos[3];
-        uint16_t heading;
-        memcpy(pos, markers.data() + first + 0x10, 12);
-        memcpy(&heading, markers.data() + first + 0x20, 2);
-        out = {pos[0], pos[1], pos[2], heading * (6.2831853f / 65536.0f), -0.12f};
-        return true;
-    }
+    for (const auto &g : MarkerGroups(markers, raceNumber))
+        if (g.size() == 1) {
+            x = g[0].x, y = g[0].y;
+            return true;
+        }
     return false;
 }
 
@@ -247,6 +266,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
     const uint8_t *d = stream.data();
     const size_t n = stream.size();
     m_cells.clear();
+    m_barriers.clear();
     m_triangleCount = m_instances = 0;
 
     // Solids by name hash (UG2 solid loader 0x001bf3b8 keeps the same per-solid chunk layout).
@@ -341,10 +361,15 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
                 }
                 if (!Shade(w, br, bg, bb))
                     continue; // degenerate
-                float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
-                int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
-                m_cells[CellKey(gx, gy)].tris.push_back(w);
-                ++m_triangleCount;
+                if (kind == kBarrier) {
+                    if (m_barriers.empty() || memcmp(m_barriers.back().bbox, bbox, sizeof(bbox)) != 0) {
+                        m_barriers.emplace_back();
+                        memcpy(m_barriers.back().bbox, bbox, sizeof(bbox));
+                    }
+                    m_barriers.back().tris.push_back(w);
+                    continue;
+                }
+                AddToCells(w);
             }
         }
     }
@@ -401,7 +426,7 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     struct Visible {
         float depth;
         float nearest; // smallest vertex depth
-        int pass;      // 0 world behind/around the car, 1 car, 2 world wholly in front of the car
+        int pass;      // 0 world, 1 car, 2 world ground
         int count;     // 3 or 4 (a clipped triangle can become a quad)
         CamVert v[4];
         SDL_Color colour;
@@ -411,7 +436,9 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     const int reach = int(std::ceil(kDrawDistance / kCellSize));
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
     std::vector<const std::vector<Tri> *> lists;
-    lists.push_back(&m_carTris);
+    for (const Car &car : m_cars)
+        lists.push_back(&car.tris);
+    const size_t carLists = lists.size();
     for (int gx = ccx - reach; gx <= ccx + reach; ++gx)
         for (int gy = ccy - reach; gy <= ccy + reach; ++gy) {
             auto it = m_cells.find(CellKey(gx, gy));
@@ -427,7 +454,8 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
                 continue;
             lists.push_back(&it->second.tris);
         }
-    for (const std::vector<Tri> *list : lists) {
+    for (size_t li = 0; li < lists.size(); ++li) {
+        const std::vector<Tri> *list = lists[li];
         {
             for (const Tri &t : *list) {
                 CamVert in[3];
@@ -474,30 +502,37 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
                     vis.nearest = std::min(vis.nearest, vis.v[k].z);
                     farthest = std::max(farthest, vis.v[k].z);
                 }
-                vis.pass = list == &m_carTris ? 1 : 0;
+                vis.pass = li < carLists ? 1 : t.ground ? 2 : 0;
                 vis.nearest = vis.pass == 1 ? vis.nearest : farthest; // world: compare by its far end
                 visible.push_back(vis);
             }
         }
     }
-    // Painter's order by mean depth, except that the car is drawn over the (often large) world
-    // triangles it sits on: only world triangles wholly nearer than the whole car go after it.
-    float carNearest = 1e30f;
-    for (const Visible &v : visible)
-        if (v.pass == 1)
-            carNearest = std::min(carNearest, v.nearest);
-    for (Visible &v : visible)
-        if (v.pass == 0 && v.nearest < carNearest)
-            v.pass = 2;
-    std::sort(visible.begin(), visible.end(), [](const Visible &a, const Visible &b) {
-        return a.pass != b.pass ? a.pass < b.pass : a.depth > b.depth;
-    });
-
-    if (getenv("NFSU2_WORLD_DEBUG")) {
-        size_t near30 = 0;
-        for (const Visible &v : visible)
-            near30 += v.depth < 30.0f;
-        printf("[World] visible %zu (depth<30: %zu)\n", visible.size(), near30);
+    // Painter's order by mean depth for the world; cars are merged in so that a car triangle is
+    // drawn after every world triangle that is not wholly in front of it (the road triangle a car
+    // sits on is often larger than the car and its centre nearer to the camera).
+    // Without a depth buffer, ground (near-horizontal) triangles go first so that a road slab
+    // between the camera and a car never covers the car.
+    std::vector<Visible> cars, ground;
+    auto split = std::partition(visible.begin(), visible.end(), [](const Visible &v) { return v.pass == 0; });
+    for (auto it = split; it != visible.end(); ++it)
+        (it->pass == 1 ? cars : ground).push_back(*it);
+    visible.erase(split, visible.end());
+    auto byDepth = [](const Visible &a, const Visible &b) { return a.depth > b.depth; };
+    std::sort(visible.begin(), visible.end(), byDepth);
+    std::sort(cars.begin(), cars.end(), byDepth);
+    std::sort(ground.begin(), ground.end(), byDepth);
+    if (!cars.empty() || !ground.empty()) {
+        std::vector<Visible> merged = std::move(ground);
+        merged.reserve(merged.size() + visible.size() + cars.size());
+        size_t j = 0;
+        for (const Visible &v : visible) {
+            while (j < cars.size() && cars[j].depth >= v.nearest) // v.nearest holds the far end for world
+                merged.push_back(cars[j++]);
+            merged.push_back(v);
+        }
+        merged.insert(merged.end(), cars.begin() + j, cars.end());
+        visible.swap(merged);
     }
     m_frame.clear();
     m_frame.reserve(visible.size() * 3);

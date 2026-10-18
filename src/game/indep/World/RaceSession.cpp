@@ -9,6 +9,7 @@
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/World/PlayerCar.h"
+#include "game/indep/World/RaceRoute.h"
 
 namespace {
 // HUD_SingleRace.fng objects (stripped package: names from bStringHash matches).
@@ -27,6 +28,7 @@ constexpr uint32_t kLapGroup = 0x70f90bd4, kLapNumber = 0x57f0e3a5, kNumberLaps 
 constexpr uint32_t kLapTimeGroup = 0x54be67bc, kCurrentLapTime = 0x30d9802e;
 constexpr uint32_t kCountdownText = 0x2da220aa;  // 321_GO
 constexpr uint32_t kRaceOverMessage = 0xa7806ddb, kRaceOverBacking = 0x4e4566e5;
+constexpr uint32_t kWrongWay = 0xc82fa200; // WRONGWAYIMAGE
 
 std::string FormatTime(float seconds)
 {
@@ -47,6 +49,10 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_lap = 1;
     m_lapTime = m_totalTime = m_bestLap = m_lapDistance = 0;
     m_havePrev = false;
+    m_routeS = -1;
+    m_progress = 0;
+    m_position = 1;
+    m_wrongWay = 0;
     SetupHud();
     printf("[Race] begin: %d laps, track %.0f m, line %s\n", config.laps, config.trackLength,
            config.hasLine ? "from markers" : "none");
@@ -68,52 +74,90 @@ void RaceSession::SetupHud()
     char text[16];
     snprintf(text, sizeof(text), "/%d", m_config.laps);
     FENativeInterface::SetString(m_hud, kNumberLaps, text);
-    FENativeInterface::SetString(m_hud, kPositionNumber, "1");
-    FENativeInterface::SetString(m_hud, kPositionNth, "st");
-    FENativeInterface::SetString(m_hud, kNumberRacers, "/1"); // no opponents yet
+    snprintf(text, sizeof(text), "/%d", m_config.racers);
+    FENativeInterface::SetString(m_hud, kNumberRacers, text);
 }
 
-bool RaceSession::Update(const PlayerCar &car, float dt)
+float RaceSession::RaceDistance(float startS, float progress) const
 {
-    switch (m_phase) {
-    case kCountdown:
+    const RaceRoute *r = m_config.route;
+    return r ? r->Delta(m_config.lineS, startS) + progress : progress;
+}
+
+void RaceSession::CompleteLap()
+{
+    printf("[Race] lap %d: %s\n", m_lap, FormatTime(m_lapTime).c_str());
+    m_bestLap = m_bestLap > 0 ? std::min(m_bestLap, m_lapTime) : m_lapTime;
+    m_lapDistance = 0;
+    m_lapTime = 0;
+    if (++m_lap > m_config.laps) {
+        m_phase = kFinished;
+        printf("[Race] finished %d of %d in %s (best lap %s)\n", m_position, m_config.racers,
+               FormatTime(m_totalTime).c_str(), FormatTime(m_bestLap).c_str());
+    }
+}
+
+// Progress along the decoded route: laps, finish, position and wrong way.
+void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &opponents, float dt)
+{
+    const RaceRoute &route = *m_config.route;
+    if (m_routeS < 0) {
+        m_routeS = m_startS = route.Project(car.X(), car.Y());
+        m_progress = 0;
+    }
+    float s = route.Project(car.X(), car.Y(), m_routeS);
+    m_progress += route.Delta(m_routeS, s);
+    m_routeS = s;
+    const float dist = RaceDistance(m_startS, m_progress);
+    if (m_phase == kRacing && dist >= m_lap * route.Length())
+        CompleteLap();
+    // Position: opponents further along the route are ahead.
+    int ahead = 0;
+    for (float o : opponents)
+        ahead += o > dist;
+    if (m_phase == kRacing)
+        m_position = 1 + ahead;
+    // Wrong way: moving against the route direction for a second.
+    float x, y, dx, dy;
+    route.Sample(s, x, y, dx, dy);
+    float along = std::cos(car.Yaw()) * dx + std::sin(car.Yaw()) * dy;
+    bool against = car.Speed() > 3.0f ? along < -0.3f : car.Speed() < -3.0f ? along > 0.3f : false;
+    m_wrongWay = against ? m_wrongWay + dt : 0.0f;
+}
+
+// Fallback without a route: crossing the start/finish marker after most of a lap.
+void RaceSession::UpdateLine(const PlayerCar &car)
+{
+    if (m_havePrev)
+        m_lapDistance += std::hypot(car.X() - m_prevX, car.Y() - m_prevY);
+    if (!m_config.hasLine)
+        return;
+    float rx = car.X() - m_config.lineX, ry = car.Y() - m_config.lineY;
+    float side = rx * m_config.dirX + ry * m_config.dirY;
+    float across = std::fabs(-rx * m_config.dirY + ry * m_config.dirX);
+    if (m_phase == kRacing && m_havePrev && m_lastSide < 0 && side >= 0 && across < 25.0f &&
+        m_lapDistance > 0.6f * m_config.trackLength)
+        CompleteLap();
+    m_lastSide = side;
+}
+
+bool RaceSession::Update(const PlayerCar &car, const std::vector<float> &opponents, float dt)
+{
+    if (m_phase == kCountdown) {
         m_countdown -= dt;
         if (m_countdown <= 0) {
             m_phase = kRacing;
             m_goShown = 1.0f;
         }
-        break;
-    case kRacing: {
+    } else if (m_phase == kRacing) {
         m_lapTime += dt;
         m_totalTime += dt;
         m_goShown = std::max(0.0f, m_goShown - dt);
-        if (m_havePrev)
-            m_lapDistance += std::hypot(car.X() - m_prevX, car.Y() - m_prevY);
-        // Lap: crossing the start/finish line in the direction of travel, near the line, after
-        // covering most of a lap (the route itself is not decoded yet, see ISSUES.md #106).
-        if (m_config.hasLine) {
-            float rx = car.X() - m_config.lineX, ry = car.Y() - m_config.lineY;
-            float side = rx * m_config.dirX + ry * m_config.dirY;
-            float across = std::fabs(-rx * m_config.dirY + ry * m_config.dirX);
-            if (m_havePrev && m_lastSide < 0 && side >= 0 && across < 25.0f &&
-                m_lapDistance > 0.6f * m_config.trackLength) {
-                printf("[Race] lap %d: %s\n", m_lap, FormatTime(m_lapTime).c_str());
-                m_bestLap = m_bestLap > 0 ? std::min(m_bestLap, m_lapTime) : m_lapTime;
-                m_lapDistance = 0;
-                m_lapTime = 0;
-                if (++m_lap > m_config.laps) {
-                    m_phase = kFinished;
-                    printf("[Race] finished in %s (best lap %s)\n", FormatTime(m_totalTime).c_str(),
-                           FormatTime(m_bestLap).c_str());
-                }
-            }
-            m_lastSide = side;
-        }
-        break;
     }
-    case kFinished:
-        break;
-    }
+    if (m_config.route && m_config.route->Valid())
+        UpdateRoute(car, opponents, dt);
+    else
+        UpdateLine(car);
     m_prevX = car.X(), m_prevY = car.Y();
     m_havePrev = true;
     UpdateHud(car);
@@ -168,11 +212,19 @@ void RaceSession::UpdateHud(const PlayerCar &car)
     FENativeInterface::SetString(m_hud, kLapNumber, text);
     FENativeInterface::SetString(m_hud, kCurrentLapTime, FormatTime(m_lapTime).c_str());
 
+    snprintf(text, sizeof(text), "%d", m_position);
+    FENativeInterface::SetString(m_hud, kPositionNumber, text);
+    static const char *const kNth[] = {"th", "st", "nd", "rd"};
+    FENativeInterface::SetString(m_hud, kPositionNth, kNth[m_position >= 1 && m_position <= 3 ? m_position : 0]);
+    FENativeInterface::SetVisible(m_hud, kWrongWay, m_wrongWay > 1.0f && m_phase == kRacing);
+
     const bool over = m_phase == kFinished;
     FENativeInterface::SetVisible(m_hud, kRaceOverMessage, over);
     FENativeInterface::SetVisible(m_hud, kRaceOverBacking, over);
     if (over) {
-        snprintf(text, sizeof(text), "RACE OVER  %s", FormatTime(m_totalTime).c_str());
+        static const char *const kNth[] = {"th", "st", "nd", "rd"};
+        snprintf(text, sizeof(text), "%d%s PLACE  %s", m_position,
+                 kNth[m_position >= 1 && m_position <= 3 ? m_position : 0], FormatTime(m_totalTime).c_str());
         FENativeInterface::SetString(m_hud, kRaceOverMessage, text);
     }
 }

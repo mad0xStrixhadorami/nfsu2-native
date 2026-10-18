@@ -105,7 +105,7 @@ void PlayerCar::Place(float x, float y, float z, float yaw)
     m_speed = m_vz = m_pitch = m_roll = 0;
 }
 
-void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt)
+void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls)
 {
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
@@ -127,10 +127,11 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
     float fx = std::cos(m_yaw), fy = std::sin(m_yaw);
     float nx = m_x + fx * m_speed * dt, ny = m_y + fy * m_speed * dt;
 
-    // Walls: probe the move at bumper height against steep world triangles.
+    // Walls: probe the move at 0.9 m against steep world triangles (lower kerbs and road-seam
+    // skirts are stepped over by the ground follow).
     float probe = m_speed >= 0 ? 2.2f : -2.3f;
-    if (std::fabs(m_speed) > 0.01f &&
-        world.HitsWall(m_x, m_y, m_z + 0.5f, nx + fx * probe, ny + fy * probe, m_z + 0.5f)) {
+    if (walls && std::fabs(m_speed) > 0.01f &&
+        world.HitsWall(m_x, m_y, m_z + 0.9f, nx + fx * probe, ny + fy * probe, m_z + 0.9f)) {
         m_speed = -m_speed * 0.2f;
         return;
     }
