@@ -929,11 +929,14 @@ void FEStartupSequence::HandleStartCareerMessage(uint32_t msg, FEPackage *pkg)
             m_raceType = 9; // free roam
             RequestRace();
         } else if (action == 1) {
-            // New Career -> choose starter car
+            // New Career -> choose starter car (stand-in). UG2: the option handlers are memory-card
+            // flows -- vtable 0x470618's handler 0x00259328 pushes MC_Main.fng (mode 0x21961), the
+            // first option's 0x00259300 starts career creation through 0x002c8aa8 (ISSUES #135).
             m_raceMode = 8; // career car select
             NavigateTo(pkg->GetName(), "UI_QRCarSelect.fng");
         } else if (action == 2) {
-            // Career Garage -> GarageMain.fng
+            // Career Garage -> GarageMain.fng (stand-in; UG2's handler 0x002592c0 pushes MC_Main.fng
+            // with mode 0xc11 first, ISSUES #135)
             NavigateTo(pkg->GetName(), "GarageMain.fng");
         }
         return;
