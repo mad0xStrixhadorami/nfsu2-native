@@ -30,33 +30,18 @@ void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, boo
         out.push_back(w);
     }
 }
-// The strip topology approximation (ISSUES.md #90/#91) leaves long "bridge" slivers between
-// separate runs; on a car they show as spikes. Drop triangles whose longest edge is far above the
-// part's median edge.
+// Drop triangles reaching outside the part's header bounds (a guard against mis-decoded vertices;
+// with the exact strip topology, ISSUES.md #110, none are expected).
 void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle> &out)
 {
-    auto edge = [](const SolidMesh::Point &a, const SolidMesh::Point &b) {
-        return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
-    };
-    std::vector<float> longest;
-    longest.reserve(s.tris.size());
-    for (const SolidMesh::Triangle &t : s.tris)
-        longest.push_back(std::max({edge(t.v[0], t.v[1]), edge(t.v[1], t.v[2]), edge(t.v[0], t.v[2])}));
-    if (longest.empty())
-        return;
-    std::vector<float> sorted = longest;
-    std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-    static const float factor = getenv("NFSU2_CAR_EDGE") ? float(atof(getenv("NFSU2_CAR_EDGE"))) : 2.5f;
-    const float limit = sorted[sorted.size() / 2] * factor;
-    // Also drop triangles reaching outside the part's header bounds (mis-decoded vertices).
     auto inside = [&s](const SolidMesh::Point &p) {
         constexpr float m = 0.05f;
         return p.x >= s.bboxMin[0] - m && p.x <= s.bboxMax[0] + m && p.y >= s.bboxMin[1] - m &&
                p.y <= s.bboxMax[1] + m && p.z >= s.bboxMin[2] - m && p.z <= s.bboxMax[2] + m;
     };
-    for (size_t i = 0; i < s.tris.size(); ++i)
-        if (longest[i] <= limit && inside(s.tris[i].v[0]) && inside(s.tris[i].v[1]) && inside(s.tris[i].v[2]))
-            out.push_back(s.tris[i]);
+    for (const SolidMesh::Triangle &t : s.tris)
+        if (inside(t.v[0]) && inside(t.v[1]) && inside(t.v[2]))
+            out.push_back(t);
 }
 } // namespace
 

@@ -18,8 +18,8 @@ public:
 
     void Place(float x, float y, float z, float yaw);
     // throttle/brake/steer in [-1, 1]; dt in seconds. walls: collide with steep world triangles
-    // (route-following opponents skip it: bridge slivers from the topology approximation, #90,
-    // would stop them).
+    // (route-following opponents skip it: steering only at the route line, they snag on kerbs and
+    // street furniture beside it -- a 2-lap test took 1:05 instead of 0:52 per lap with walls on).
     void Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls = true);
 
     // Row-major 3x4 car-to-world transform: rows are the forward, left, up axes; column 3 the position.

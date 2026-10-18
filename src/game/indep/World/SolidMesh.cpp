@@ -11,6 +11,8 @@
 
 namespace SolidMesh {
 
+unsigned long g_exactStrips = 0, g_approxStrips = 0;
+
 static uint32_t ReadLE32(const uint8_t *d, size_t p)
 {
     return uint32_t(d[p]) | (uint32_t(d[p + 1]) << 8) | (uint32_t(d[p + 2]) << 16) |
@@ -19,7 +21,7 @@ static uint32_t ReadLE32(const uint8_t *d, size_t p)
 
 // Decodes one strip entry's VIF block into its NumVerts Q15 positions (see tools/solid_mesh.py).
 bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, unsigned nverts,
-                       std::vector<Point> &out)
+                       std::vector<Point> &out, uint32_t *seeds)
 {
     struct Vec4s { int16_t v[4] = {}; };
     Vec4s positions[256];
@@ -45,6 +47,9 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
             if (bits == 32 && comps == 4 && addr == 1 && num > 0) {
                 uint32_t word = ReadLE32(d, p + 4);
                 memcpy(&step, &word, sizeof(word));
+                if (seeds)
+                    for (unsigned c = 0; c < 4; ++c)
+                        seeds[c] = ReadLE32(d, p + c * 4);
             } else if (bits == 32 && (comps == 3 || comps == 4) && addr >= 2 && addr <= 3 && num > 0) {
                 for (unsigned k = 0; k < std::min(num, 2u); ++k) {
                     for (unsigned c = 0; c < 3; ++c) {
@@ -61,7 +66,7 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
                         positions[addr + k - 5].v[c] = static_cast<int16_t>(word);
                     }
             } else if (bits == 16 && comps <= 3 && addr >= 5 && addr + num <= 256) {
-                // VIF packs tail vertices as V1/V2-16 SoA or V3-16 AoS after full V4-16 groups.
+                // VIF packs the 1-3 tail vertices as V1/V2/V3-16 rows (one qword per axis).
                 for (unsigned k = 0; k < num; ++k)
                     for (unsigned c = 0; c < comps; ++c) {
                         uint16_t word = uint16_t(d[p + k * elem + c * 2]) |
@@ -98,10 +103,13 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
             // indexed by (VU address - 5), so the first tail qword is index (soa/4)*3.
             unsigned tail = (soaVertices / 4) * 3;
             unsigned rem = nverts - soaVertices, lane = i - soaVertices;
-            if (tail + (rem == 3 ? lane : 2) >= 256) return false;
+            if (tail + 2 >= 256) return false;
             for (unsigned a = 0; a < 3; ++a) {
-                unsigned qword = tail + (rem == 3 ? lane : a);
-                unsigned component = rem == 1 ? 0 : (rem == 3 ? a : lane);
+                // Tails are axis-major like the full groups: one qword per axis (x, y, z rows);
+                // with exact topology a vertex-major reading of the 3-vertex tail put 156 of 174
+                // L4RA strips' last vertices outside their bounds (ISSUES.md #110).
+                unsigned qword = tail + a;
+                unsigned component = rem == 1 ? 0 : lane;
                 q[i][a] = positions[qword].v[component];
             }
         }
@@ -137,6 +145,41 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
         }
     }
     return true;
+}
+
+// The mesh VU program (uploaded by render setup 0x001cfbf0, entered by MSCAL 0) does not read a
+// restart list: it seeds the VU random-number register R from VU address 1 and steps it once per
+// vertex, and bit 15 of each step's result lands in bit 15 of the vertex's XYZ2 W word -- the GS
+// ADC ("don't kick") bit. Dispatch (VU 0x1558-0x1618): a JR into an unrolled list of JALR calls,
+// one per group of 4 vertices, starting at 0x1618 - 0x10 * (groups - 1); the delay slot of the JR
+// is RINIT R, addr1.x, and the delay slots of the JALRs at 0x1568 / 0x15a8 / 0x15e8 are RINIT from
+// .x / .z / .w, run before the call. The software-pipelined vertex routines execute RNEXT 7 times
+// on the first call (routine at 0x1628, three of them for the pipeline prologue) and 4 times on
+// every later call, so a seed switch before call c lands on vertex 7 + 4 * (c - 1). Verified: the
+// resulting kicks equal eStripEntry::NumPolys for all 11,246 SKYLINE and 128,906 L4RA strips.
+// RINIT: R = 0x3f800000 | (word & 0x7fffff); RNEXT: R = ((R << 1) ^ bit4 ^ bit22) & 0x7fffff | 0x3f800000.
+void StripRestartFlags(const uint32_t seeds[4], unsigned nverts, std::vector<uint8_t> &noKick)
+{
+    noKick.clear();
+    const unsigned groups = (nverts + 3) / 4;
+    auto rinit = [](uint32_t w) { return 0x3f800000u | (w & 0x7fffffu); };
+    uint32_t r = rinit(seeds[0]);
+    for (unsigned call = 0; call < groups && noKick.size() < nverts; ++call) {
+        const unsigned jalr = 0x1618 - 0x10 * (groups - 1) + 0x10 * call;
+        if (jalr == 0x1568)
+            r = rinit(seeds[0]);
+        else if (jalr == 0x15a8)
+            r = rinit(seeds[2]);
+        else if (jalr == 0x15e8)
+            r = rinit(seeds[3]);
+        const unsigned steps = call == 0 ? 7 : 4;
+        for (unsigned k = 0; k < steps; ++k) {
+            uint32_t x = (r >> 4) & 1, y = (r >> 22) & 1;
+            r = (((r << 1) ^ x ^ y) & 0x7fffffu) | 0x3f800000u;
+            noKick.push_back(uint8_t((r >> 15) & 1));
+        }
+    }
+    noKick.resize(nverts, 0);
 }
 
 // Topology approximation (ISSUES #65): a strip entry is one triangle strip, but NumPolys is
@@ -200,6 +243,7 @@ void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size,
     if (!table || !vif || tableSize < 4)
         return;
     std::vector<Point> points;
+    std::vector<uint8_t> noKick;
     unsigned strips = (tableSize - 4) / 16;
     for (unsigned i = 0; i < strips; ++i) {
         size_t e = table + 4 + i * 16;
@@ -211,8 +255,31 @@ void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size,
         if (offset > vif + vifSize || bytes > vif + vifSize - offset)
             continue;
         points.clear();
-        if (DecodeStrip(d, dataSize, offset, bytes, nverts, points))
+        uint32_t seeds[4] = {};
+        if (!DecodeStrip(d, dataSize, offset, bytes, nverts, points, seeds))
+            continue;
+        // Exact topology from the VU restart bits; the old approximation remains only as a guard
+        // for data whose kick count disagrees with the strip table (none in SKYLINE or L4RA).
+        StripRestartFlags(seeds, nverts, noKick);
+        unsigned kicks = 0;
+        for (unsigned k = 2; k < nverts; ++k)
+            kicks += !noKick[k];
+        if (kicks == numpoly) {
+            for (unsigned k = 2; k < nverts; ++k)
+                if (!noKick[k]) {
+                    Triangle t;
+                    // GS strips alternate winding; keep a consistent orientation.
+                    t.v[0] = points[k % 2 ? k - 1 : k - 2];
+                    t.v[1] = points[k % 2 ? k - 2 : k - 1];
+                    t.v[2] = points[k];
+                    t.tex = int8_t(tex);
+                    out.push_back(t);
+                }
+            ++g_exactStrips;
+        } else {
             BuildStripTriangles(points, nverts, numpoly, out, tex);
+            ++g_approxStrips;
+        }
     }
 }
 

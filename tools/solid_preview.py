@@ -59,11 +59,8 @@ def strip_positions(d, start, size):
     for k in range(remainder):
         if remainder == 1:
             xyz = tuple(vu.get(tail_addr + a, (0,))[0] for a in range(3))
-        elif remainder == 2:
-            xyz = tuple(vu.get(tail_addr + a, (0, 0))[k] for a in range(3))
-        else:
-            tail = vu.get(tail_addr + k, (0, 0, 0))
-            xyz = tuple(tail[:3])
+        else:  # 2 or 3 tail vertices: one V2/V3-16 qword per axis (axis-major)
+            xyz = tuple(vu.get(tail_addr + a, (0, 0, 0))[k] for a in range(3))
         pos.append(xyz)
     lo, hi = vu.get(2), vu.get(3)
     if len(lo or ()) < 3 or len(hi or ()) < 3:

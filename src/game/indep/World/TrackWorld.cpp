@@ -417,7 +417,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream)
             }
         }
     }
-    printf("[World] %zu texture packs, %zu textures\n", m_packs.size(), m_textures.size());
+    printf("[World] %zu texture packs, %zu textures; strips: %lu exact topology, %lu approximated\n", m_packs.size(),
+           m_textures.size(), SolidMesh::g_exactStrips, SolidMesh::g_approxStrips);
     printf("[World] %zu solids, %zu scenery sections, %zu instances placed (%zu skipped), %zu triangles, %zu cells\n",
            solids.size(), sections.size(), m_instances, unresolved, m_triangleCount, m_cells.size());
     if (!m_instances)

@@ -19,8 +19,13 @@ struct Triangle {
 };
 
 // One strip entry's VIF block -> its NumVerts positions.
+// seeds (optional): the four 32-bit words unpacked to VU address 1 (strip restart seeds, see
+// StripRestartFlags; world solids keep the 1/256 m position step in word 1).
 bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, unsigned nverts,
-                 std::vector<Point> &out);
+                 std::vector<Point> &out, uint32_t *seeds = nullptr);
+// Strip restarts as the mesh VU program sets them (ISSUES.md #110): per vertex, 1 = the GS ADC
+// ("no kick") bit, i.e. that vertex does not complete a triangle.
+void StripRestartFlags(const uint32_t seeds[4], unsigned nverts, std::vector<uint8_t> &noKick);
 // NumVerts strip vertices -> NumPolys triangles (seam bridges dropped by longest edge).
 void BuildStripTriangles(const std::vector<Point> &p, unsigned nverts, unsigned numpoly,
                          std::vector<Triangle> &out, int tex = -1);
@@ -29,6 +34,8 @@ void DecodeMesh(const uint8_t *d, size_t dataSize, size_t body, size_t size, std
 // Every 0x80134100 mesh under [begin, end), descending into container chunks.
 void DecodeChunks(const uint8_t *d, size_t dataSize, size_t begin, size_t end, std::vector<Triangle> &out);
 std::vector<Triangle> DecodeGeometry(const uint8_t *d, size_t size);
+// Strips decoded with exact VU restart bits / with the fallback approximation (diagnostics).
+extern unsigned long g_exactStrips, g_approxStrips;
 } // namespace SolidMesh
 
 namespace SolidMesh {
