@@ -49,6 +49,17 @@ public:
     bool NeedShift() const { return m_rpm > kAutoShiftRpm; } // test aid (NFSU2_DRAG_AUTO)
     bool ShiftLight() const { return m_rpm > kRedline * 0.92f; }
 
+    // Drift race (type 3): a stand-in for UG2's DriftManager/DriftDriver scoring. The arcade car has
+    // no lateral velocity, so the slip angle is modelled from the cornering rate (yaw rate * speed);
+    // points accrue while "drifting", a chain multiplier grows with sustained drift, and the chain
+    // is banked into the total after a short grace period without drifting.
+    bool IsDrift() const { return m_config.type == 3; }
+    void DriftUpdate(float speed, float yaw, float dt);
+    float DriftPoints() const { return m_driftChain * m_driftMult; } // current chain value
+    float DriftTotal() const { return m_driftTotal; }
+    int DriftMultiplier() const { return m_driftMult; }
+    float DriftAngle() const { return m_driftAngle; } // slip angle in degrees
+
 private:
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
@@ -82,4 +93,14 @@ private:
     float m_launchRpm = 0;     // engine speed when the countdown hit green
     float m_launchBoost = 1;   // torque multiplier from the launch quality
     float m_boostTime = 0;     // seconds the launch boost still applies
+    // Drift scoring (see IsDrift).
+    float m_driftAngle = 0;    // current slip angle (degrees)
+    float m_driftChain = 0;    // chain points before the multiplier
+    float m_driftTotal = 0;    // banked points
+    int m_driftMult = 1;       // chain multiplier
+    float m_driftTime = 0;     // seconds in the current chain
+    float m_driftIdle = 0;     // seconds since the last scoring frame
+    float m_prevYaw = 0;
+    bool m_haveYaw = false;
+    void BankDrift();
 };

@@ -29,6 +29,19 @@ constexpr uint32_t kLapTimeGroup = 0x54be67bc, kCurrentLapTime = 0x30d9802e;
 constexpr uint32_t kCountdownText = 0x2da220aa;  // 321_GO
 constexpr uint32_t kRaceOverMessage = 0xa7806ddb, kRaceOverBacking = 0x4e4566e5;
 constexpr uint32_t kWrongWay = 0xc82fa200; // WRONGWAYIMAGE
+// Drift elements, in HUD_Drift.fng (GLOBAL\INGAMEDRIFT.BUN): the in-game HUD keeps the gauge
+// cluster and adds the drift gauge (angle) and score (ISSUES #116).
+constexpr uint32_t kStylePointsGroup = 0x79a62cba, kDriftBannerGroup = 0x1ac732cd;
+constexpr uint32_t kDriftTotalGroup = 0xf90b0ac6, kSpeedTrapGroup = 0x7be44faa;
+constexpr uint32_t kAngleGroup = 0x17050861;
+constexpr uint32_t kDriftPoint = 0x39972fa3;    // SP_Drift_Point
+constexpr uint32_t kDriftTotal = 0x39dfbebd;    // SP_DRIFT_TOTAL
+constexpr uint32_t kDriftMult = 0xe5d37182;     // drift_multiplier_text
+constexpr uint32_t kDriftSpeedData = 0x6a4beef0;// SpeedTrap_Speed_DATA (the gain-hint number)
+constexpr uint32_t kDriftBestTime = 0x06e9a0fe; // BestLapTimeText
+constexpr uint32_t kDriftAngleDeg = 0x30787b84; // Angle_degrees
+constexpr uint32_t kDriftAngleData = 0xb5c6103b;// Angle_Indicator_DATA
+constexpr uint32_t kCommentData = 0xd555b3ab;   // Comment_DATA
 
 std::string FormatTime(float seconds)
 {
@@ -59,6 +72,12 @@ float EngineTorque(float rpm)
         return 1.15f;
     return 1.15f - 0.3f * ((t - 0.85f) / 0.15f);
 }
+
+// Drift scoring (stand-in, see RaceSession::IsDrift): a drift counts above this speed and slip
+// angle, the multiplier steps every kDriftChainTime seconds of continuous drift, and the chain is
+// banked after kDriftGrace seconds without scoring.
+constexpr float kDriftMinSpeed = 6.0f, kDriftMinAngle = 12.0f, kDriftChainTime = 1.5f, kDriftGrace = 1.0f;
+constexpr int kDriftMaxMult = 10;
 } // namespace
 
 void RaceSession::Begin(FEPackage *hud, const Config &config)
@@ -82,6 +101,9 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_launchRpm = 0;
     m_launchBoost = 1;
     m_boostTime = 0;
+    m_driftAngle = m_driftChain = m_driftTotal = m_driftTime = m_driftIdle = 0;
+    m_driftMult = 1;
+    m_haveYaw = false;
     SetupHud();
     printf("[Race] begin: %d laps, type %d, track %.0f m, line %s\n", m_config.laps, config.type,
            config.trackLength, config.hasLine ? "from markers" : "none");
@@ -95,10 +117,16 @@ void RaceSession::SetupHud()
     // world-map widgets that UG2's HUD class hides per mode.
     static const uint32_t kShown[] = {kGaugeCluster, kGaugeBacking, kMinimapMask, kMinimapNorth, kTrackMap,
                                       kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText};
+    // Drift races (HUD_Drift.fng) also show the drift gauge and the style-point groups.
+    static const uint32_t kDriftShown[] = {kStylePointsGroup, kDriftBannerGroup, kDriftTotalGroup,
+                                           kSpeedTrapGroup, kAngleGroup};
     const bool sprint = m_config.route && m_config.route->Valid() && !m_config.route->Closed();
-    for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext())
-        FENativeInterface::SetObjectVisible(o, std::find(std::begin(kShown), std::end(kShown), o->NameHash) !=
-                                                   std::end(kShown) && !(sprint && o->NameHash == kLapGroup));
+    for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext()) {
+        bool shown = std::find(std::begin(kShown), std::end(kShown), o->NameHash) != std::end(kShown);
+        if (IsDrift() && std::find(std::begin(kDriftShown), std::end(kDriftShown), o->NameHash) != std::end(kDriftShown))
+            shown = true;
+        FENativeInterface::SetObjectVisible(o, shown && !(sprint && o->NameHash == kLapGroup));
+    }
     for (uint32_t h : {kTurboGroup, kNosLine, kNosFill, kNosGameBreaker, kShiftLight})
         FENativeInterface::SetVisible(m_hud, h, false);
     char text[16];
@@ -133,9 +161,13 @@ void RaceSession::CompleteLap()
     m_lapDistance = 0;
     m_lapTime = 0;
     if (++m_lap > m_config.laps) {
+        if (IsDrift() && m_driftChain > 0)
+            BankDrift();
         m_phase = kFinished;
         printf("[Race] finished %d of %d in %s (best lap %s)\n", m_position, m_config.racers,
                FormatTime(m_totalTime).c_str(), FormatTime(m_bestLap).c_str());
+        if (IsDrift())
+            printf("[Drift] final score %d\n", int(m_driftTotal));
     }
 }
 
@@ -170,6 +202,39 @@ float RaceSession::DragUpdate(float speed, float throttle, bool shift, float dt)
         m_boostTime = std::max(0.0f, m_boostTime - dt);
     }
     return EngineTorque(m_rpm) * boost;
+}
+
+void RaceSession::BankDrift()
+{
+    m_driftTotal += m_driftChain * m_driftMult;
+    m_driftChain = 0;
+    m_driftMult = 1;
+    m_driftTime = 0;
+}
+
+// Drift scoring: the slip angle comes from the cornering rate (the arcade car does not slide), so a
+// hard corner at speed reads as a drift; points accrue with speed * angle and a chain multiplier
+// grows with sustained drift.
+void RaceSession::DriftUpdate(float speed, float yaw, float dt)
+{
+    if (m_phase != kRacing) {
+        m_driftAngle = 0;
+        m_haveYaw = false;
+        return;
+    }
+    const float yawRate = m_haveYaw && dt > 0 ? std::remainder(yaw - m_prevYaw, 6.2831853f) / dt : 0.0f;
+    m_prevYaw = yaw;
+    m_haveYaw = true;
+    // Lateral acceleration yawRate * v against a ~1.2 g reference, as a slip angle in degrees.
+    m_driftAngle = std::min(60.0f, std::atan2(std::fabs(yawRate) * std::fabs(speed), 12.0f) * 57.2958f);
+    if (std::fabs(speed) > kDriftMinSpeed && m_driftAngle > kDriftMinAngle) {
+        m_driftChain += std::fabs(speed) * m_driftAngle * 0.05f * dt;
+        m_driftTime += dt;
+        m_driftIdle = 0;
+        m_driftMult = std::min(kDriftMaxMult, 1 + int(m_driftTime / kDriftChainTime));
+    } else if ((m_driftIdle += dt) > kDriftGrace && m_driftChain > 0) {
+        BankDrift();
+    }
 }
 
 // Progress along the decoded route: laps, finish, position and wrong way.
@@ -295,6 +360,26 @@ void RaceSession::UpdateHud(const PlayerCar &car)
     // Drag shift light (part of the HUD package, ISSUES #106): on near the limiter.
     FENativeInterface::SetVisible(m_hud, kShiftLight, IsDrag() && m_phase == kRacing && ShiftLight());
 
+    // Drift score (ISSUES #116): the current chain, its multiplier, the banked total and the slip
+    // angle. Comment_DATA carries the TooSlowToGain / LosingMult feedback text.
+    if (IsDrift()) {
+        snprintf(text, sizeof(text), "%d", int(DriftPoints()));
+        FENativeInterface::SetString(m_hud, kDriftPoint, text);
+        FENativeInterface::SetString(m_hud, kDriftSpeedData, text);
+        snprintf(text, sizeof(text), "X%d", m_driftMult);
+        FENativeInterface::SetString(m_hud, kDriftMult, text);
+        snprintf(text, sizeof(text), "%d", int(m_driftTotal));
+        FENativeInterface::SetString(m_hud, kDriftTotal, text);
+        FENativeInterface::SetString(m_hud, kDriftBestTime,
+                                     m_bestLap > 0 ? FormatTime(m_bestLap).c_str() : "--:--.--");
+        snprintf(text, sizeof(text), "%d", int(std::fabs(m_driftAngle)));
+        FENativeInterface::SetString(m_hud, kDriftAngleDeg, text);
+        FENativeInterface::SetString(m_hud, kDriftAngleData, text);
+        const char *comment = m_phase == kFinished ? "" : m_driftChain > 0 ? "LosingMult"
+                              : m_driftAngle > kDriftMinAngle ? "TooSlowToGain" : "";
+        FENativeInterface::SetString(m_hud, kCommentData, comment);
+    }
+
     // Lap counter and lap time.
     snprintf(text, sizeof(text), "%d", std::min(m_lap, m_config.laps));
     FENativeInterface::SetString(m_hud, kLapNumber, text);
@@ -311,8 +396,11 @@ void RaceSession::UpdateHud(const PlayerCar &car)
     FENativeInterface::SetVisible(m_hud, kRaceOverBacking, over);
     if (over) {
         static const char *const kNth[] = {"th", "st", "nd", "rd"};
-        snprintf(text, sizeof(text), "%d%s PLACE  %s", m_position,
-                 kNth[m_position >= 1 && m_position <= 3 ? m_position : 0], FormatTime(m_totalTime).c_str());
+        if (IsDrift())
+            snprintf(text, sizeof(text), "DRIFT %d PTS", int(m_driftTotal));
+        else
+            snprintf(text, sizeof(text), "%d%s PLACE  %s", m_position,
+                     kNth[m_position >= 1 && m_position <= 3 ? m_position : 0], FormatTime(m_totalTime).c_str());
         FENativeInterface::SetString(m_hud, kRaceOverMessage, text);
     }
 }

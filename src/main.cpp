@@ -271,7 +271,7 @@ int main(int argc, char **argv)
     std::vector<AiDriver> ai;
     AiDriver playerAi; // NFSU2_AUTODRIVE with a route
     std::vector<float> aiStartS;
-    std::vector<uint8_t> inGameCommon, inGameRace;
+    std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift;
     bool inWorld = false, flyCamera = false;
     FEPackage *hud = nullptr;
     RaceSession race;
@@ -292,6 +292,10 @@ int main(int argc, char **argv)
             fe.AddBundle(inGameCommon.data(), inGameCommon.size(), "GLOBAL\\INGAMECOMMON.LZC");
             inGameRace = ReadGameFile(*fs, "GLOBAL\\INGAMERACE.BUN");
             fe.AddBundle(inGameRace.data(), inGameRace.size(), "GLOBAL\\INGAMERACE.BUN");
+            // Drift events use their own bundle (HUD_Drift.fng), ISSUES #116.
+            inGameDrift = ReadGameFile(*fs, "GLOBAL\\INGAMEDRIFT.BUN");
+            if (!inGameDrift.empty())
+                fe.AddBundle(inGameDrift.data(), inGameDrift.size(), "GLOBAL\\INGAMEDRIFT.BUN");
             if (getenv("NFSU2_LIST_INGAME"))
                 for (const std::string &n : fe.PackageNames())
                     printf("[World] package %s\n", n.c_str());
@@ -316,6 +320,10 @@ int main(int argc, char **argv)
         for (const RaceInfo &r : fe.Races())
             if (r.number == raceNumber)
                 raceConfig.trackLength = float(r.length);
+        if (getenv("NFSU2_LIST_RACES"))
+            for (const RaceInfo &r : fe.Races())
+                printf("[RaceDB] %d %s cat %d flags %08x%s len %.0f\n", r.number, r.region, r.category,
+                       r.typeFlags, r.special ? " special" : "", double(r.length));
         // The race route (Tracks\Routes<region>\Paths<race>.bin, ISSUES.md #107).
         char pathsPath[64];
         snprintf(pathsPath, sizeof(pathsPath), "TRACKS\\ROUTES%s\\PATHS%d.BIN", region.c_str(), raceNumber);
@@ -436,8 +444,13 @@ int main(int argc, char **argv)
             fePackages.push_back(p);
         for (FEPackage *p : fePackages)
             engine->UnloadPackage(p);
-        hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
-        printf("[World] HUD %s\n", hud ? "HUD_SingleRace.fng" : "missing");
+        const char *hudName = getenv("NFSU2_HUD")
+                                  ? getenv("NFSU2_HUD")
+                                  : (raceConfig.type == 3 ? "HUD_Drift.fng" : "HUD_SingleRace.fng");
+        hud = engine->PushPackage(hudName, 0, 0xff);
+        if (!hud)
+            hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
+        printf("[World] HUD %s\n", hud ? hudName : "missing");
         race.Begin(hud, raceConfig);
         if (hud && getenv("NFSU2_FETREE")) {
             // Dev aid: the object tree (stripped packages carry only name hashes).
@@ -552,6 +565,10 @@ int main(int argc, char **argv)
                 } else {
                     car.Update(world, throttle, brake, steer, dt, true, power);
                 }
+                // Drift race (ISSUES #116): score from the car's cornering, both for the player and
+                // the route-following test aid.
+                if (race.IsDrift())
+                    race.DriftUpdate(car.Speed(), car.Yaw(), dt);
                 for (AiDriver &d : ai)
                     d.Update(world, dt, go);
                 // Car-to-car contact: push overlapping cars apart (2 m radius each); a car running
@@ -612,6 +629,9 @@ int main(int argc, char **argv)
                        car.X(), car.Y(), car.Z(), car.Speed(), race.PlayerDistance());
                 if (race.IsDrag() && getenv("NFSU2_WORLD_DEBUG"))
                     printf("[Drag] gear %d rpm %.0f\n", race.Gear(), race.Rpm());
+                if (race.IsDrift() && getenv("NFSU2_WORLD_DEBUG"))
+                    printf("[Drift] angle %.0f mult %d chain %.0f total %.0f\n", race.DriftAngle(),
+                           race.DriftMultiplier(), race.DriftPoints(), race.DriftTotal());
                 fpsStart = now;
                 fpsFrames = 0;
             }
