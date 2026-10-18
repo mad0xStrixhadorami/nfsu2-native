@@ -96,6 +96,14 @@ public:
             return folder;
         return it->second.manufacturer.empty() ? folder : it->second.manufacturer + " " + folder;
     }
+    // Database record index of a car folder = UG2's car type (-1 if unknown).
+    int CarTypeIndex(const std::string &folder) const
+    {
+        for (size_t i = 0; i < m_carRoster.size(); ++i)
+            if (m_carRoster[i] == folder)
+                return int(i);
+        return -1;
+    }
     // Quick Race cars in database order (GLOBALB 0x34600, service/traffic vehicles skipped).
     std::vector<std::string> RaceableCars() const
     {

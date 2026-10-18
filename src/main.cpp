@@ -28,6 +28,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/Frontend/PostRaceResults.h"
+#include "game/indep/Sound/CarAudioTable.h"
 #include "game/indep/Sound/EngineSound.h"
 #include "game/indep/Sound/MusicStream.h"
 #include "game/indep/Sound/UiSound.h"
@@ -447,20 +448,17 @@ int main(int argc, char **argv)
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
-        // Engine sound bank: CAR_nn_ENG_MB_SPU.abk. The car -> bank mapping is in EA's audio data
-        // (not decoded); stand-in: database index modulo the 19 banks.
+        // Car audio banks by car type and engine upgrade level (stock = 0) from UG2's table (ISSUES #128).
         if (musicVolume > 0) {
-            int bankIndex = 0;
-            std::vector<std::string> cars = fe.RaceableCars();
-            for (size_t ci = 0; ci < cars.size(); ++ci)
-                if (cars[ci] == fe.PreviewCarName())
-                    bankIndex = int(ci % 19);
-            char bankPath[64];
-            snprintf(bankPath, sizeof(bankPath), "SOUND\\ENGINE\\CAR_%02d_ENG_MB_SPU.abk", bankIndex);
-            engineSound.Load(ReadGameFile(*fs, bankPath));
+            const CarAudio::Level &audio =
+                CarAudio::kRowLevels[CarAudio::RowForCarType(fe.CarTypeIndex(fe.PreviewCarName()))][0];
+            if (getenv("NFSU2_SOUND_DEBUG"))
+                printf("[Engine] %s: %s, %s\n", fe.PreviewCarName().c_str(), CarAudio::kEngineBanks[audio.engine],
+                       CarAudio::kGearBanks[audio.gearbox]);
+            engineSound.Load(ReadGameFile(*fs, (std::string("SOUND\\ENGINE\\") + CarAudio::kEngineBanks[audio.engine]).c_str()));
             engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
             engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
-            engineSound.LoadShift(ReadGameFile(*fs, "SOUND\\SHIFTING\\GEAR_MED_Base.abk"));
+            engineSound.LoadShift(ReadGameFile(*fs, (std::string("SOUND\\SHIFTING\\") + CarAudio::kGearBanks[audio.gearbox]).c_str()));
         }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
