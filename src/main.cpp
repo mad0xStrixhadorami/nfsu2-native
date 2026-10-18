@@ -28,6 +28,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/Frontend/PostRaceResults.h"
+#include "game/indep/Sound/MusicStream.h"
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
@@ -556,11 +557,24 @@ int main(int argc, char **argv)
     if (const char *region = getenv("NFSU2_WORLD"))
         enterWorld(region);
 
+    // Music (ISSUES.md #123): starts once the boot movies are over (first main menu, or a race
+    // entered directly); NFSU2_MUSIC_VOLUME scales it (0 = off).
+    MusicStream music;
+    bool musicStarted = false;
+    const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
+
     for (bool running = true; running;) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
             if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE))
                 running = false;
+        if (!musicStarted && musicVolume > 0 && (inWorld || startup.IsFinished())) {
+            musicStarted = true;
+            if (music.Open(*fs, "SOUND\\PFDATA\\MUSICSFX.MUS"))
+                music.SetVolume(musicVolume);
+        }
+        music.SetPaused(pausePkg != nullptr);
+        music.Update();
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
 
