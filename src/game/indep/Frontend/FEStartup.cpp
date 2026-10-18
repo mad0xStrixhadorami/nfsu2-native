@@ -197,6 +197,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_Pause.fng") == 0) {
+        HandlePauseLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -252,6 +256,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
 
     if (strcasecmp(name, "UI_Main.fng") == 0) {
         HandleMainMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_Pause.fng") == 0) {
+        HandlePauseMessage(msg, pkg);
         return;
     }
 
@@ -1162,4 +1170,45 @@ void FEStartupSequence::ReturnFromRace()
     m_lastPad = 0;
     printf("[Menu] race -> UI_Main.fng\n");
     m_engine->PushPackage("UI_Main.fng", 0, 0xff);
+}
+
+// In-race pause menu: UI_Pause.fng (factory 0x00512558: create 0x00237418, ctor 0x00237450,
+// AddOptions 0x00237b28 -> race options 0x002381e8, messages 0x002374c8). Options are icon
+// scroller items (texture hash, label hash) whose Act (vtable slot 5) runs on BUTTON_PRESSED:
+// Continue 0x00251e18 (unpause), Restart 0x00251c40 (confirm dialog -> 0xe1a57d51 -> 0x002385f8),
+// Options 0x00251bd0 (UI_PauseOptionsMain, not ported: left out), Quit Race 0x002518e8 (confirm ->
+// 0x30ed2368 -> 0x00238698). Career-only items (0x00237d28 / 0x00237da0) are not shown in quick
+// race. The confirm dialogs are skipped.
+void FEStartupSequence::HandlePauseLoaded(FEPackage *pkg)
+{
+    std::vector<FEIconScroller::Def> defs = {
+        {0x12bb5ea2, 0xf6601088}, // Continue
+        {0xb295a6b6, 0x80833fc2}, // Restart (0x00237d68: not in drift-trial type 7 or online)
+        {0x4c9e34e6, 0xc7e1420c}, // Quit Race
+    };
+    m_pauseActions = {kPauseResume, kPauseRestart, kPauseQuit};
+    m_pauseAction = kPauseNone;
+    m_pauseTicks = 0;
+    m_scroller.Setup(pkg, defs, 0);
+    m_scroller.AllowFade();
+}
+
+void FEStartupSequence::HandlePauseMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Package() != pkg || m_scroller.Empty())
+        return;
+    if (msg == kMsgButtonPressed || msg == kMsgPadAccept) {
+        size_t sel = m_scroller.Selected();
+        if (sel < m_pauseActions.size())
+            m_pauseAction = m_pauseActions[sel];
+        return;
+    }
+    if (msg == kMsgScreenTick)
+        ++m_pauseTicks;
+    // The Start press that opened the menu arrives here too: only a later press resumes.
+    if (msg == kMsgPadBack || (msg == kMsgPadStart && m_pauseTicks > 2)) { // 0x002387a0: Back / Start
+        m_pauseAction = kPauseResume;
+        return;
+    }
+    m_scroller.HandleMessage(msg, TickSeconds());
 }

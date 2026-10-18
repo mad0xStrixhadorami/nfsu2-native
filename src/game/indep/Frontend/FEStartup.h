@@ -45,8 +45,16 @@ public:
     // Car select Accept requested a race; returns the world region to load (e.g. "L4RA") once.
     bool TakeRaceRequest(std::string &region);
     int RaceNumber() const { return m_raceNumber; } // chosen track, 0 for Free Run
-    // Back from a race (stand-in for the pause menu's Quit Race / post-race Continue): UI_Main.fng.
+    // Back from a race (pause menu Quit Race / post-race Continue): UI_Main.fng.
     void ReturnFromRace();
+    // In-race pause menu (UI_Pause.fng, ISSUES.md #122): the chosen action, taken once.
+    enum PauseAction { kPauseNone, kPauseResume, kPauseRestart, kPauseQuit };
+    PauseAction TakePauseAction()
+    {
+        PauseAction a = m_pauseAction;
+        m_pauseAction = kPauseNone;
+        return a;
+    }
     int RaceType() const { return m_raceType; } // DAT_004f13b0: 0 circuit .. 10 street x
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
@@ -82,6 +90,11 @@ private:
     void HandleQRModeSelectLoaded(FEPackage *pkg);
     void HandleQRModeSelectMessage(uint32_t msg, FEPackage *pkg);
     void RequestRace();
+    void HandlePauseLoaded(FEPackage *pkg);
+    void HandlePauseMessage(uint32_t msg, FEPackage *pkg);
+    PauseAction m_pauseAction = kPauseNone;
+    std::vector<PauseAction> m_pauseActions; // per scroller option
+    int m_pauseTicks = 0;                    // screen ticks since the pause menu opened
     void HandleQRTrackSelectLoaded(FEPackage *pkg);
     void HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg);
     void RefreshTrackInfo(FEPackage *pkg);

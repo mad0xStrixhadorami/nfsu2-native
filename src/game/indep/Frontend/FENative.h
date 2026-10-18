@@ -86,6 +86,14 @@ public:
         out = it->second.perf;
         return true;
     }
+    // "<manufacturer> <model>" for a car folder (the car-select label), or the folder itself.
+    std::string CarDisplayName(const std::string &folder) const
+    {
+        auto it = m_carTable.find(folder);
+        if (it == m_carTable.end())
+            return folder;
+        return it->second.manufacturer.empty() ? folder : it->second.manufacturer + " " + folder;
+    }
     // Quick Race cars in database order (GLOBALB 0x34600, service/traffic vehicles skipped).
     std::vector<std::string> RaceableCars() const
     {

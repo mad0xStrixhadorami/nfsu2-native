@@ -31,6 +31,8 @@ public:
     // Race distance of a car at route distance s plus its accumulated progress.
     float RaceDistance(float startS, float progress) const;
     float LapLength() const;
+    int Laps() const { return m_config.laps; }
+    float RaceLength() const { return m_config.laps * LapLength(); } // finish distance
     bool Running() const { return m_phase == kRacing; }
     float PlayerDistance() const { return RaceDistance(m_startS, m_progress); }
     Phase GetPhase() const { return m_phase; }

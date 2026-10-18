@@ -27,6 +27,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
@@ -281,6 +282,13 @@ int main(int argc, char **argv)
     std::vector<float> aiStartS;
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false;
+    FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
+    // Post-race results (UI_PostRaceResults.fng): opponents' finish times on a race clock.
+    FEPackage *resultsPkg = nullptr;
+    std::vector<std::string> oppNames;
+    std::vector<float> aiFinish;
+    float raceClock = 0, finishedFor = 0;
+    std::string currentRegion;
     FEPackage *hud = nullptr;
     RaceSession race;
     u32 worldLastPad = 0;
@@ -288,7 +296,14 @@ int main(int argc, char **argv)
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
-    auto enterWorld = [&](const std::string &region) {
+    std::function<void(const std::string &)> enterWorld;
+    enterWorld = [&](const std::string &region) {
+        currentRegion = region;
+        pausePkg = nullptr;
+        resultsPkg = nullptr;
+        oppNames.clear();
+        aiFinish.clear();
+        raceClock = finishedFor = 0;
         // LoadingRegion (0x002ddb40): show Loading.fng while the region streams in.
         if (engine->PushPackage("Loading.fng", 0, 0xff)) {
             engine->Update(16, 0);
@@ -480,6 +495,8 @@ int main(int argc, char **argv)
                 ai[i].Init(&opponentCars[i], &route, lane, skill);
                 aiStartS.push_back(route.Project(slot.x, slot.y));
                 printf("[World] opponent %d: %s\n", i + 1, name.c_str());
+                oppNames.push_back(name);
+                aiFinish.push_back(0.0f);
             }
         }
         raceConfig.racers = 1 + int(ai.size());
@@ -502,7 +519,13 @@ int main(int argc, char **argv)
             hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
         printf("[World] HUD %s\n", hud ? hudName : "missing");
         race.Begin(hud, raceConfig);
-        if (hud && getenv("NFSU2_FETREE")) {
+        // Dev aid: NFSU2_WORLD_PUSH=x.fng pushes another in-game package over the HUD (its tree is
+        // dumped with NFSU2_FETREE instead of the HUD's).
+        FEPackage *treeRoot = hud;
+        if (const char *extra = getenv("NFSU2_WORLD_PUSH"))
+            if (FEPackage *p = engine->PushPackage(extra, 0, 0xff))
+                treeRoot = p;
+        if (treeRoot && getenv("NFSU2_FETREE")) {
             // Dev aid: the object tree (stripped packages carry only name hashes).
             std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
                 for (; o; o = o->GetNext()) {
@@ -514,7 +537,7 @@ int main(int argc, char **argv)
                         dump(static_cast<FEGroup *>(o)->GetFirstChild(), depth + 1, o->NameHash);
                 }
             };
-            dump(hud->GetFirstObject(), 0, 0);
+            dump(treeRoot->GetFirstObject(), 0, 0);
         }
         inWorld = true;
     };
@@ -559,16 +582,47 @@ int main(int argc, char **argv)
         }
 
         if (inWorld) {
-            const float dt = std::min(0.1f, (now - last) / 1000.0f);
+            // Paused: the simulation stands still (zero time step) while the world and HUD draw.
+            const Uint32 frameStart = last;
+            const float dt = pausePkg ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
             const u32 pad = fe.GetJoyPadMask(0);
             const u32 pressed = pad & ~worldLastPad;
             worldLastPad = pad;
-            if (releaseInjectedPadAfterUpdate)
-                fe.SetSimulatedPadMask(0);
             last = now;
-            // Start: leave the race (pause menu "Quit Race" is not ported) -- or Accept once it is over.
-            if ((pressed & FENativeInterface::kPadStart) ||
+            // Start opens the pause menu (UI_Pause.fng); its choice comes back through FEStartup.
+            FEStartupSequence::PauseAction pauseAction = startup.TakePauseAction();
+            if (!pausePkg && race.GetPhase() != RaceSession::kFinished && (pressed & FENativeInterface::kPadStart)) {
+                pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff);
+                printf("[Race] paused\n");
+                if (getenv("NFSU2_WORLD_DEBUG"))
+                    for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+                        printf("[Race]   package %s mask %x\n", p->GetName(), p->GetControlMask());
+            } else if (pausePkg && pauseAction == FEStartupSequence::kPauseResume) {
+                engine->UnloadPackage(pausePkg);
+                pausePkg = nullptr;
+                printf("[Race] resumed\n");
+            } else if (pausePkg && pauseAction == FEStartupSequence::kPauseRestart) {
+                printf("[Race] restart\n");
+                engine->UnloadPackage(pausePkg);
+                pausePkg = nullptr;
+                if (hud)
+                    engine->UnloadPackage(hud);
+                hud = nullptr;
+                std::string region = currentRegion;
+                enterWorld(region);
+                continue;
+            }
+            if (pausePkg)
+                startup.Tick(elapsed); // screen ticks for the pause menu's icon scroller
+            // Quit Race from the pause menu -- or Accept once the race is over.
+            if ((pausePkg && pauseAction == FEStartupSequence::kPauseQuit) ||
                 (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
+                if (pausePkg)
+                    engine->UnloadPackage(pausePkg);
+                pausePkg = nullptr;
+                if (resultsPkg)
+                    engine->UnloadPackage(resultsPkg);
+                resultsPkg = nullptr;
                 if (hud)
                     engine->UnloadPackage(hud);
                 hud = nullptr;
@@ -608,6 +662,37 @@ int main(int argc, char **argv)
                     // (braking at rest would drive the car backwards).
                     throttle = 0;
                     brake = race.GetPhase() == RaceSession::kFinished && car.Speed() > 0.5f ? 1.0f : 0.0f;
+                }
+                // Finish times for the results screen: opponents crossing the finish distance, on a
+                // clock that runs from the green light (and stops while paused).
+                if (race.GetPhase() != RaceSession::kCountdown)
+                    raceClock += dt;
+                for (size_t i = 0; i < rivals.size() && i < aiFinish.size(); ++i)
+                    if (aiFinish[i] <= 0 && rivals[i] >= race.RaceLength())
+                        aiFinish[i] = raceClock;
+                if (race.GetPhase() == RaceSession::kFinished && !resultsPkg && (finishedFor += dt) > 3.0f) {
+                    std::vector<PostRaceRow> rows;
+                    rows.push_back({"YOU", fe.CarDisplayName(fe.PreviewCarName()), race.TotalTime()});
+                    const float length = race.RaceLength();
+                    for (size_t i = 0; i < oppNames.size(); ++i) {
+                        float t = aiFinish[i];
+                        if (t <= 0 && i < aiOut.size() && aiOut[i])
+                            t = -1; // knocked out
+                        else if (t <= 0 && i < rivals.size()) // still racing: estimate from its pace
+                            t = raceClock + (length - rivals[i]) / std::max(5.0f, rivals[i] / std::max(1.0f, raceClock));
+                        char label[16];
+                        snprintf(label, sizeof(label), "RIVAL %zu", i + 1);
+                        rows.push_back({label, fe.CarDisplayName(oppNames[i]), t});
+                    }
+                    std::stable_sort(rows.begin(), rows.end(), [](const PostRaceRow &a, const PostRaceRow &b) {
+                        return (a.time >= 0) != (b.time >= 0) ? a.time >= 0 : a.time < b.time;
+                    });
+                    resultsPkg = engine->PushPackage("UI_PostRaceResults.fng", 0, 0xff);
+                    FillPostRaceResults(resultsPkg, rows);
+                    printf("[Race] results:");
+                    for (const PostRaceRow &r : rows)
+                        printf("  %s %.2f", r.name.c_str(), r.time);
+                    printf("\n");
                 }
                 // URL knockout (ISSUES #117): park any opponent eliminated at the last line.
                 for (int k = race.TakeKnockout(); k >= 0; k = race.TakeKnockout())
@@ -679,7 +764,10 @@ int main(int argc, char **argv)
                 camera.yaw = chaseYaw;
                 camera.pitch = -0.17f;
             }
-            engine->Update(static_cast<i32>(dt * 1000.0f), 0);
+            // FEng runs on real time even while the race is paused (the pause menu animates).
+            engine->Update(static_cast<i32>(std::min<Uint32>(100, now - frameStart)), 0);
+            if (releaseInjectedPadAfterUpdate) // scripted taps reach FEng (pause menu) too
+                fe.SetSimulatedPadMask(0);
             // The world uses the full output resolution; FEng (HUD) its 640x480 screen space.
             SDL_RenderSetLogicalSize(ren, 0, 0);
             int w, h;
