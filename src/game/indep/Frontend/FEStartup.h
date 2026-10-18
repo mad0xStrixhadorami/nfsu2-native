@@ -77,6 +77,9 @@ private:
     void RefreshTrackInfo(FEPackage *pkg);
     void HandleQRModeOptionsLoaded(FEPackage *pkg);
     void HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg);
+    void HandleQRCarSelectLoaded(FEPackage *pkg);
+    void CycleCarFilter(int direction, FEPackage *pkg);
+    void ApplyCarFilterLabel(FEPackage *pkg);
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsLoaded(FEPackage *pkg);
@@ -151,6 +154,10 @@ private:
     bool m_pAskTransmission = false;    // 0x004f1348
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
+    // DAT_00566764 (0x001f50f0 / 0x001f44f0): car-select filter. 1 Stock Cars, 2 My Cars,
+    // 3 All Cars, 4 Career, 8 SPONSOR CARS, 0x10 Ranked Cars -- an ownership category, not a
+    // tuner/muscle class. Only Stock/All have entries without a profile save.
+    int m_carFilterState = 1;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
     std::vector<RaceInfo> m_tracks;   // tracks offered by the track select screen
     // Per race type settings (0x004f13b0 + 0x20 + type * 0x20), nfsmw RaceSettings::Default values.

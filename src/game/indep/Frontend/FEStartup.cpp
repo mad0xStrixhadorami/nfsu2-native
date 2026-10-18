@@ -185,6 +185,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRModeOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_QRCarSelect.fng") == 0) {
+        HandleQRCarSelectLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_OptionsMain.fng") == 0) {
         HandleOptionsMainLoaded(pkg);
         return;
@@ -325,6 +329,11 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             m_fe->CycleCarPreview(-1);
         else if (pressed & FENativeInterface::kPadRight)
             m_fe->CycleCarPreview(1);
+        // L1/R1 cycle the filter type (DAT_00566764) -- messages 0x5073ef13 / 0x260113a7 (0x001f50f0).
+        else if (pressed & FENativeInterface::kPadLTrigger)
+            CycleCarFilter(-1, active);
+        else if (pressed & FENativeInterface::kPadRTrigger)
+            CycleCarFilter(1, active);
         return;
     }
     FEPackage *list = m_widgets.Package();
@@ -717,6 +726,57 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     m_widgets.HandleMessage(msg);
+}
+
+// UI_QRCarSelect (0x001f2c40 / ctor 0x001f2ce0). The screen's only state we can drive without the
+// registry is the L1/R1 "filter type" (DAT_00566764): an ownership category, not a tuner/muscle
+// class. FUN_001f44f0 sets the hint object 0xd999b6e7 ("Filter type goes here") to a label from
+// DAT_00566764; 0x001f50f0 cycles it. The filter selects registry types (STOCK/CAREER_SLOT/SPONSOR),
+// so with no profile save only Stock Cars and All Cars have entries; the whole roster is shown for
+// every state here (best-effort, like the unlocked-tracks note in ISSUES #60).
+void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
+{
+    m_carFilterState = 1; // DAT_00566764 default: Stock Cars
+    ApplyCarFilterLabel(pkg);
+}
+
+// 0x001f44f0: label hash for the current filter state.
+static uint32_t CarFilterLabelHash(int state)
+{
+    if (state == 3)
+        return 0x6b68362c; // All Cars
+    uint32_t h = 0xe798a2f7;            // Stock Cars (default)
+    if (state & 2)
+        h = 0xe7ab43d3;                 // My Cars
+    if (state & 4)
+        h = 0xb4045365;                 // Career
+    if (state & 8)
+        h = 0x26fecee7;                 // SPONSOR CARS
+    if (state & 0x10)
+        h = 0x1a23d5e6;                 // Ranked Cars
+    return h;
+}
+
+void FEStartupSequence::ApplyCarFilterLabel(FEPackage *pkg)
+{
+    FENativeInterface::SetLanguageHash(pkg, 0xd999b6e7, CarFilterLabelHash(m_carFilterState));
+}
+
+void FEStartupSequence::CycleCarFilter(int direction, FEPackage *pkg)
+{
+    // FUN_001f50f0 cycles through the filter states an empty garage can reach; the on-screen names
+    // (from ENGLISH.BIN) are Stock Cars / My Cars / All Cars / Career / SPONSOR CARS / Ranked Cars.
+    static const int kCycle[] = {1, 3, 2, 4, 8, 0x10};
+    const int n = static_cast<int>(sizeof(kCycle) / sizeof(kCycle[0]));
+    int cur = 0;
+    for (int i = 0; i < n; ++i)
+        if (kCycle[i] == m_carFilterState) {
+            cur = i;
+            break;
+        }
+    m_carFilterState = kCycle[(cur + (direction < 0 ? -1 : 1) + n) % n];
+    printf("[CarSelect] filter state %d\n", m_carFilterState);
+    ApplyCarFilterLabel(pkg);
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel
