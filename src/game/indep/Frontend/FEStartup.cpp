@@ -781,9 +781,12 @@ void FEStartupSequence::ApplyOptionsPreamble()
     m_fe->SetVisible(0x97b71dde, false); // JOY_EVENT_BUTTON1
     m_fe->SetVisible(0x7326e44c, false); // Player 1
     m_fe->SetVisible(0xc90dc4ab, false); // Player Select
-    m_fe->SetVisible(bStringHash("COLORCAL_LOGO"), false);
-    m_fe->SetVisible(bStringHash("COLORCAL_BLURB"), false);
-    m_fe->SetVisible(bStringHash("COLOUR_CALIBRATION_BACKING"), false);
+    // Video (0x00203770) is the only category that keeps the colour-calibration layer on screen
+    // (it re-shows ColorCal_Logo/Blurb/Backing via 0x00259eb0); every other category hides it.
+    const bool calibration = m_optionCategory == 1;
+    m_fe->SetVisible(bStringHash("COLORCAL_LOGO"), calibration);
+    m_fe->SetVisible(bStringHash("COLORCAL_BLURB"), calibration);
+    m_fe->SetVisible(bStringHash("COLOUR_CALIBRATION_BACKING"), calibration);
     m_fe->SetVisible(0x444969fd, false); // scroll up
     m_fe->SetVisible(0x444969fe, false); // scroll down
     m_fe->SetVisible(0x688a1551, false); // SCROLLBAR_BACKING (fits on one page)
@@ -841,6 +844,33 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
                          label = kModes[m_audioMode % 3];
                      },
                      [this](int dir) { m_audioMode = (m_audioMode + (dir < 0 ? 2 : 1)) % 3; }});
+    } else if (cat == 1) {
+        // FUN_00203770: a Widescreen toggle plus two float sliders (Brightness 0x004f12d4,
+        // Contrast 0x004f12d8, both clamped to [-15,15] by 0x00201108 / 0x00201218) drawn over
+        // the colour-calibration reference image. The slider rows ship as textures, not labels.
+        auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
+        w.push_back({0xD3588630, // Widescreen (0x00200f88/0x00201008)
+                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_widescreen); },
+                     [this](int) { m_widescreen = !m_widescreen; }});
+        auto signedValue = [](int v) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%+d", v);
+            return std::string(buf);
+        };
+        w.push_back({0, // Brightness
+                     [this, signedValue](uint32_t &, std::string &text) { text = signedValue(m_brightness); },
+                     [this](int dir) {
+                         m_brightness += dir;
+                         if (m_brightness < -15) m_brightness = -15;
+                         if (m_brightness > 15) m_brightness = 15;
+                     }});
+        w.push_back({0, // Contrast
+                     [this, signedValue](uint32_t &, std::string &text) { text = signedValue(m_contrast); },
+                     [this](int dir) {
+                         m_contrast += dir;
+                         if (m_contrast < -15) m_contrast = -15;
+                         if (m_contrast > 15) m_contrast = 15;
+                     }});
     } else if (cat == 2) {
         // FUN_002038c8: six toggles then a Save slider (vtable 0x0046e358), in AddOption order.
         auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
@@ -890,6 +920,12 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
     }
     printf("[Menu] Options: category %d, %zu rows\n", cat, w.size());
     m_widgets.Setup(pkg, std::move(w));
+    if (cat == 1) {
+        // The Brightness/Contrast rows have no language label (their names ship as textures in
+        // UI_Options.fng), so set the row names literally after the generic title pass.
+        FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_2"), "Brightness");
+        FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_3"), "Contrast");
+    }
 }
 
 void FEStartupSequence::HandleOptionsMessage(uint32_t msg, FEPackage *pkg)

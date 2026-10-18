@@ -130,6 +130,12 @@ private:
     int m_exploreMapMode = 0;
     int m_raceMapMode = 0;
     int m_saveState = 0;
+    // UI_Options Video settings (0x00203770): Widescreen toggle (0x004f12dc), Brightness
+    // (0x004f12d4 float) and Contrast (0x004f12d8 float), each clamped to [-15,15] by the slider
+    // getters 0x00201108 / 0x00201218 against the colour-calibration reference image.
+    bool m_widescreen = false;
+    int m_brightness = 0;
+    int m_contrast = 0;
     int m_raceMode = 0;             // DAT_00506b50: 1 career, 2 quick race, 4 split screen, 0x10 options, 0x20 customize
     int m_raceType = 0;
     int m_raceNumber = 0;             // chosen track (race settings at 0x004f13b0)
