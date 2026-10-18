@@ -490,19 +490,33 @@ void FENativeInterface::DrawCarPreviewLabel(FEPackage *pkg)
     DrawString(&label);
 }
 
-// Stand-in: cycle through car geometry files confirmed present in the mounted PAL archive.
+// Cycle the car-select carousel over the GLOBALB car database (chunk 0x34600, record order). Cars
+// whose GEOMETRY.BIN fails to decode are skipped so a preview always renders; the small fixed list
+// is kept only as a fallback for when no car database is mounted.
 void FENativeInterface::CycleCarPreview(int direction)
 {
-    static const char *const roster[] = {"350Z", "COROLLA", "CORSA", "COUPE", "FOCUS",
-                                         "MIATA", "SKYLINE", "TIBURON", "TT"};
-    constexpr size_t count = sizeof(roster) / sizeof(roster[0]);
-    if (direction == 0)
+    static const char *const fallback[] = {"350Z", "COROLLA", "CORSA", "COUPE", "FOCUS",
+                                           "MIATA", "SKYLINE", "TIBURON", "TT"};
+    const bool haveDb = !m_carRoster.empty();
+    const size_t count = haveDb ? m_carRoster.size() : (sizeof(fallback) / sizeof(fallback[0]));
+    if (direction == 0 || count == 0)
         return;
+    auto modelAt = [&](size_t i) -> const char * {
+        return haveDb ? m_carRoster[i].c_str() : fallback[i];
+    };
+    size_t cur = 0;
+    for (size_t i = 0; i < count; ++i)
+        if (strcasecmp(modelAt(i), m_previewCarName.c_str()) == 0) {
+            cur = i;
+            break;
+        }
     for (size_t attempt = 0; attempt < count; ++attempt) {
-        int next = (static_cast<int>(m_previewCarIndex) + (direction < 0 ? -1 : 1) + int(count)) % int(count);
-        m_previewCarIndex = static_cast<size_t>(next);
-        if (LoadCarPreview(roster[m_previewCarIndex]))
+        int next = (static_cast<int>(cur) + (direction < 0 ? -1 : 1) + int(count)) % int(count);
+        cur = static_cast<size_t>(next);
+        if (LoadCarPreview(modelAt(cur))) {
+            m_previewCarIndex = cur;
             return;
+        }
     }
 }
 
@@ -759,6 +773,7 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 for (char &ch : key)
                     ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
                 m_carTable[key] = rec;
+                m_carRoster.push_back(key);
             }
         } else if (c->id == 0x00034201) { // race database
             for (uint32_t off = 0; off + 0x128 <= c->size; off += 0x128) {

@@ -177,11 +177,12 @@ private:
     std::map<FEObject *, std::string> m_movieNames;
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
     std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
+    std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;
-    size_t m_previewCarIndex = 6; // Skyline in the currently verified geometry roster.
+    size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     SDL_GameController *m_controller = nullptr;
