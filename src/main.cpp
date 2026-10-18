@@ -555,6 +555,9 @@ int main(int argc, char **argv)
                 }
                 PlayerCar::Performance oppPerf;
                 opponentCars[i].SetPerformance(fe.CarPerformance(name, oppPerf) ? oppPerf : PlayerCar::Performance());
+                if (const char *ap = getenv("NFSU2_AI_PHYSICS"); ap && !strcmp(ap, "ug2"))
+                    if (const uint8_t *rec = fe.CarRecordData(name))
+                        opponentCars[i].UseUG2Physics(rec);
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
@@ -635,6 +638,47 @@ int main(int argc, char **argv)
             hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
         printf("[World] HUD %s\n", hud ? hudName : "missing");
         race.Begin(hud, raceConfig);
+        // Dev aid: NFSU2_ROUTE_CHECK=1 lists stretches of the race route (and +-2.5 m beside it) with no ground.
+        if (getenv("NFSU2_ROUTE_CHECK") && route.Valid()) {
+            float runStart = -1, runLast = 0;
+            int runs = 0;
+            for (float d = 0; d <= route.Length(); d += 1.0f) {
+                float x, y, dx, dy, z;
+                route.Sample(d, x, y, dx, dy);
+                bool missing = false;
+                for (float off : {-2.5f, 0.0f, 2.5f})
+                    missing |= !world.GroundHeight(x - dy * off, y + dx * off, 80.0f, z);
+                if (missing) {
+                    if (runStart < 0)
+                        runStart = d;
+                    runLast = d;
+                } else if (runStart >= 0) {
+                    float rx, ry;
+                    route.Sample(runStart, rx, ry, dx, dy);
+                    printf("[RouteCheck] no ground s=%.0f..%.0f (%.0f m) at %.1f %.1f\n", runStart, runLast, runLast - runStart + 1, rx, ry);
+                    ++runs;
+                    runStart = -1;
+                }
+            }
+            printf("[RouteCheck] %d gaps over %.0f m\n", runs, route.Length());
+        }
+        // Dev aid: NFSU2_GROUND_MAP="x,y,half,step" prints the ground height (m, '.' = none) on a grid.
+        if (const char *gm = getenv("NFSU2_GROUND_MAP")) {
+            float cx, cy, half, step;
+            if (sscanf(gm, "%f,%f,%f,%f", &cx, &cy, &half, &step) == 4) {
+                for (float y = cy + half; y >= cy - half; y -= step) {
+                    printf("[Ground] y%7.1f:", y);
+                    for (float x = cx - half; x <= cx + half; x += step) {
+                        float z;
+                        if (world.GroundHeight(x, y, 60.0f, z))
+                            printf(" %4.0f", z);
+                        else
+                            printf("    .");
+                    }
+                    printf("\n");
+                }
+            }
+        }
         // Dev aid: NFSU2_WORLD_PUSH=x.fng pushes another in-game package over the HUD (its tree is
         // dumped with NFSU2_FETREE instead of the HUD's).
         FEPackage *treeRoot = hud;

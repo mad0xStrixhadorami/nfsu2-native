@@ -367,8 +367,14 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             SolidRef ref{sbody, slen, buf, size, false, {}, {}};
             uint32_t hash = 0;
             ForEachChunk(buf, sbody, sbody + slen, [&](uint32_t hid, size_t hbody, size_t hlen) {
-                if (hid == kChunkSolidHeader && hlen >= 0x14)
-                    hash = Read32(buf + hbody + 0x10);
+                if (hid == kChunkSolidHeader && hlen >= 0x14) {
+                    // A header that starts on an odd alignment is preceded by 0x11 fill bytes
+                    // (length 0xc8 instead of 0xc0): the hash is then at +0x18 (ISSUES #132).
+                    size_t pad = 0;
+                    while (pad < hlen - 0x14 && buf[hbody + pad] == 0x11)
+                        ++pad;
+                    hash = Read32(buf + hbody + pad + 0x10);
+                }
                 if (hid == 0x134012)
                     for (size_t k = 0; k + 8 <= hlen; k += 8)
                         ref.textures.push_back(Read32(buf + hbody + k));
@@ -434,6 +440,14 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             auto it = solids.find(Read32(info + 0x20));
             Kind kind = KindOf(name);
             if (it == solids.end() || kind == kSky) {
+                if (const char *dbg = getenv("NFSU2_SKIPPED_AT")) { // dev aid: "x,y" lists skipped instances there
+                    float qx, qy;
+                    float bb[6];
+                    memcpy(bb, r, 24);
+                    if (sscanf(dbg, "%f,%f", &qx, &qy) == 2 && qx >= bb[0] && qx <= bb[3] && qy >= bb[1] && qy <= bb[4])
+                        printf("[World] skipped instance %s hash %08x kind %d bbox %.0f %.0f %.0f .. %.0f %.0f %.0f\n", name,
+                               Read32(info + 0x20), int(kind), bb[0], bb[1], bb[2], bb[3], bb[4], bb[5]);
+                }
                 ++unresolved;
                 continue;
             }

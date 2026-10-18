@@ -323,11 +323,14 @@ void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t 
                     break;
                 if (cid == 0x134011 && clen >= 0xc0) {
                     // Solid header: name hash +0x10, bbox +0x20/+0x30, name +0xa4 (28 bytes).
-                    const uint8_t *h = d + q + 8;
+                    size_t pad = 0; // 0x11 fill before an unaligned header (see TrackWorld::Load)
+                    while (pad < clen - 0xc0 && d[q + 8 + pad] == 0x11)
+                        ++pad;
+                    const uint8_t *h = d + q + 8 + pad;
                     s.hash = ReadLE32(h, 0x10);
                     memcpy(s.bboxMin, h + 0x20, 12);
                     memcpy(s.bboxMax, h + 0x30, 12);
-                    s.name.assign(reinterpret_cast<const char *>(h + 0xa4), strnlen(reinterpret_cast<const char *>(h + 0xa4), clen - 0xa4));
+                    s.name.assign(reinterpret_cast<const char *>(h + 0xa4), strnlen(reinterpret_cast<const char *>(h + 0xa4), clen - pad - 0xa4));
                 }
                 if (cid == 0x134012) // (texture name hash, 0) pairs
                     for (size_t k = 0; k + 8 <= clen; k += 8)
