@@ -808,7 +808,7 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
                                        0xE8E24508, // Video
                                        0xD0CF6EE1, // Gameplay
                                        0xF760EABE, // Player
-                                       0x22B1C2E6, // Controls (0x00203f70 reuses the "Online Options" title)
+                                       0,          // Controls: the PS2 disc sets no title and has no handler
                                        0xDCFB6B36, // EA GAMES TRAX
                                        0xD10D7477, // Trailers / bonus
                                        0,          // Online Options (PC)
@@ -977,17 +977,11 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
         w.push_back({0xBFB34120, // Ask for Transmission
                      [this, onOff](uint32_t &l, std::string &) { l = onOff(m_pAskTransmission); },
                      [this](int) { m_pAskTransmission = !m_pAskTransmission; }});
-    } else if (cat == 4) {
-        // FUN_00203f70: only two toggles on this disc (the online options), title 0x22b1c2e6.
-        auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
-        // 0x00200cf0/0x00200d78: 0x00506bc0.
-        w.push_back({0x0B660729, // Show Player Names
-                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_showPlayerNames); },
-                     [this](int) { m_showPlayerNames = !m_showPlayerNames; }});
-        // 0x00200e98/0x00200f20: 0x00506bc4.
-        w.push_back({0xD1009B34, // Bad Game Connection Warning
-                     [this, onOff](uint32_t &l, std::string &) { l = onOff(m_badConnectionWarning); },
-                     [this](int) { m_badConnectionWarning = !m_badConnectionWarning; }});
+    } else if (cat == 6) {
+        // FUN_00204078: three bonus-trailer buttons (labels are literal strings baked into the
+        // binary: SSX / NFL Street / NASCAR Thunder; Accept plays the trailer, not ported here).
+        for (int i = 0; i < 3; ++i)
+            w.push_back({0, [](uint32_t &, std::string &text) { text.clear(); }, [](int) {}});
     }
     printf("[Menu] Options: category %d, %zu rows\n", cat, w.size());
     m_widgets.Setup(pkg, std::move(w));
@@ -996,6 +990,11 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
         // UI_Options.fng), so set the row names literally after the generic title pass.
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_2"), "Brightness");
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_3"), "Contrast");
+    } else if (cat == 6) {
+        // Trailer row names are literal strings, not language labels.
+        FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_1"), "SSX");
+        FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_2"), "NFL Street");
+        FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_3"), "NASCAR Thunder");
     }
 }
 
