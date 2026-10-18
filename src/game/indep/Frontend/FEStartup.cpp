@@ -762,11 +762,13 @@ void FEStartupSequence::HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg)
         // 0x00202560 (the carousel's accept handler) routes the selected category to its own
         // screen: 0/1/2/3 (and 7 Online on PC) use the generic UI_Options list, 4 Controls opens
         // the controller-mapping screen, 5 EA TRAX the jukebox and 8 Credits its own scroll.
+        // Category 6 (the PS2 "Trailers"/bonus item) is a special item (vtable 0x46dee8,
+        // 0x002565c0 -> Burnout 3 demo) that 0x00202560 leaves to the item class; we show the
+        // UI_Options case-6 bonus-trailer list (0x00204078) as the closest ported content.
         const char *dest = "UI_Options.fng";
         switch (m_optionCategory) {
         case 4: dest = "UI_OptionsController.fng"; break;
         case 5: dest = "EA_Trax_Jukebox.fng"; break;
-        case 6: dest = "UI_Trailers.fng"; break;
         case 8: dest = "Credits.fng"; break;
         default: break;
         }
