@@ -493,7 +493,8 @@ void Vehicle::DriveTorque(float h)
     else if (e.limiter && rpm < e.redline - e.redline * 0.0125f)
         e.limiter = false;
     // Speed limiter (rec+0x3a8): no drive above it.
-    const bool atLimit = ForwardSpeed() > m_limiterSpeed;
+    // Reverse is limited to ~12 m/s (stand-in: the game's reverse limiter is not decoded).
+    const bool atLimit = ForwardSpeed() > m_limiterSpeed || (d.gear == 0 && ForwardSpeed() < -12.0f);
     const float throttle = d.gear == 0 ? m_in.brake : m_in.throttle;
     const float te = EngineTorque(e.speed, atLimit ? 0.0f : throttle);
 
