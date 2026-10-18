@@ -661,6 +661,32 @@ int main(int argc, char **argv)
                 }
             }
             printf("[RouteCheck] %d gaps over %.0f m\n", runs, route.Length());
+            // Compare ground heights of the render triangles and the collision mesh along the route.
+            if (getenv("NFSU2_COLL_COMPARE")) {
+                size_t both = 0, onlyR = 0, onlyC = 0, close = 0;
+                float worst = 0;
+                for (float d = 0; d <= route.Length(); d += 1.0f) {
+                    float x, y, dx, dy, zr, zc;
+                    route.Sample(d, x, y, dx, dy);
+                    world.SetGroundSource(1);
+                    bool r = world.GroundHeight(x, y, 80.0f, zr);
+                    world.SetGroundSource(2);
+                    bool c = world.GroundHeight(x, y, 80.0f, zc);
+                    world.SetGroundSource(0);
+                    if (r && c) {
+                        ++both;
+                        close += std::fabs(zr - zc) < 0.3f;
+                        if (std::fabs(zr - zc) >= 0.3f && int(d) % 40 == 0)
+                            printf("[RouteCheck]   s=%.0f at %.1f %.1f render %.2f coll %.2f\n", d, x, y, zr, zc);
+                        worst = std::max(worst, std::fabs(zr - zc));
+                    } else if (r)
+                        ++onlyR;
+                    else if (c)
+                        ++onlyC;
+                }
+                printf("[RouteCheck] compare: both %zu (within 0.3 m: %zu, worst %.2f), render only %zu, collision only %zu\n",
+                       both, close, worst, onlyR, onlyC);
+            }
         }
         // Dev aid: NFSU2_GROUND_MAP="x,y,half,step" prints the ground height (m, '.' = none) on a grid.
         if (const char *gm = getenv("NFSU2_GROUND_MAP")) {

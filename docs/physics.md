@@ -100,3 +100,24 @@ caches m (+0x164), 1/m (+0x168), inverse inertia (+0x170, `0x00152830` = 4x4 aff
 RigidBody (0x321xxx-0x322xxx), Tyre slip 0x323eb0, Drivetrain 0x30c950/0x30d*, Engine 0x30bf90,
 Aero 0x302620, pre/post steps 0x316fb0/0x317748/0x317ac0/0x317d68/0x319120/0x318968/0x329188,
 collision (0x334110, 0x336180, 0x337888), constants (DAT_0056xxxx, gp = 0x5695f0).
+
+## Collision mesh (ISSUES #133)
+
+Stream chunk `0x80034130` (one per scenery section, 423 in STREAML4RA) holds `0x34131` (48-byte
+header: u32 count + bounds), **`0x34134` collision faces** (32 bytes each), `0x34136` / `0x34137`
+(spatial index, not decoded). Face decoder = `0x00335098`:
+
+| off | size | meaning |
+|---|---|---|
+| +1 | u8 | 2-bit indices picking the extent corners (bbox helper) |
+| +2 | u8 | surface/material class (1, 16, 20, 8, 11, ...; most common 1/16 = road/terrain) |
+| +3 | u8 | flags: `0x10` quad (4 vertices) else triangle, `0x04` unbounded plane, `0x02` ... |
+| +4 | s16 | z high part (metres) |
+| +8 / +0x10 / +0x18 | 4 x s16 each | x[4] / y[4] / z-low[4]; x = s/8, y = s/8, z = zhigh + zlow/256 |
+
+178,617 faces in L4RA. Compared with the render triangles along the race route: both cover 1,599
+of 1,872 samples (collision misses 273 = 15%); where both exist 68% agree within 0.3 m and the
+collision surface is typically ~1 m below the visible road slab (it is a simplified surface), so
+the world keeps the render triangles as the primary ground and uses the collision faces as a
+fallback and for walls. The static surface table at 0x0052f948 (stride 0x98: bump frequency,
+amplitude, friction multipliers ~0.95-1.0, camera-shake values) shows surfaces barely change grip.

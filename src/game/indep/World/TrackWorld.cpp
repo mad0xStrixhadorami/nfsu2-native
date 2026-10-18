@@ -95,6 +95,19 @@ template <typename F> void TrackWorld::ForNearbyTris(float x, float y, F &&f) co
             auto it = m_cells.find(CellKey(cx, cy));
             if (it != m_cells.end())
                 for (const Tri &t : it->second.tris)
+                    if (t.phys)
+                        f(t);
+        }
+}
+
+template <typename F> void TrackWorld::ForNearbyCollision(float x, float y, F &&f) const
+{
+    const int gx = int(std::floor(x / kCellSize)), gy = int(std::floor(y / kCellSize));
+    for (int cx = gx - 1; cx <= gx + 1; ++cx)
+        for (int cy = gy - 1; cy <= gy + 1; ++cy) {
+            auto it = m_collision.find(CellKey(cx, cy));
+            if (it != m_collision.end())
+                for (const CTri &t : it->second)
                     f(t);
         }
 }
@@ -104,8 +117,7 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
     bool found = false;
     float best = -1e30f;
     float bestN[3] = {0, 0, 1};
-    ForNearbyTris(x, y, [&](const Tri &t) {
-        const float *a = t.v, *b = t.v + 3, *c = t.v + 6;
+    auto test = [&](const float *a, const float *b, const float *c) {
         // Quick reject on the XY bounds.
         if (x < std::min({a[0], b[0], c[0]}) || x > std::max({a[0], b[0], c[0]}) ||
             y < std::min({a[1], b[1], c[1]}) || y > std::max({a[1], b[1], c[1]}))
@@ -131,7 +143,18 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
             const float len = std::sqrt(nx * nx + ny * ny + nz * nz), sgn = nz < 0 ? -1.0f : 1.0f;
             bestN[0] = sgn * nx / len, bestN[1] = sgn * ny / len, bestN[2] = sgn * nz / len;
         }
-    });
+    };
+    // SetGroundSource (dev aid): restrict the ground query to the render triangles or the collision mesh.
+    const bool useRender = m_groundSource != 2, useColl = m_groundSource != 1;
+    if (useRender)
+        ForNearbyTris(x, y, [&](const Tri &t) { test(t.v, t.v + 3, t.v + 6); });
+    // The collision mesh: faces are triangles, or quads (flags & 0x10) split v0-v1-v2 / v0-v2-v3.
+    if (useColl)
+        ForNearbyCollision(x, y, [&](const CTri &t) {
+            test(t.v, t.v + 3, t.v + 6);
+            if (t.flags & 0x10)
+                test(t.v, t.v + 6, t.v + 9);
+        });
     if (found) {
         z = best;
         if (normal)
@@ -144,10 +167,9 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
 {
     const float dx = bx - ax, dy = by - ay, dz = bz - az;
     bool hit = false;
-    ForNearbyTris(ax, ay, [&](const Tri &t) {
+    auto testTri = [&](const float *a, const float *b, const float *c) {
         if (hit)
             return;
-        const float *a = t.v, *b = t.v + 3, *c = t.v + 6;
         float e1x = b[0] - a[0], e1y = b[1] - a[1], e1z = b[2] - a[2];
         float e2x = c[0] - a[0], e2y = c[1] - a[1], e2z = c[2] - a[2];
         float nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
@@ -182,18 +204,22 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
                 printf("[World] wall (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f) n(%.2f %.2f %.2f)\n", a[0], a[1],
                        a[2], b[0], b[1], b[2], c[0], c[1], c[2], nx, ny, nz);
         }
-    });
+    };
+    ForNearbyTris(ax, ay, [&](const Tri &t) { testTri(t.v, t.v + 3, t.v + 6); });
+    // The collision mesh is not used for walls: its steep faces include invisible volumes that
+    // pin the car (verified: the car stalled at the start grid, ISSUES #133).
     return hit;
 }
 
 void TrackWorld::ClearCars() { m_cars.clear(); }
 
-void TrackWorld::AddToCells(const Tri &w, const RTri &r)
+void TrackWorld::AddToCells(const Tri &w, const RTri &r, bool physics)
 {
     float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
     int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
     Cell &cell = m_cells[CellKey(gx, gy)];
     cell.tris.push_back(w);
+    cell.tris.back().phys = physics;
     cell.render.push_back(r);
     ++m_triangleCount;
 }
@@ -204,7 +230,7 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
     for (Barrier &b : m_barriers)
         if (!b.tris.empty() && keep(b.bbox)) {
             for (size_t i = 0; i < b.tris.size(); ++i)
-                AddToCells(b.tris[i], b.render[i]);
+                AddToCells(b.tris[i], b.render[i], true);
             b.tris.clear(); // enabled once per load
             b.render.clear();
             ++enabled;
@@ -405,6 +431,35 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         ForEachChunk(extra->data(), 0, extra->size(), [&](uint32_t id, size_t body, size_t len) {
             indexSolids(extra->data(), extra->size(), id, body, len);
         });
+    // Collision mesh (ISSUES #133): section chunk 0x80034130 holds 0x34134 = 32-byte faces
+    // {u8 ?, u8 ?, u8 surface, u8 flags, s16 z-high, s16 ?, s16 x[4], s16 y[4], s16 z-low[4]}:
+    // x = s / 8, y = s / 8, z = zhigh + zlow / 256 (decoder 0x00335098); flags 0x10 = quad.
+    ForEachChunk(d, 0, n, [&](uint32_t id, size_t body, size_t len) {
+        if (id != 0x80034130)
+            return;
+        ForEachChunk(d, body, body + len, [&](uint32_t cid, size_t cbody, size_t clen) {
+            if (cid != 0x34134)
+                return;
+            for (size_t f = cbody; f + 32 <= cbody + clen; f += 32) {
+                CTri t;
+                int16_t zh, sx[4], sy[4], sz[4];
+                memcpy(&zh, d + f + 4, 2);
+                memcpy(sx, d + f + 8, 8);
+                memcpy(sy, d + f + 16, 8);
+                memcpy(sz, d + f + 24, 8);
+                t.surface = d[f + 2], t.flags = d[f + 3];
+                for (int k = 0; k < 4; ++k) {
+                    t.v[k * 3] = sx[k] / 8.0f;
+                    t.v[k * 3 + 1] = sy[k] / 8.0f;
+                    t.v[k * 3 + 2] = float(zh) + sz[k] / 256.0f;
+                }
+                const float cx = (t.v[0] + t.v[3] + t.v[6]) / 3.0f, cy = (t.v[1] + t.v[4] + t.v[7]) / 3.0f;
+                m_collision[CellKey(int(std::floor(cx / kCellSize)), int(std::floor(cy / kCellSize)))].push_back(t);
+                ++m_collisionFaces;
+            }
+        });
+    });
+    printf("[World] %zu collision faces\n", m_collisionFaces);
     std::unordered_set<uint32_t> neededTextures; // referenced by neighbour solids actually placed
 
     struct RoadSpot {
@@ -520,7 +575,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                     m_barriers.back().render.push_back(rt);
                     continue;
                 }
-                AddToCells(w, rt);
+                AddToCells(w, rt, true);
             }
         }
     }

@@ -62,6 +62,10 @@ public:
     // ones it needs (UG2 selects barrier groups per race; see ISSUES.md #107). keep(bbox[6]).
     void EnableBarriers(const std::function<bool(const float *bbox)> &keep);
 
+    // Number of collision-mesh faces loaded (0: physics falls back to the render triangles).
+    size_t CollisionFaces() const { return m_collisionFaces; }
+    // Dev aid: 0 = both (default), 1 = render triangles only, 2 = collision mesh only.
+    void SetGroundSource(int source) { m_groundSource = source; }
     size_t TriangleCount() const { return m_triangleCount; }
     size_t InstanceCount() const { return m_instances; }
 
@@ -70,6 +74,12 @@ private:
         float v[9];
         uint8_t shade[3]; // base colour from the surface normal and the solid kind
         uint8_t ground;   // normal within ~37 deg of vertical: drawn before cars
+        uint8_t phys = 1; // used by GroundHeight/HitsWall (0 once the collision mesh replaces the scenery)
+    };
+    // UG2's collision mesh (stream chunk 0x34134, 32-byte faces; ISSUES.md #133).
+    struct CTri {
+        float v[9];
+        uint8_t surface, flags;
     };
     // Render data (textured): world-space vertices with UV and pre-lit colour, and the texture
     // name hash (0 = untextured, drawn in the flat shade colour).
@@ -89,9 +99,14 @@ private:
     static int64_t CellKey(int cx, int cy) { return (int64_t(cx) << 32) ^ uint32_t(cy); }
     // Fills t.shade from the triangle normal; false for a degenerate triangle.
     static bool Shade(Tri &t, float r, float g, float b);
+    template <typename F> void ForNearbyCollision(float x, float y, F &&f) const;
+    void AddToCells(const Tri &w, const RTri &r, bool physics);
     template <typename F> void ForNearbyTris(float x, float y, F &&f) const;
 
     std::unordered_map<int64_t, Cell> m_cells;
+    std::unordered_map<int64_t, std::vector<CTri>> m_collision;
+    size_t m_collisionFaces = 0;
+    int m_groundSource = 0;
     Camera m_start;
     size_t m_triangleCount = 0;
     size_t m_instances = 0;
@@ -137,7 +152,6 @@ private:
     std::unordered_map<int64_t, GLCell> m_glCells;
     GLCell m_glPanorama;
     int m_glState = 0; // 0 unknown, 1 available, -1 unavailable
-    void AddToCells(const Tri &t, const RTri &r);
     // Texture packs (0xb3300000) copied out of the stream; textures resolved by name hash.
     std::vector<std::unique_ptr<std::vector<uint8_t>>> m_tpkData;
     std::vector<std::unique_ptr<class TexturePack>> m_packs;
