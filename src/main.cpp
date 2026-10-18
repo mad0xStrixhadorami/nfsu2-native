@@ -28,6 +28,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/Frontend/PostRaceResults.h"
+#include "game/indep/Sound/EngineSound.h"
 #include "game/indep/Sound/MusicStream.h"
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
@@ -297,6 +298,13 @@ int main(int argc, char **argv)
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
+    // Music (ISSUES.md #123): starts once the boot movies are over (first main menu, or a race
+    // entered directly); NFSU2_MUSIC_VOLUME scales it (0 = off,
+    // which also mutes the engine).
+    MusicStream music;
+    EngineSound engineSound; // player car (ISSUES.md #124)
+    bool musicStarted = false;
+    const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
     std::function<void(const std::string &)> enterWorld;
     enterWorld = [&](const std::string &region) {
         currentRegion = region;
@@ -434,6 +442,18 @@ int main(int argc, char **argv)
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
+        // Engine sound bank: CAR_nn_ENG_MB_SPU.abk. The car -> bank mapping is in EA's audio data
+        // (not decoded); stand-in: database index modulo the 19 banks.
+        if (musicVolume > 0) {
+            int bankIndex = 0;
+            std::vector<std::string> cars = fe.RaceableCars();
+            for (size_t ci = 0; ci < cars.size(); ++ci)
+                if (cars[ci] == fe.PreviewCarName())
+                    bankIndex = int(ci % 19);
+            char bankPath[64];
+            snprintf(bankPath, sizeof(bankPath), "SOUND\\ENGINE\\CAR_%02d_ENG_MB_SPU.abk", bankIndex);
+            engineSound.Load(ReadGameFile(*fs, bankPath));
+        }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
         car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
@@ -557,11 +577,6 @@ int main(int argc, char **argv)
     if (const char *region = getenv("NFSU2_WORLD"))
         enterWorld(region);
 
-    // Music (ISSUES.md #123): starts once the boot movies are over (first main menu, or a race
-    // entered directly); NFSU2_MUSIC_VOLUME scales it (0 = off).
-    MusicStream music;
-    bool musicStarted = false;
-    const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
 
     for (bool running = true; running;) {
         SDL_Event ev;
@@ -642,6 +657,7 @@ int main(int argc, char **argv)
                 hud = nullptr;
                 inWorld = false;
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                engineSound.Set(0, 0, 0, 0, false);
                 startup.ReturnFromRace();
                 continue;
             }
@@ -713,6 +729,8 @@ int main(int argc, char **argv)
                     if (k < int(aiOut.size()))
                         aiOut[k] = true;
                 const bool go = race.GetPhase() != RaceSession::kCountdown;
+                engineSound.Set(car.Rpm(), car.GetPerformance().idleRpm, car.GetPerformance().redline,
+                                std::max(throttle, inputThrottle), !pausePkg);
                 // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
                 float power = 1.0f;
                 if (race.IsDrag() && race.GetPhase() != RaceSession::kFinished) {
