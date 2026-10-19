@@ -74,7 +74,8 @@ private:
         float v[9];
         uint8_t shade[3]; // base colour from the surface normal and the solid kind
         uint8_t ground;   // normal within ~37 deg of vertical: drawn before cars
-        uint8_t phys = 1; // used by GroundHeight/HitsWall (0 once the collision mesh replaces the scenery)
+        uint8_t phys = 1; // used by GroundHeight (0 once the collision mesh replaces the scenery)
+        uint8_t barrier = 0; // an enabled race barrier: the only render geometry HitsWall still tests (#146)
     };
     // UG2's collision mesh (stream chunk 0x34134, 32-byte faces; ISSUES.md #133).
     struct CTri {
@@ -115,7 +116,7 @@ private:
     // Fills t.shade from the triangle normal; false for a degenerate triangle.
     static bool Shade(Tri &t, float r, float g, float b);
     template <typename F> void ForNearbyCollision(float x, float y, F &&f) const;
-    void AddToCells(const Tri &w, const RTri &r, bool physics);
+    void AddToCells(const Tri &w, const RTri &r, bool physics, bool barrier = false);
     template <typename F> void ForNearbyTris(float x, float y, F &&f) const;
 
     std::unordered_map<int64_t, Cell> m_cells;
@@ -124,6 +125,8 @@ private:
     std::unordered_map<int64_t, std::vector<uint32_t>> m_csectionGrid; // 64 m cell -> sections
     // The game's ground query over the collision mesh: the highest upward floor under (x, y) that is
     // not above zq, found only in the faces the world has enabled (group 0, not a wall).
+    // Wall faces (flags & 0x02) of the collision mesh crossed by the segment (0x00337888 collects them).
+    bool CollisionWall(const float *a, const float *b, float *normal) const;
     bool CollisionGround(float x, float y, float zq, float &z, float *normal) const;
     size_t m_collisionFaces = 0;
     int m_groundSource = 0;

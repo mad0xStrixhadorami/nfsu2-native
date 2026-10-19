@@ -230,6 +230,86 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
     return found;
 }
 
+// Segment a->b against the wall faces of the collision mesh (flags & 0x02, group 0). A wall face is
+// a vertical polygon; flag 0x04 makes it unbounded in Z (the decoder 0x00335098 sets its Z to
+// -2048 / +2048). Returns the face normal facing the segment start.
+bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal) const
+{
+    const float lo[2] = {std::min(a[0], b[0]) - 0.5f, std::min(a[1], b[1]) - 0.5f};
+    const float hi[2] = {std::max(a[0], b[0]) + 0.5f, std::max(a[1], b[1]) + 0.5f};
+    const float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+    for (int gx = int(std::floor(lo[0] / kCellSize)); gx <= int(std::floor(hi[0] / kCellSize)); ++gx)
+        for (int gy = int(std::floor(lo[1] / kCellSize)); gy <= int(std::floor(hi[1] / kCellSize)); ++gy) {
+            const auto it = m_csectionGrid.find(CellKey(gx, gy));
+            if (it == m_csectionGrid.end())
+                continue;
+            for (uint32_t si : it->second) {
+                const CSection &sec = m_csections[si];
+                const int c0 = std::clamp(int((lo[0] - sec.ox) * 0.03125f), 0, sec.cols - 1);
+                const int c1 = std::clamp(int((hi[0] - sec.ox) * 0.03125f), 0, sec.cols - 1);
+                const int r0 = std::clamp(int((lo[1] - sec.oy) * 0.03125f), 0, sec.rows - 1);
+                const int r1 = std::clamp(int((hi[1] - sec.oy) * 0.03125f), 0, sec.rows - 1);
+                for (int r = r0; r <= r1; ++r)
+                    for (int c = c0; c <= c1; ++c) {
+                        const uint32_t cell = sec.cells[size_t(r) * sec.cols + c];
+                        const uint32_t first = cell & 0xffff, count = cell >> 16;
+                        for (uint32_t k = first; k < first + count && k < sec.index.size(); ++k) {
+                            const uint32_t fi = sec.index[k] & 0xffff;
+                            if (fi >= sec.faces.size())
+                                continue;
+                            const CFace &f = sec.faces[fi];
+                            if (f.group != 0 || !(f.flags & 0x02))
+                                continue;
+                            float v[12];
+                            memcpy(v, f.v, sizeof(v));
+                            if (f.flags & 0x04)
+                                v[2] = -2048.0f, v[5] = 2048.0f, v[8] = 2048.0f, v[11] = -2048.0f;
+                            // The face's XY box must meet the segment's.
+                            float fminx = 1e30f, fmaxx = -1e30f, fminy = 1e30f, fmaxy = -1e30f;
+                            for (int q = 0; q < 4; ++q) {
+                                fminx = std::min(fminx, v[q * 3]), fmaxx = std::max(fmaxx, v[q * 3]);
+                                fminy = std::min(fminy, v[q * 3 + 1]), fmaxy = std::max(fmaxy, v[q * 3 + 1]);
+                            }
+                            if (fmaxx < lo[0] || fminx > hi[0] || fmaxy < lo[1] || fminy > hi[1])
+                                continue;
+                            const int tris[2][3] = {{0, 1, 2}, {0, 2, 3}};
+                            for (int t = 0; t < (f.quad ? 2 : 1); ++t) {
+                                const float *p0 = v + tris[t][0] * 3, *p1 = v + tris[t][1] * 3, *p2 = v + tris[t][2] * 3;
+                                const float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+                                const float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+                                const float px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+                                const float det = e1x * px + e1y * py + e1z * pz;
+                                if (std::fabs(det) < 1e-8f)
+                                    continue;
+                                const float inv = 1.0f / det;
+                                const float sx = a[0] - p0[0], sy = a[1] - p0[1], sz = a[2] - p0[2];
+                                const float u = (sx * px + sy * py + sz * pz) * inv;
+                                if (u < 0 || u > 1)
+                                    continue;
+                                const float qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+                                const float w = (dx * qx + dy * qy + dz * qz) * inv;
+                                if (w < 0 || u + w > 1)
+                                    continue;
+                                const float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
+                                if (tt < 0 || tt > 1)
+                                    continue;
+                                if (normal) {
+                                    float nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+                                    const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+                                    nx /= len, ny /= len, nz /= len;
+                                    if (nx * dx + ny * dy + nz * dz > 0)
+                                        nx = -nx, ny = -ny, nz = -nz;
+                                    normal[0] = nx, normal[1] = ny, normal[2] = nz;
+                                }
+                                return true;
+                            }
+                        }
+                    }
+            }
+        }
+    return false;
+}
+
 bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal) const
 {
     const float dx = bx - ax, dy = by - ay, dz = bz - az;
@@ -272,21 +352,29 @@ bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, floa
                        a[2], b[0], b[1], b[2], c[0], c[1], c[2], nx, ny, nz);
         }
     };
-    ForNearbyTris(ax, ay, [&](const Tri &t) { testTri(t.v, t.v + 3, t.v + 6); });
-    // The collision mesh is not used for walls: its steep faces include invisible volumes that
-    // pin the car (verified: the car stalled at the start grid, ISSUES #133).
-    return hit;
+    // Walls are the collision mesh's wall faces (0x00337888 collects the flag-0x02 faces of the cells
+    // the move crosses) plus the race barriers this race enabled. The scenery's own steep render
+    // triangles (kerbs, poles, tunnel linings) are not walls: they stopped the car at low ledges (#146).
+    ForNearbyTris(ax, ay, [&](const Tri &t) {
+        if (t.barrier)
+            testTri(t.v, t.v + 3, t.v + 6);
+    });
+    if (hit)
+        return true;
+    const float a[3] = {ax, ay, az}, b[3] = {bx, by, bz};
+    return CollisionWall(a, b, normal);
 }
 
 void TrackWorld::ClearCars() { m_cars.clear(); }
 
-void TrackWorld::AddToCells(const Tri &w, const RTri &r, bool physics)
+void TrackWorld::AddToCells(const Tri &w, const RTri &r, bool physics, bool barrier)
 {
     float cx = (w.v[0] + w.v[3] + w.v[6]) / 3.0f, cy = (w.v[1] + w.v[4] + w.v[7]) / 3.0f;
     int gx = int(std::floor(cx / kCellSize)), gy = int(std::floor(cy / kCellSize));
     Cell &cell = m_cells[CellKey(gx, gy)];
     cell.tris.push_back(w);
     cell.tris.back().phys = physics;
+    cell.tris.back().barrier = barrier ? 1 : 0;
     cell.render.push_back(r);
     ++m_triangleCount;
 }
@@ -297,7 +385,7 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
     for (Barrier &b : m_barriers)
         if (!b.tris.empty() && keep(b.bbox)) {
             for (size_t i = 0; i < b.tris.size(); ++i)
-                AddToCells(b.tris[i], b.render[i], true);
+                AddToCells(b.tris[i], b.render[i], true, true);
             b.tris.clear(); // enabled once per load
             b.render.clear();
             ++enabled;
