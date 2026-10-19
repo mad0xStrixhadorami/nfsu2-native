@@ -152,6 +152,12 @@ private:
     void RefreshCareerWorldMap(FEPackage *pkg);
     void StartCareerEvent(const Career::Event &ev);
     const char *m_careerMenuSwitch = nullptr;
+    // UI_CareerCarSelect.fng (create 0x001e9ef8, ctor 0x001e9f30, messages 0x001ea0c0, slots 0x001ead20):
+    // the garage car picker over the profile's owned cars (ISSUES #148).
+    void HandleCareerCarSelectLoaded(FEPackage *pkg);
+    void HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshCareerCarSelect(FEPackage *pkg);
+    size_t m_csSel = 0;
     int m_wmArea = 1;
     size_t m_wmSel = 0;
     std::vector<const Career::Event *> m_wmEvents;

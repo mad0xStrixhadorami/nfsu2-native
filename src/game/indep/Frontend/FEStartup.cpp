@@ -277,6 +277,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCareerWorldMapLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
+        HandleCareerCarSelectLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         HandleMemcardLoaded(pkg);
         return;
@@ -384,6 +388,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_CareerWorldMap.fng") == 0) {
         HandleCareerWorldMapMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
+        HandleCareerCarSelectMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
@@ -1152,7 +1160,8 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             m_careerMenuSwitch = "UI_CareerWorldMap.fng";
             break;
         case 2:
-            printf("[Career] crib: car select (not ported)\n");
+            printf("[Career] crib: car select\n");
+            m_careerMenuSwitch = "UI_CareerCarSelect.fng";
             break;
         case 3:
             printf("[Career] crib: change parts (not ported)\n");
@@ -1334,6 +1343,74 @@ void FEStartupSequence::HandleCareerWorldMapMessage(uint32_t msg, FEPackage *pkg
     }
 }
 
+
+// UI_CareerCarSelect.fng (create 0x001e9ef8, ctor 0x001e9f30, messages 0x001ea0c0, slot list
+// 0x001ead20, refresh 0x001ea938): the garage car picker. 0x001ead20 builds one slot per car in the
+// player's save block (+ locked/sponsor slots); Left/Right (0x9120409e / 0xb5971bf1 -> 0x001eb008)
+// move the slot, the slot caption is "Slot %03d" (0x6d221aa2), the stat bars are the accel /
+// top_speed / handling bars of the selected car, and Accept asks to switch (0x00260528 /
+// 0x002602c8 dialogs); Back returns to the crib (0xe1fde1d1 -> 0x00292560 UI_CareerCrib.fng).
+// Stand-ins: no confirmation dialog, no trade-in value (0x2f5e7da3 stays 00000), no sponsor/locked
+// slots (only owned cars), no L1/R1 filter. The switch re-enters the crib session so the world
+// builds the player car from the new model (the world is not rebuilt in place).
+void FEStartupSequence::HandleCareerCarSelectLoaded(FEPackage *pkg)
+{
+    m_csSel = size_t(std::max(0, m_profile.currentCar));
+    if (m_csSel >= m_profile.cars.size())
+        m_csSel = 0;
+    RefreshCareerCarSelect(pkg);
+}
+
+void FEStartupSequence::RefreshCareerCarSelect(FEPackage *pkg)
+{
+    char text[32];
+    snprintf(text, sizeof(text), "Slot %03zu", m_csSel + 1);
+    FENativeInterface::SetString(pkg, 0x6d221aa2, text);
+    const bool have = m_csSel < m_profile.cars.size();
+    FENativeInterface::SetVisible(pkg, 0xba5709c8, !have); // "Open for sponsor / Locked"
+    FENativeInterface::SetVisible(pkg, 0x26f1f64b, m_csSel > 0);
+    FENativeInterface::SetVisible(pkg, 0x26f1f64c, m_csSel + 1 < m_profile.cars.size());
+    if (have) {
+        m_fe->SetPreviewCar(m_profile.cars[m_csSel].model);
+        m_fe->UpdateStatBars(pkg, true);
+    }
+}
+
+void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadBack) {
+        if (const Career::OwnedCar *car = m_profile.CurrentCar())
+            m_fe->SetPreviewCar(car->model); // leaving without a choice keeps the current car
+        printf("[Career] car select: back to the crib\n");
+        m_careerMenuSwitch = "UI_CareerCrib.fng";
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        const size_t old = m_csSel;
+        if (msg == kMsgPadLeft && m_csSel > 0)
+            --m_csSel;
+        if (msg == kMsgPadRight && m_csSel + 1 < m_profile.cars.size())
+            ++m_csSel;
+        if (old != m_csSel)
+            RefreshCareerCarSelect(pkg);
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && m_csSel < m_profile.cars.size()) {
+        if (int(m_csSel) == m_profile.currentCar) {
+            printf("[Career] car select: %s is already the current car\n", m_profile.cars[m_csSel].model.c_str());
+            return;
+        }
+        m_profile.currentCar = int(m_csSel);
+        Career::SaveCareer(m_profile);
+        printf("[Career] car select: now driving %s (slot %zu)\n", m_profile.cars[m_csSel].model.c_str(),
+               m_csSel + 1);
+        // Rebuild the crib session around the new car.
+        m_raceNumber = 0;
+        m_raceType = 9;
+        m_cribRequested = true;
+        RequestRace();
+    }
+}
 
 // MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the card status screen that
 // the career options open (mode DAT_004e3618: 0x21961 New Career, 0xc11 Career Garage). Its class
@@ -1550,6 +1627,18 @@ bool FEStartupSequence::LoadCareerProfile()
 {
     if (Career::LoadCareer(m_profile)) {
         m_careerExists = true;
+        // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
+        if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {
+            std::string list = extra;
+            for (size_t b = 0; b < list.size();) {
+                size_t e = list.find(',', b);
+                if (e == std::string::npos)
+                    e = list.size();
+                if (e > b && !m_profile.Owns(list.substr(b, e - b)))
+                    m_profile.cars.push_back({list.substr(b, e - b), 0});
+                b = e + 1;
+            }
+        }
         // Dev aid: NFSU2_BEST_TIME=<race>:<ms> records a best time and saves it (tests Previous Time).
         if (const char *bt = getenv("NFSU2_BEST_TIME")) {
             int race = 0, ms = 0;
