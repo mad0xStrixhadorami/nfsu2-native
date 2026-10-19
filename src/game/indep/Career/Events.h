@@ -19,7 +19,7 @@ struct Event {
     uint32_t id = 0;      // +0x08 completion key (0x00268bd8 tests it against the profile)
     uint32_t purse = 0;   // +0x30 prize money ("Purse")
     uint32_t respect = 0; // +0x14 "EarnableRespect" (100 on almost every record)
-    uint8_t stage = 0;    // +0x0f career stage (1..5; 0/24/29/81/82 on the special entries)
+    uint8_t stage = 0;    // +0x0f EVENT TYPE (0 circuit, 1 sprint, 2 street X, 3 outrun, 4 drag, 5 drift; 0x0025e850), not a career stage
     uint8_t region = 0;   // +0x37 city/URL group (0..5)
     uint8_t kind = 0;     // +0x34 3 = race series (154 records), 1/2 = the other event types
     bool special = false; // +0x0d

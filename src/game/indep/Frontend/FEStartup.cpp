@@ -1199,20 +1199,25 @@ static uint32_t RaceTypeLabel(int type)
     }
 }
 
-// The race type of a career event: the source in the original is not found yet (0x00272e18 /
-// 0x00272ee8 are the best-time lookups); the port picks the first type the event's track supports, URL for the kind-1 events.
-static int CareerRaceType(const Career::Event &ev, const RaceInfo &r)
+// The race type of a career event, from the event record as 0x0025e850 (StartRace's career setup)
+// reads it: +0x34 == 2 is an Underground Racing League event; otherwise +0x0f (the Event::stage
+// field) is the event type: 0 circuit, 1 sprint, 2 street X, 3 outrun (the tracks flagged bit 4),
+// 4 drag, 5 drift (the world map scores 5 by points, 0x00272ee8). The switch at 0x0025e850 maps
+// 4 -> drag, 5 -> drift, 2 -> street X; all 224 records agree with their first track's
+// supported-type flags (circuit 0x71, sprint 0x34, street X 0x800, outrun 0x10, drag 0x2,
+// drift 0x8, URL 0x2010).
+static int CareerRaceType(const Career::Event &ev, const RaceInfo &)
 {
-    const uint32_t f = r.typeFlags;
-    if (ev.kind == 1 && ((f >> 13) & 1))
+    if (ev.kind == 2)
         return 4;
-    if (f & 1) return 0;
-    if ((f >> 2) & 1) return 1;
-    if (f & 2) return 2;
-    if (f & 8) return 3;
-    if ((f >> 11) & 1) return 10;
-    if ((f >> 13) & 1) return 4;
-    return 0;
+    switch (ev.stage) {
+    case 1: return 1;
+    case 2: return 10;
+    case 3: return 8;
+    case 4: return 2;
+    case 5: return 3;
+    default: return 0;
+    }
 }
 
 void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
