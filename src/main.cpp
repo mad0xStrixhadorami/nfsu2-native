@@ -352,12 +352,15 @@ int main(int argc, char **argv)
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false;
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
+    // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
+    FEPackage *cribPkg = nullptr;
     // Post-race results (UI_PostRaceResults.fng): opponents' finish times on a race clock.
     FEPackage *resultsPkg = nullptr;
     std::vector<std::string> oppNames;
     std::vector<float> aiFinish;
     float raceClock = 0, finishedFor = 0;
     std::string currentRegion;
+    std::string currentHudName; // HUD package of the current world session (pushed on leaving the crib)
     int worldRaceNumber = 0; // the race the world session is running (0 = free roam)
     FEPackage *hud = nullptr;
     RaceSession race;
@@ -393,6 +396,7 @@ int main(int argc, char **argv)
         }
         currentRegion = region;
         pausePkg = nullptr;
+        cribPkg = nullptr;
         resultsPkg = nullptr;
         oppNames.clear();
         aiFinish.clear();
@@ -673,11 +677,25 @@ int main(int argc, char **argv)
         const char *hudName = getenv("NFSU2_HUD")
                                   ? getenv("NFSU2_HUD")
                                   : (raceConfig.type == 3 ? "HUD_Drift.fng" : "HUD_SingleRace.fng");
-        hud = engine->PushPackage(hudName, 0, 0xff);
-        if (!hud)
-            hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
-        printf("[World] HUD %s\n", hud ? hudName : "missing");
+        // The front end asks for the crib with the session: a career entry (Resume / new career) and
+        // the return from a career event open in it, as UG2 does (0x00265970 / 0x0025e388 enter the
+        // world and show UI_CareerCrib.fng over the crib scenery). The crib is a menu screen, so the
+        // race HUD is pushed when the player returns to explore mode (below) instead.
+        const bool cribSession = startup.TakeCribRequest();
+        currentHudName = hudName;
+        if (!cribSession) {
+            hud = engine->PushPackage(hudName, 0, 0xff);
+            if (!hud)
+                hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
+            printf("[World] HUD %s\n", hud ? hudName : "missing");
+        } else {
+            hud = nullptr;
+        }
         race.Begin(hud, raceConfig);
+        if (cribSession) {
+            cribPkg = engine->PushPackage("UI_CareerCrib.fng", 0, 0xff);
+            printf("[Career] crib %s\n", cribPkg ? "shown" : "missing");
+        }
         // Dev aid: NFSU2_ROUTE_CHECK=1 lists stretches of the race route (and +-2.5 m beside it) with no ground.
         if (getenv("NFSU2_ROUTE_CHECK") && route.Valid()) {
             float runStart = -1, runLast = 0;
@@ -820,9 +838,10 @@ int main(int argc, char **argv)
         }
 
         if (inWorld) {
-            // Paused: the simulation stands still (zero time step) while the world and HUD draw.
+            // Paused: the simulation stands still (zero time step) while the world and HUD draw. The
+            // career crib (ISSUES #141) also holds the simulation until the player returns to explore.
             const Uint32 frameStart = last;
-            const float dt = pausePkg ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
+            const float dt = (pausePkg || cribPkg) ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
             u32 pad = fe.GetJoyPadMask(0);
             for (const HeldPress &h : held)
                 if (elapsed >= h.from && elapsed < h.to)
@@ -832,7 +851,18 @@ int main(int argc, char **argv)
             last = now;
             // Start opens the pause menu (UI_Pause.fng); its choice comes back through FEStartup.
             FEStartupSequence::PauseAction pauseAction = startup.TakePauseAction();
-            if (!pausePkg && race.GetPhase() != RaceSession::kFinished && (pressed & FENativeInterface::kPadStart)) {
+            if (cribPkg && pauseAction == FEStartupSequence::kPauseResume) {
+                engine->UnloadPackage(cribPkg);
+                cribPkg = nullptr;
+                // Explore mode needs the race HUD (the crib session was started without one).
+                hud = engine->PushPackage(currentHudName.c_str(), 0, 0xff);
+                if (!hud)
+                    hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
+                race.Begin(hud, raceConfig); // free roam restarts with no countdown
+                printf("[Career] explore mode (HUD %s)\n", hud ? currentHudName.c_str() : "missing");
+            }
+            if (!pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished &&
+                (pressed & FENativeInterface::kPadStart)) {
                 pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff);
                 printf("[Race] paused\n");
                 if (getenv("NFSU2_WORLD_DEBUG"))
@@ -853,14 +883,18 @@ int main(int argc, char **argv)
                 enterWorld(region);
                 continue;
             }
-            if (pausePkg)
-                startup.Tick(elapsed); // screen ticks for the pause menu's icon scroller
-            // Quit Race from the pause menu -- or Accept once the race is over.
-            if ((pausePkg && pauseAction == FEStartupSequence::kPauseQuit) ||
+            if (pausePkg || cribPkg)
+                startup.Tick(elapsed); // screen ticks for the pause menu / crib icon scroller
+            // Quit Race from the pause menu (or Back to Main Menu from the crib) -- or Accept once the
+            // race is over.
+            if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) ||
                 (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
                 if (pausePkg)
                     engine->UnloadPackage(pausePkg);
                 pausePkg = nullptr;
+                if (cribPkg)
+                    engine->UnloadPackage(cribPkg);
+                cribPkg = nullptr;
                 if (resultsPkg)
                     engine->UnloadPackage(resultsPkg);
                 resultsPkg = nullptr;

@@ -269,6 +269,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleStartCareerLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_CareerCrib.fng") == 0) {
+        HandleCareerCribLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         HandleMemcardLoaded(pkg);
         return;
@@ -370,6 +374,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleStartCareerMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_CareerCrib.fng") == 0) {
+        HandleCareerCribMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         // Pad messages for the card screens are taken from the pad in Tick(); ignore FEng's copies.
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
@@ -457,6 +465,8 @@ void FEStartupSequence::Tick(uint32_t nowMs)
                 m_raceType = 9;
                 m_raceNumber = 0;
             }
+            if (m_raceMode == 1 || m_raceMode == 8)
+                m_cribRequested = true; // 0x00265970: the career opens in the crib
             RequestRace();
         }
         else if (pressed & FENativeInterface::kPadBack) {
@@ -1062,6 +1072,104 @@ void FEStartupSequence::HandleStartCareerMessage(uint32_t msg, FEPackage *pkg)
     }
 }
 
+// UI_CareerCrib.fng (factory 0x001e74d0, ctor 0x001e7508, AddOptions 0x001e79d8): the career hub.
+// The original opens it as part of the world (0x00265970 / 0x0025e388 load the crib region, then the
+// package is the menu over the 3D crib), so the port pushes it over a career free-roam session
+// (main.cpp) instead of making it a front-end screen. AddOption order, texture and label hashes:
+//   Return to Explore Mode  0xa230cd88 / 0x194efa7a  -> close the crib and drive
+//   World Map               0x22f2ceab / 0x9c07ca52  -> only when 1 < DAT_004f022c
+//   Car Select              0xa964095b / 0x451879e2
+//   Change Parts            0x511f9d75 / 0xabb24bbc
+//   Performance Tuning/Dyno 0x7a9b397a / 0x8513f2c0
+//   View Signed Sponsors    0x0878ffdf / 0xe0004602  -> +0x24 = (0x00267920(0x4e8710) == 0): disabled
+//   Save                    0x8ada6fd4 / 0x03ec7395
+//   Back to Main Menu       0xfc39853f / 0x046e7d84
+// DAT_004f022c is the career area the world map filters its event list by (0x001ee590 reads it);
+// the port does not model it yet, so World Map is always offered. The sponsor check has no port yet
+// either, so that option reports that no sponsor is signed instead of doing nothing silently.
+void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t tex, label;
+        int action; // 0 explore, 1 world map, 2 car select, 3 parts, 4 tuning, 5 sponsors, 6 save, 7 exit
+    } kOptions[] = {
+        {0xa230cd88, 0x194efa7a, 0}, {0x22f2ceab, 0x9c07ca52, 1}, {0xa964095b, 0x451879e2, 2},
+        {0x511f9d75, 0xabb24bbc, 3}, {0x7a9b397a, 0x8513f2c0, 4}, {0x0878ffdf, 0xe0004602, 5},
+        {0x8ada6fd4, 0x03ec7395, 6}, {0xfc39853f, 0x046e7d84, 7},
+    };
+    std::vector<FEIconScroller::Def> defs;
+    m_cribActions.clear();
+    for (const auto &o : kOptions) {
+        defs.push_back({o.tex, o.label});
+        m_cribActions.push_back(o.action);
+    }
+    printf("[Career] crib: %zu options\n", defs.size());
+    m_scroller.Setup(pkg, defs, m_cribLastSelection);
+}
+
+void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_scroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_scroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        return;
+    }
+    if (msg == kMsgPadBack) {
+        printf("[Career] crib: back to main menu\n");
+        m_pauseAction = kPauseQuit;
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        size_t sel = m_scroller.Selected();
+        m_cribLastSelection = sel;
+        if (sel >= m_cribActions.size())
+            return;
+        switch (m_cribActions[sel]) {
+        case 0:
+            printf("[Career] crib: return to explore mode\n");
+            m_pauseAction = kPauseResume; // main.cpp unloads the crib
+            break;
+        case 1:
+            printf("[Career] crib: world map (not ported)\n");
+            break;
+        case 2:
+            printf("[Career] crib: car select (not ported)\n");
+            break;
+        case 3:
+            printf("[Career] crib: change parts (not ported)\n");
+            break;
+        case 4:
+            printf("[Career] crib: performance tuning (not ported)\n");
+            break;
+        case 5:
+            printf("[Career] crib: no signed sponsors\n");
+            break;
+        case 6:
+            if (m_profile.valid && Career::SaveCareer(m_profile))
+                printf("[Career] crib: saved (money %d, respect %d)\n", m_profile.money, m_profile.respect);
+            else
+                printf("[Career] crib: save failed\n");
+            break;
+        case 7:
+            printf("[Career] crib: back to main menu\n");
+            m_pauseAction = kPauseQuit;
+            break;
+        }
+        return;
+    }
+    m_scroller.HandleMessage(msg, TickSeconds());
+}
+
 // MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the card status screen that
 // the career options open (mode DAT_004e3618: 0x21961 New Career, 0xc11 Career Garage). Its class
 // polls the memcard library (0x0023d570 / 0x0023d9b0) and writes the status string; on the screen
@@ -1269,6 +1377,7 @@ void FEStartupSequence::ResumeCareer()
     m_raceMode = 1;  // DAT_00506b50: career
     m_raceType = 9;  // free roam (the crib/city); race number 0 -> no route
     m_raceNumber = 0;
+    m_cribRequested = true; // 0x00265970: the career opens in the crib, not on a track
     RequestRace();
 }
 
@@ -1719,6 +1828,8 @@ void FEStartupSequence::ReturnFromRace()
     m_backStack.clear();
     m_navPending = false;
     m_lastPad = 0;
+    // Career events do not exist in the front end yet (the world map, ISSUES #142, will request
+    // their race number); that path has to open the crib instead of the main menu.
     printf("[Menu] race -> UI_Main.fng\n");
     m_engine->PushPackage("UI_Main.fng", 0, 0xff);
 }

@@ -63,6 +63,16 @@ public:
     int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
 
+    // The front end asked for the career crib (career entry; the world map will ask for the return
+    // from a career event the same way). main.cpp takes it once when the world session starts and
+    // shows UI_CareerCrib.fng over it.
+    bool TakeCribRequest()
+    {
+        bool r = m_cribRequested;
+        m_cribRequested = false;
+        return r;
+    }
+
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();
 
@@ -117,8 +127,16 @@ private:
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
     bool m_careerExists = false; // DAT_004f0e70: a saved career is present
+    bool m_cribRequested = false; // the next world session opens in UI_CareerCrib.fng
     void HandleStartCareerLoaded(FEPackage *pkg);
     void HandleStartCareerMessage(uint32_t msg, FEPackage *pkg);
+    // UI_CareerCrib.fng (factory 0x001e74d0, ctor 0x001e7508, AddOptions 0x001e79d8): the career hub
+    // (Return to Explore Mode / World Map / Car Select / ...). The original enters the world and shows
+    // this package over the 3D crib; main.cpp pushes it at the start of a career free-roam session.
+    void HandleCareerCribLoaded(FEPackage *pkg);
+    void HandleCareerCribMessage(uint32_t msg, FEPackage *pkg);
+    size_t m_cribLastSelection = 0;
+    std::vector<int> m_cribActions;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode
     // 0x21961) and Career Garage (0x002592c0, mode 0xc11) through it; the port performs the card
     // operation natively and continues to the screen the option asked for.
