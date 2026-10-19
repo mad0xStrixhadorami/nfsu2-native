@@ -86,6 +86,8 @@ public:
     bool IsOutrun() const { return m_config.type == 8; }
     float OutrunLead() const { return m_outrunLead; } // metres the player is ahead of the rival
     bool OutrunCaught() const { return m_outrunCaught; }
+    // The results screen replaces the HUD: drop the HUD pointer (main.cpp unloads the package).
+    void HideHud();
     static constexpr float kOutrunEscape = 200.0f; // metre lead that ends the duel (stand-in)
 
 private:
@@ -140,5 +142,6 @@ private:
     bool m_playerOut = false;
     // Outrun (see IsOutrun).
     float m_outrunLead = 0;          // metres the player leads the rival by (negative: behind)
+    bool m_hudHidden = false;
     bool m_outrunCaught = false;     // the rival escaped instead of the player
 };

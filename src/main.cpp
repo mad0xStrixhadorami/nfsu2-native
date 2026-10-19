@@ -1032,6 +1032,10 @@ int main(int argc, char **argv)
                         if (rows[i].name == "YOU")
                             place = int(i) + 1;
                     startup.AwardCareerResult(worldRaceNumber, place, race.TotalTime());
+                    race.HideHud(); // the results panel replaces the HUD (its leftovers showed through)
+                    if (hud)
+                        engine->UnloadPackage(hud);
+                    hud = nullptr;
                     resultsPkg = engine->PushPackage("UI_PostRaceResults.fng", 0, 0xff);
                     FillPostRaceResults(resultsPkg, rows);
                     printf("[Race] results:");

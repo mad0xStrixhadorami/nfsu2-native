@@ -126,6 +126,7 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     m_playerOut = false;
     m_outrunLead = 0;
     m_outrunCaught = false;
+    m_hudHidden = false;
     if (IsKnockout())
         m_config.laps = std::max(1, m_config.racers - 1); // one elimination per lap, down to one
     SetupHud();
@@ -431,9 +432,16 @@ bool RaceSession::Update(const PlayerCar &car, const std::vector<float> &opponen
     return m_phase == kRacing;
 }
 
+void RaceSession::HideHud()
+{
+    // The caller unloads the HUD package; forget it so no later update touches it.
+    m_hudHidden = true;
+    m_hud = nullptr;
+}
+
 void RaceSession::UpdateHud(const PlayerCar &car)
 {
-    if (!m_hud)
+    if (!m_hud || m_hudHidden)
         return;
     // Countdown and GO (321_GO).
     char text[32];
