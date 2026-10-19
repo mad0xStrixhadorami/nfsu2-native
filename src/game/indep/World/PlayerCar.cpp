@@ -94,6 +94,21 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             for (int k = 0; k < 3; ++k)
                 u0 = std::min(u0, t.v[k].u), u1 = std::max(u1, t.v[k].u), v0 = std::min(v0, t.v[k].v), v1 = std::max(v1, t.v[k].v);
         printf("[Wheel] uv range u %.3f..%.3f v %.3f..%.3f\n", u0, u1, v0, v1);
+        // outer face (y >= 0.2) and inner face (y <= 0.02), and the tread (the rest)
+        for (int region = 0; region < 3; ++region) {
+            float a0 = 1e9f, a1 = -1e9f, b0 = 1e9f, b1 = -1e9f;
+            int n = 0;
+            for (const SolidMesh::Triangle &t : frontWheel->tris) {
+                const float y = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f;
+                const int r = y >= 0.2f ? 0 : y <= 0.02f ? 1 : 2;
+                if (r != region)
+                    continue;
+                ++n;
+                for (int k = 0; k < 3; ++k)
+                    a0 = std::min(a0, t.v[k].u), a1 = std::max(a1, t.v[k].u), b0 = std::min(b0, t.v[k].v), b1 = std::max(b1, t.v[k].v);
+            }
+            printf("[Wheel]  %s: %d tris u %.3f..%.3f v %.3f..%.3f\n", region == 0 ? "outer" : region == 1 ? "inner" : "other", n, a0, a1, b0, b1);
+        }
     }
     if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))
         for (uint32_t t : frontWheel->textures)
