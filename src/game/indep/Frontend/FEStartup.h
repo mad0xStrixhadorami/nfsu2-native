@@ -73,6 +73,15 @@ public:
         return r;
     }
 
+    // The career menu (crib / world map) asked to swap its package (the world map opens from the crib
+    // and Back returns to it); main.cpp owns the pushed package, so it performs the swap. Taken once.
+    const char *TakeCareerMenuSwitch()
+    {
+        const char *n = m_careerMenuSwitch;
+        m_careerMenuSwitch = nullptr;
+        return n;
+    }
+
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();
 
@@ -136,6 +145,17 @@ private:
     void HandleCareerCribLoaded(FEPackage *pkg);
     void HandleCareerCribMessage(uint32_t msg, FEPackage *pkg);
     size_t m_cribLastSelection = 0;
+    // UI_CareerWorldMap.fng (create 0x001ee0b8, ctor 0x001ee0f0, list 0x001ee590): the career event
+    // picker (ISSUES #142). The area index (DAT_004f022c / this+0x254) filters the 0x34a11 events.
+    void HandleCareerWorldMapLoaded(FEPackage *pkg);
+    void HandleCareerWorldMapMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshCareerWorldMap(FEPackage *pkg);
+    void StartCareerEvent(const Career::Event &ev);
+    const char *m_careerMenuSwitch = nullptr;
+    int m_wmArea = 1;
+    size_t m_wmSel = 0;
+    std::vector<const Career::Event *> m_wmEvents;
+    bool m_careerEventRun = false; // the running world session is a career event started from the map
     std::vector<int> m_cribActions;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode
     // 0x21961) and Career Garage (0x002592c0, mode 0xc11) through it; the port performs the card

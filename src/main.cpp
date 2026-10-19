@@ -883,6 +883,25 @@ int main(int argc, char **argv)
                 enterWorld(region);
                 continue;
             }
+            // The crib and the world map swap in place (World Map opens from the crib, Back returns).
+            if (cribPkg) {
+                if (const char *menu = startup.TakeCareerMenuSwitch()) {
+                    engine->UnloadPackage(cribPkg);
+                    cribPkg = engine->PushPackage(menu, 0, 0xff);
+                    printf("[Career] menu %s %s\n", menu, cribPkg ? "shown" : "missing");
+                }
+                // The world map started a career event: leave the crib session for the event's region.
+                std::string eventRegion;
+                if (startup.TakeRaceRequest(eventRegion)) {
+                    engine->UnloadPackage(cribPkg);
+                    cribPkg = nullptr;
+                    if (hud)
+                        engine->UnloadPackage(hud);
+                    hud = nullptr;
+                    enterWorld(eventRegion);
+                    continue;
+                }
+            }
             if (pausePkg || cribPkg)
                 startup.Tick(elapsed); // screen ticks for the pause menu / crib icon scroller
             // Quit Race from the pause menu (or Back to Main Menu from the crib) -- or Accept once the

@@ -273,6 +273,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCareerCribLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_CareerWorldMap.fng") == 0) {
+        HandleCareerWorldMapLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         HandleMemcardLoaded(pkg);
         return;
@@ -376,6 +380,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_CareerCrib.fng") == 0) {
         HandleCareerCribMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_CareerWorldMap.fng") == 0) {
+        HandleCareerWorldMapMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
@@ -1140,7 +1148,8 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             m_pauseAction = kPauseResume; // main.cpp unloads the crib
             break;
         case 1:
-            printf("[Career] crib: world map (not ported)\n");
+            printf("[Career] crib: world map\n");
+            m_careerMenuSwitch = "UI_CareerWorldMap.fng";
             break;
         case 2:
             printf("[Career] crib: car select (not ported)\n");
@@ -1169,6 +1178,152 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
     }
     m_scroller.HandleMessage(msg, TickSeconds());
 }
+
+// UI_CareerWorldMap.fng (create 0x001ee0b8, ctor 0x001ee0f0, event list 0x001ee590, messages
+// 0x001eed48): the career event picker. Up/Down (0x001eea80) move through the area's events, Left/
+// Right (0x001eeb58) change the area, Accept confirms and starts the event (0x00267d40 selects it,
+// 0x0025eba8 starts it), Back returns to the crib (0x00292560 -> UI_CareerCrib.fng).
+// Stand-ins: the area list is not unlocked progressively (0x001ee570 tests the profile; all five
+// areas are offered), the Accept confirmation dialog (0x00260528) is skipped, the per-track map
+// image (TRACKS\TRACKMAP<n>.bin, 0x001fa010) is not available so the package's default map stays, and
+// "Previous Time" is not recorded.
+static uint32_t RaceTypeLabel(int type)
+{
+    switch (type) {
+    case 1: return 0xdcb9f861;  // Sprint
+    case 2: return 0x35102edf;  // Drag
+    case 3: return 0xd7162cfa;  // Drift
+    case 4: return 0x75f903f4;  // Underground Racing League
+    case 10: return 0x30da61e1; // Street X
+    default: return 0x93fdee74; // Circuit
+    }
+}
+
+// The race type of a career event: the original takes it from the event's race record (0x00272e18 /
+// 0x00272ee8); the port picks the first type the event's track supports, URL for the kind-1 events.
+static int CareerRaceType(const Career::Event &ev, const RaceInfo &r)
+{
+    const uint32_t f = r.typeFlags;
+    if (ev.kind == 1 && ((f >> 13) & 1))
+        return 4;
+    if (f & 1) return 0;
+    if ((f >> 2) & 1) return 1;
+    if (f & 2) return 2;
+    if (f & 8) return 3;
+    if ((f >> 11) & 1) return 10;
+    if ((f >> 13) & 1) return 4;
+    return 0;
+}
+
+void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
+{
+    m_wmEvents.clear();
+    m_wmSel = 0;
+    const Career::EventTable &table = Career::EventTable::Get();
+    for (size_t i = 0; i < table.Count() && m_wmEvents.size() < 60; ++i) {
+        const Career::Event &ev = table.At(i);
+        if (ev.region != m_wmArea && !(m_wmArea == 1 && ev.region == 0))
+            continue;
+        if (ev.races.empty())
+            continue;
+        const RaceInfo *r = nullptr;
+        for (const RaceInfo &ri : m_fe->Races())
+            if (ri.number == ev.races[0])
+                r = &ri;
+        if (!r)
+            continue;
+        if (ev.id - 0xdd60e402u < 2u) // 0x001ee590 skips these two ids
+            continue;
+        m_wmEvents.push_back(&ev);
+    }
+    printf("[Career] world map: area %d, %zu events\n", m_wmArea, m_wmEvents.size());
+    RefreshCareerWorldMap(pkg);
+}
+
+void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
+{
+    char text[48];
+    snprintf(text, sizeof(text), "Region %d", m_wmArea);
+    FENativeInterface::SetString(pkg, 0xc8e97c9c, text);
+    FENativeInterface::SetVisible(pkg, 0x444969fd, m_wmArea > 1); // area arrows (0x001eec40)
+    FENativeInterface::SetVisible(pkg, 0x444969fe, m_wmArea < 5);
+    FENativeInterface::SetVisible(pkg, 0x640f0f24, m_wmSel > 0); // list arrows
+    FENativeInterface::SetVisible(pkg, 0x640f0f23, m_wmSel + 1 < m_wmEvents.size());
+    // 0x001eea40 / 0x001991c0: the scroll handle follows the selection between the two arrows.
+    const float t = m_wmEvents.size() > 1 ? float(m_wmSel) / float(m_wmEvents.size() - 1) : 0.0f;
+    for (uint32_t h : {0x38e39ad7u, 0xda3c4771u}) { // handle icon and its selection frame
+        if (FEObject *handle = pkg->FindObjectByHash(h)) {
+            float hx, hy;
+            FENativeInterface::GetCenter(handle, hx, hy);
+            FENativeInterface::SetCenter(handle, hx, -98.0f + t * 241.0f);
+        }
+    }
+    if (m_wmEvents.empty()) {
+        for (uint32_t h : {0x23eae8b9u, 0x23eae8bau, 0x23eae8bbu, 0x23eae8bcu})
+            FENativeInterface::SetString(pkg, h, "");
+        return;
+    }
+    const Career::Event &ev = *m_wmEvents[m_wmSel];
+    const RaceInfo *r = nullptr;
+    for (const RaceInfo &ri : m_fe->Races())
+        if (ri.number == ev.races[0])
+            r = &ri;
+    const bool done = m_profile.valid && m_profile.Completed(ev.id);
+    FENativeInterface::SetLanguageHash(pkg, 0x23eae8b9, done ? 0xb1ee4ca9 : 0xd11ecd79); // Completed / Not Completed
+    if (r) {
+        FENativeInterface::SetLanguageHash(pkg, 0x23eae8ba, RaceTypeLabel(CareerRaceType(ev, *r)));
+        snprintf(text, sizeof(text), "%.1f Miles", r->length * 0.001f * 0.62137f);
+        FENativeInterface::SetString(pkg, 0x23eae8bb, text);
+    }
+    FENativeInterface::SetString(pkg, 0x23eae8bc, "--:--:--");
+}
+
+void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
+{
+    const RaceInfo *r = nullptr;
+    for (const RaceInfo &ri : m_fe->Races())
+        if (ri.number == ev.races[0])
+            r = &ri;
+    if (!r)
+        return;
+    m_raceNumber = r->number;
+    m_raceType = CareerRaceType(ev, *r);
+    m_careerEventRun = true;
+    printf("[Career] start event %08x: race %d type %d purse %u\n", ev.id, m_raceNumber, m_raceType, ev.purse);
+    RequestRace();
+}
+
+void FEStartupSequence::HandleCareerWorldMapMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadBack) {
+        printf("[Career] world map: back to the crib\n");
+        m_careerMenuSwitch = "UI_CareerCrib.fng";
+        return;
+    }
+    if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        const size_t old = m_wmSel;
+        if (msg == kMsgPadUp && m_wmSel > 0)
+            --m_wmSel;
+        if (msg == kMsgPadDown && m_wmSel + 1 < m_wmEvents.size())
+            ++m_wmSel;
+        if (old != m_wmSel)
+            RefreshCareerWorldMap(pkg);
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        const int area = m_wmArea + (msg == kMsgPadLeft ? -1 : 1);
+        if (area >= 1 && area <= 5) {
+            m_wmArea = area;
+            HandleCareerWorldMapLoaded(pkg);
+        }
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_wmEvents.empty()) {
+        StartCareerEvent(*m_wmEvents[m_wmSel]);
+        return;
+    }
+}
+
 
 // MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the card status screen that
 // the career options open (mode DAT_004e3618: 0x21961 New Career, 0xc11 Career Garage). Its class
@@ -1828,8 +1983,16 @@ void FEStartupSequence::ReturnFromRace()
     m_backStack.clear();
     m_navPending = false;
     m_lastPad = 0;
-    // Career events do not exist in the front end yet (the world map, ISSUES #142, will request
-    // their race number); that path has to open the crib instead of the main menu.
+    if (m_careerEventRun) {
+        // A career event started from the world map (ISSUES #142): back to the crib, as UG2 does.
+        m_careerEventRun = false;
+        m_raceNumber = 0;
+        m_raceType = 9;
+        m_cribRequested = true;
+        RequestRace();
+        printf("[Career] event over -> crib\n");
+        return;
+    }
     printf("[Menu] race -> UI_Main.fng\n");
     m_engine->PushPackage("UI_Main.fng", 0, 0xff);
 }
