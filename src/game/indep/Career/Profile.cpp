@@ -74,6 +74,12 @@ std::vector<uint8_t> Serialize(const Profile &p)
     PutU32(payload, uint32_t(p.completedEvents.size()));
     for (uint32_t id : p.completedEvents)
         PutU32(payload, id);
+    // Best times follow the completion list (also optional on load).
+    PutU32(payload, uint32_t(p.bestTimes.size()));
+    for (const Profile::BestTime &b : p.bestTimes) {
+        PutI32(payload, b.race);
+        PutI32(payload, b.millis);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -128,6 +134,17 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             if (!GetU32(payload, q, id))
                 return false;
             p.completedEvents.push_back(id);
+        }
+    }
+    if (q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n > 4096)
+            return false;
+        for (uint32_t i = 0; i < n; ++i) {
+            int32_t race, millis;
+            if (!GetI32(payload, q, race) || !GetI32(payload, q, millis))
+                return false;
+            p.bestTimes.push_back({race, millis});
         }
     }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))

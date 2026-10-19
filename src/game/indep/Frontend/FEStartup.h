@@ -109,7 +109,7 @@ public:
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
     // its purse/respect, marking it complete on a win. Called from the results screen.
-    void AwardCareerResult(int raceNumber, int place);
+    void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f);
 
 private:
 

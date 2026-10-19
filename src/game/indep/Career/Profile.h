@@ -39,6 +39,29 @@ struct Profile {
     // the world map (0x001ee590 stores the result at item index 7).
     std::vector<uint32_t> completedEvents;
     uint32_t playTime = 0; // seconds
+    // Best finishing times (the 0x4fb4ac best-time table, 0x00272e18: {race s16, direction u8, value}).
+    struct BestTime {
+        int race;
+        int millis;
+    };
+    std::vector<BestTime> bestTimes;
+    int BestTimeFor(int race) const
+    {
+        for (const BestTime &b : bestTimes)
+            if (b.race == race)
+                return b.millis;
+        return 0;
+    }
+    void RecordTime(int race, int millis)
+    {
+        for (BestTime &b : bestTimes)
+            if (b.race == race) {
+                if (millis < b.millis)
+                    b.millis = millis;
+                return;
+            }
+        bestTimes.push_back({race, millis});
+    }
 
     bool Completed(uint32_t id) const
     {

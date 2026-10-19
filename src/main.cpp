@@ -988,7 +988,7 @@ int main(int argc, char **argv)
                     for (size_t i = 0; i < rows.size(); ++i)
                         if (rows[i].name == "YOU")
                             place = int(i) + 1;
-                    startup.AwardCareerResult(worldRaceNumber, place);
+                    startup.AwardCareerResult(worldRaceNumber, place, race.TotalTime());
                     resultsPkg = engine->PushPackage("UI_PostRaceResults.fng", 0, 0xff);
                     FillPostRaceResults(resultsPkg, rows);
                     printf("[Race] results:");

@@ -1280,7 +1280,12 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
         snprintf(text, sizeof(text), "%.1f Miles", r->length * 0.001f * 0.62137f);
         FENativeInterface::SetString(pkg, 0x23eae8bb, text);
     }
-    FENativeInterface::SetString(pkg, 0x23eae8bc, "--:--:--");
+    const int best = r ? m_profile.BestTimeFor(r->number) : 0;
+    if (best > 0 && ev.stage != 5)
+        snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
+    else
+        snprintf(text, sizeof(text), "--:--:--");
+    FENativeInterface::SetString(pkg, 0x23eae8bc, text);
 }
 
 void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
@@ -1545,6 +1550,14 @@ bool FEStartupSequence::LoadCareerProfile()
 {
     if (Career::LoadCareer(m_profile)) {
         m_careerExists = true;
+        // Dev aid: NFSU2_BEST_TIME=<race>:<ms> records a best time and saves it (tests Previous Time).
+        if (const char *bt = getenv("NFSU2_BEST_TIME")) {
+            int race = 0, ms = 0;
+            if (sscanf(bt, "%d:%d", &race, &ms) == 2 && ms > 0) {
+                m_profile.RecordTime(race, ms);
+                Career::SaveCareer(m_profile);
+            }
+        }
         return true;
     }
     m_careerExists = false;
@@ -1556,10 +1569,17 @@ bool FEStartupSequence::LoadCareerProfile()
 // 0x00268bd8 test on the record's +0x08 id that the world map (0x001ee590) puts at item index 7.
 // UG2 pays the purse for winning; the port pays a podium share (2nd 1/2, 3rd 1/4) and only completes
 // the event on a win, and it advances the stage when every event of that stage is complete.
-void FEStartupSequence::AwardCareerResult(int raceNumber, int place)
+void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds)
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
         return;
+    // The world map's Previous Time (0x00272e18 over the 0x4fb4ac table). Drift events are scored by
+    // points, not time (0x00272ee8), so they keep no time.
+    const Career::Event *timed = Career::EventTable::Get().FindByRace(raceNumber);
+    if (seconds > 0.0f && timed && timed->stage != 5) {
+        m_profile.RecordTime(raceNumber, int(seconds * 1000.0f + 0.5f));
+        Career::SaveCareer(m_profile);
+    }
     const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);
     if (!ev) {
         printf("[Career] race %d is not a career event\n", raceNumber);
