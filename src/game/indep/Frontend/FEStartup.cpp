@@ -1116,7 +1116,9 @@ void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
     std::vector<FEIconScroller::Def> defs;
     m_cribActions.clear();
     for (const auto &o : kOptions) {
-        defs.push_back({o.tex, o.label});
+        // View Signed Sponsors is greyed while 0x00267920(0x4e8710) == 0 (no sponsor signed); the port has no
+        // sponsor system, so it is always greyed.
+        defs.push_back({o.tex, o.label, o.action == 5});
         m_cribActions.push_back(o.action);
     }
     printf("[Career] crib: %zu options\n", defs.size());

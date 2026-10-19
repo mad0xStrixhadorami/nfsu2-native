@@ -65,6 +65,7 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
         Option opt;
         opt.texHash = defs[i].texHash;
         opt.nameHash = defs[i].nameHash;
+        opt.disabled = defs[i].disabled;
         opt.obj = obj;
         opt.xPos = addPos;
         FENativeInterface::GetSize(obj, opt.origW, opt.origH);
@@ -174,7 +175,7 @@ void FEIconScroller::Position()
                 f = (x - left) / band;
             else if (band > 0 && x > right - band)
                 f = (right - x) / band;
-            obj->GetObjData()->Col.a = static_cast<int>(opt.origAlpha * f);
+            obj->GetObjData()->Col.a = static_cast<int>(opt.origAlpha * f * (opt.disabled ? 0.4f : 1.0f));
         }
     }
 }

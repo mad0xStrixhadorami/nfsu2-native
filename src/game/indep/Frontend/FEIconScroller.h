@@ -16,6 +16,7 @@ public:
     struct Def {
         uint32_t texHash;  // icon texture
         uint32_t nameHash; // language label shown in ICON_TITLE
+        bool disabled = false; // greyed (option +0x24, e.g. View Signed Sponsors with none signed)
     };
 
     // Bind to a loaded package and add options (IconScrollerMenu::AddOption for each Def).
@@ -38,6 +39,7 @@ private:
         FEObject *obj = nullptr;
         float xPos = 0, origW = 0, origH = 0;
         int origAlpha = 255;
+        bool disabled = false;
     };
     void UpdateSelection();
     void Position();
