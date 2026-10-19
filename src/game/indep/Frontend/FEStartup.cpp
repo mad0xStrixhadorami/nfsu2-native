@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 
 #include <cstdio>
+#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <strings.h>
@@ -9,6 +10,7 @@
 #include "game/indep/Career/Memcard.h"
 #include "game/indep/Career/Profile.h"
 #include "game/indep/Frontend/FENative.h"
+#include "Speed/Indep/Src/FEng/FEGroup.h"
 
 namespace {
 
@@ -1493,6 +1495,26 @@ void FEStartupSequence::HandleMemcardLoaded(FEPackage *pkg)
     snprintf(status, sizeof(status), "Memory card (PS2) in MEMORY CARD slot 1: %d save(s)",
              card.Count());
     FENativeInterface::SetString(pkg, kMcStatusString, status);
+    // The package ships six placeholder dialog buttons (Yes / No / Yes ..., hashes 0xb8a7c6cc..d1, in groups that carry
+    // their backing bars); the game's state machine shows the ones its prompt needs
+    // (0x00228700). The port has no prompt states -- the card work is done natively and Accept continues --
+    // so they are hidden instead of overlapping as five stray "Yes"/"No" buttons.
+    // Hide a button string and the 215x42 / 42x42 backing images of the button rows (children of groups).
+    std::function<void(FEObject *)> hideButtons = [&](FEObject *o) {
+        for (; o; o = o->GetNext()) {
+            if (o->Type == FE_Group) {
+                hideButtons(static_cast<FEGroup *>(o)->GetFirstChild());
+                continue;
+            }
+            const bool button = o->Type == FE_String && o->NameHash >= 0xb8a7c6cc && o->NameHash <= 0xb8a7c6d1;
+            const FEObjData *d = o->GetObjData();
+            const bool backing = o->Type == FE_Image && d && d->Size.y > 40.0f && d->Size.y < 44.0f &&
+                                 d->Size.x > 40.0f && d->Size.x < 220.0f;
+            if (button || backing)
+                o->Flags |= 1; // FF_Invisible
+        }
+    };
+    hideButtons(pkg->GetFirstObject());
     printf("[Memcard] MC_Main.fng: %s (%s)\n", status, card.SlotDir().c_str());
 }
 
