@@ -24,6 +24,7 @@ struct Event {
     uint8_t kind = 0;     // +0x34 3 = race series (154 records), 1/2 = the other event types
     bool special = false; // +0x0d
     bool listed = false;  // +0x7f
+    uint8_t raw[0x88] = {};     // the record as stored (fields not decoded yet)
     std::vector<int16_t> races; // +0x18 race-database numbers (one event runs 1..3 races)
 };
 

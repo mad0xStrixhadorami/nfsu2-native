@@ -1657,7 +1657,7 @@ bool FEStartupSequence::LoadCareerProfile()
 // 0x002635d8 (the record whose +0x18 race list contains the race number); completion is the
 // 0x00268bd8 test on the record's +0x08 id that the world map (0x001ee590) puts at item index 7.
 // UG2 pays the purse for winning; the port pays a podium share (2nd 1/2, 3rd 1/4) and only completes
-// the event on a win, and it advances the stage when every event of that stage is complete.
+// the event on a win.
 void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds)
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
@@ -1698,20 +1698,12 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
         m_profile.Complete(ev->id);
     Career::SaveCareer(m_profile);
 
-    size_t stageTotal = 0, stageDone = 0;
-    for (const Career::Event &e : Career::EventTable::Get().All())
-        if (e.stage == ev->stage) {
-            ++stageTotal;
-            if (m_profile.Completed(e.id))
-                ++stageDone;
-        }
-    if (place == 1 && stageTotal && stageDone == stageTotal && m_profile.stage < int(ev->stage))
-        m_profile.stage = int(ev->stage);
-    printf("[Career] event %08x (race %d, stage %u) P%d: +%d money +%d respect -> money %d, respect %d"
-           " (stage %u: %zu/%zu)%s\n",
-           ev->id, raceNumber, unsigned(ev->stage), place, money, respect, m_profile.money,
-           m_profile.respect, unsigned(ev->stage), stageDone, stageTotal,
-           place == 1 ? ", completed" : "");
+    // (The old "stage complete when every event of its +0x0f is done" rule read +0x0f as a career
+    // stage; it is the event type (ISSUES #143), so it is gone. What unlocks events/areas in the
+    // original is not decoded; the world map offers every event.)
+    printf("[Career] event %08x (race %d, type %u) P%d: +%d money +%d respect -> money %d, respect %d (%zu done)%s\n",
+           ev->id, raceNumber, unsigned(ev->stage), place, money, respect, m_profile.money, m_profile.respect,
+           m_profile.completedEvents.size(), place == 1 ? ", completed" : "");
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel

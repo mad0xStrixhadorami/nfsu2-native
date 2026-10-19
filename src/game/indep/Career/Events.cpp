@@ -50,6 +50,7 @@ bool EventTable::Load(const uint8_t *bundle, size_t size)
     m_events.reserve(count);
     for (size_t i = 0; i < count; ++i, p += kEventRecord) {
         Event e;
+        memcpy(e.raw, p, 0x88);
         e.id = U32(p, 0x08);
         e.purse = U32(p, 0x30);
         e.respect = U32(p, 0x14);

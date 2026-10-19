@@ -270,6 +270,12 @@ int main(int argc, char **argv)
             for (int16_t r : e.races)
                 printf(" %d", r);
             printf("\n");
+            if (getenv("NFSU2_EVENTS_RAW")) {
+                printf("[Raw] %3zu", i);
+                for (int b = 0; b < 0x88; ++b)
+                    printf("%s%02x", b % 4 == 0 ? " " : "", e.raw[b]);
+                printf("\n");
+            }
         }
         fflush(stdout);
     }
