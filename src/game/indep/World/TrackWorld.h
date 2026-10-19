@@ -134,6 +134,7 @@ public:
     // The barrier-group table (chunk 0x3412f of the region bundle TRACKS\<region>.BUN, loader
     // 0x00338078 keeps its payload at DAT_00523ddc: 0x20-byte records, +8 = enabled byte, +9 = name
     // "BARRIERS_<race>"). A collision face's group byte indexes it; group 0 is always on.
+    void DumpWalls(float x, float y, float r) const; // dev aid
     void LoadBarrierGroups(const std::vector<uint8_t> &regionBundle);
     size_t BarrierGroupCount() const { return m_groupNames.size(); }
     const std::string &BarrierGroupName(size_t g) const { return m_groupNames[g]; }

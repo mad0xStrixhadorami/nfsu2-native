@@ -119,6 +119,25 @@ template <typename F> void TrackWorld::ForNearbyCollision(float x, float y, F &&
 // counter-clockwise face -- a ceiling or an underside never passes) and takes the highest one at or
 // below the query height. A face's height is (n.v0 - nx x - ny y) / nz. Group faces stay off: the
 // per-race enable table (DAT_00523ddc) is not ported.
+void TrackWorld::DumpWalls(float x, float y, float r) const
+{
+    for (const CSection &sec : m_csections)
+        for (const CFace &f : sec.faces) {
+            if (!(f.flags & 0x02))
+                continue;
+            float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f, minz = 1e30f, maxz = -1e30f;
+            for (int k = 0; k < (f.quad ? 4 : 3); ++k) {
+                minx = std::min(minx, f.v[k * 3]), maxx = std::max(maxx, f.v[k * 3]);
+                miny = std::min(miny, f.v[k * 3 + 1]), maxy = std::max(maxy, f.v[k * 3 + 1]);
+                minz = std::min(minz, f.v[k * 3 + 2]), maxz = std::max(maxz, f.v[k * 3 + 2]);
+            }
+            if (maxx < x - r || minx > x + r || maxy < y - r || miny > y + r)
+                continue;
+            printf("[WallFace] g%u fl%02x s%u  (%.1f,%.1f) (%.1f,%.1f) (%.1f,%.1f) (%.1f,%.1f) z %.1f..%.1f n(%.2f,%.2f)\n", f.group, f.flags,
+                   f.surface, f.v[0], f.v[1], f.v[3], f.v[4], f.v[6], f.v[7], f.v[9], f.v[10], minz, maxz, f.n[0], f.n[1]);
+        }
+}
+
 bool TrackWorld::CollisionGround(float x, float y, float zq, float &z, float *normal) const
 {
     const auto it = m_csectionGrid.find(CellKey(int(std::floor(x / kCellSize)), int(std::floor(y / kCellSize))));

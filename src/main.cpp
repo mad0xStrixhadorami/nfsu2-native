@@ -717,6 +717,12 @@ int main(int argc, char **argv)
             printf("[Career] crib %s\n", cribPkg ? "shown" : "missing");
         }
         // Dev aid: NFSU2_ROUTE_CHECK=1 lists stretches of the race route (and +-2.5 m beside it) with no ground.
+        // Dev aid: NFSU2_WALLS_AT="x,y,r" lists the collision wall faces within r metres (ISSUES #155).
+        if (const char *at = getenv("NFSU2_WALLS_AT")) {
+            float wx = 0, wy = 0, wr = 8;
+            sscanf(at, "%f,%f,%f", &wx, &wy, &wr);
+            world.DumpWalls(wx, wy, wr);
+        }
         // Dev aid: which barrier groups' walls does the race route run through (ISSUES #147)?
         if (getenv("NFSU2_GROUP_DUMP") && route.Valid()) {
             for (size_t g = 1; g < world.BarrierGroupCount(); ++g) {
