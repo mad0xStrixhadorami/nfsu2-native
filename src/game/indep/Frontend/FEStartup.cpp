@@ -832,6 +832,9 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     char text[32];
     snprintf(text, sizeof(text), "%.2f mi", r.length * 0.001f * 0.62137f);
     FENativeInterface::SetString(pkg, 0x080c9daa, text);
+    // Best Lap (0x0555eeca): the package ships the placeholder 01:30:04. The game reads the per-track best
+    // lap from its record table (0x4fb4ac); the port records none for Quick Race, so it shows no time.
+    FENativeInterface::SetString(pkg, 0x0555eeca, "--:--:--");
 }
 
 void FEStartupSequence::HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg)
@@ -926,7 +929,17 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
 // every state here (best-effort, like the unlocked-tracks note in ISSUES #60).
 void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
 {
-    uint32_t title = (m_raceMode == 8 || m_raceMode == 1) ? 0xa7fa00b6 : 0xe1385c1e;
+    // Title (0x001f44f0 -> FUN_00259f88(pkg, 0x42adb44c, label) by game mode DAT_00506b50): 2 quick race
+    // "Quick Race Car Select", 4 split screen, 8 (set by the main menu's Online entry, 0x001e6c88)
+    // "Online Car Select", and the career's new-game pick (mode 0x20 from 0x002593c8) and the garage
+    // (0x100) "Customize Car Select". The port's m_raceMode 8 is its New Career pick. The labels
+    // 0xe1385c1e / 0xa7fa00b6 the old code used are the Help popup's button legend (+0x28 of the screen,
+    // 0x001f2ce0), which printed that legend over the screen.
+    uint32_t title = 0x5ac1fb59; // Quick Race Car Select
+    if (m_raceMode == 4)
+        title = 0xf221d7ed; // Split-Screen Car Select
+    else if (m_raceMode == 8 || m_raceMode == 1)
+        title = 0x61032ce5; // Customize Car Select
     FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, title);
     FENativeInterface::SetVisible(pkg, 0xf5a9d520, true);
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
