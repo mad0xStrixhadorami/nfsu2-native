@@ -52,6 +52,7 @@ bool EventTable::Load(const uint8_t *bundle, size_t size)
         Event e;
         memcpy(e.raw, p, 0x88);
         e.id = U32(p, 0x08);
+        e.prereq = U32(p, 0x10);
         e.purse = U32(p, 0x30);
         e.respect = U32(p, 0x14);
         e.stage = p[0x0f];
@@ -97,6 +98,53 @@ EventTable &EventTable::Get()
 {
     static EventTable table;
     return table;
+}
+
+} // namespace Career
+
+namespace Career {
+
+namespace {
+constexpr uint32_t kStartEventA = 0xdd60e402, kStartEventB = 0xdd60e403;
+// 0x34a18 +0x28 of stage records 2..5.
+constexpr uint32_t kStageGate[6] = {0, 0, 0x1185ef08, 0x5e802bce, 0xab7a688e, 0x04cce3e1};
+
+bool Done(uint32_t id, const std::vector<uint32_t> &done)
+{
+    if (id == kStartEventA || id == kStartEventB)
+        return true;
+    for (uint32_t d : done)
+        if (d == id)
+            return true;
+    return false;
+}
+} // namespace
+
+bool EventTable::StageCleared(int stage, const std::vector<uint32_t> &done) const
+{
+    if (stage <= 0)
+        return true;
+    if (stage == 1) {
+        for (const Event &e : m_events)
+            if (e.region == 1 && !Done(e.id, done))
+                return false;
+        return true;
+    }
+    if (stage > 5)
+        return false;
+    return Done(kStageGate[stage], done);
+}
+
+bool EventTable::EventAvailable(const Event &e, const std::vector<uint32_t> &done) const
+{
+    if (e.region >= 2 && e.prereq == uint32_t(e.region - 1))
+        return StageCleared(e.region - 1, done);
+    return true; // region 0, region 1 (start event, implicit) and the other layouts
+}
+
+bool EventTable::AreaAvailable(int area, const std::vector<uint32_t> &done) const
+{
+    return area <= 1 || StageCleared(area - 1, done);
 }
 
 } // namespace Career

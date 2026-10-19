@@ -1248,6 +1248,8 @@ void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
             continue;
         if (ev.id - 0xdd60e402u < 2u) // 0x001ee590 skips these two ids
             continue;
+        if (!getenv("NFSU2_UNLOCK_ALL") && !table.EventAvailable(ev, m_profile.completedEvents))
+            continue; // its stage is not cleared yet (ISSUES #152)
         m_wmEvents.push_back(&ev);
     }
     printf("[Career] world map: area %d, %zu events\n", m_wmArea, m_wmEvents.size());
@@ -1260,7 +1262,9 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
     snprintf(text, sizeof(text), "Region %d", m_wmArea);
     FENativeInterface::SetString(pkg, 0xc8e97c9c, text);
     FENativeInterface::SetVisible(pkg, 0x444969fd, m_wmArea > 1); // area arrows (0x001eec40)
-    FENativeInterface::SetVisible(pkg, 0x444969fe, m_wmArea < 5);
+    FENativeInterface::SetVisible(pkg, 0x444969fe,
+                                  m_wmArea < 5 && (getenv("NFSU2_UNLOCK_ALL") ||
+                                                   Career::EventTable::Get().AreaAvailable(m_wmArea + 1, m_profile.completedEvents)));
     FENativeInterface::SetVisible(pkg, 0x640f0f24, m_wmSel > 0); // list arrows
     FENativeInterface::SetVisible(pkg, 0x640f0f23, m_wmSel + 1 < m_wmEvents.size());
     // 0x001eea40 / 0x001991c0: the scroll handle follows the selection between the two arrows.
@@ -1331,7 +1335,8 @@ void FEStartupSequence::HandleCareerWorldMapMessage(uint32_t msg, FEPackage *pkg
     }
     if (msg == kMsgPadLeft || msg == kMsgPadRight) {
         const int area = m_wmArea + (msg == kMsgPadLeft ? -1 : 1);
-        if (area >= 1 && area <= 5) {
+        if (area >= 1 && area <= 5 &&
+            (getenv("NFSU2_UNLOCK_ALL") || Career::EventTable::Get().AreaAvailable(area, m_profile.completedEvents))) {
             m_wmArea = area;
             HandleCareerWorldMapLoaded(pkg);
         }

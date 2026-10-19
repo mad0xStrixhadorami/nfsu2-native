@@ -24,6 +24,7 @@ struct Event {
     uint8_t kind = 0;     // +0x34 3 = race series (154 records), 1/2 = the other event types
     bool special = false; // +0x0d
     bool listed = false;  // +0x7f
+    uint32_t prereq = 0;        // +0x10 (a stage number r-1 for the region-r events, see EventAvailable)
     uint8_t raw[0x88] = {};     // the record as stored (fields not decoded yet)
     std::vector<int16_t> races; // +0x18 race-database numbers (one event runs 1..3 races)
 };
@@ -40,6 +41,16 @@ public:
     const Event *FindById(uint32_t id) const; // 0x00263568
 
     static EventTable &Get();
+
+    // Career progression (ISSUES #152). An event in region r >= 2 whose +0x10 byte is r-1 (the other
+    // bytes zero) needs stage r-1 cleared; region 1's events need the career start event 0xdd60e403
+    // (+0x10); region 0 is free. Stage 1 is cleared when all of region 1's events are done, stage k
+    // >= 2 when the gate event of the stage record (0x34a18 +0x28) is done (the DVD-cover requirements
+    // of 0x34a16 are not tracked yet). The start events 0xdd60e402/3 count as done: the port has no
+    // career intro.
+    bool EventAvailable(const Event &e, const std::vector<uint32_t> &done) const;
+    bool StageCleared(int stage, const std::vector<uint32_t> &done) const;
+    bool AreaAvailable(int area, const std::vector<uint32_t> &done) const; // world map tab
 
 private:
     std::vector<Event> m_events;
