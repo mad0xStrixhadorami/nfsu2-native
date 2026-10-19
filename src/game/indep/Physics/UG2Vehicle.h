@@ -137,6 +137,7 @@ private:
     float m_limiterSpeed = 0; // m/s, rec+0x3a8 mph
     Controls m_in;
     float m_accum = 0;
+    bool m_groundBelow = true; // some wheel found terrain beneath it (grounded or not)
     bool m_grounded = false;   // any wheel touching this substep
     float m_lastGroundZ = 0;   // body CoG z at the last grounded substep (world-floor recovery)
 };

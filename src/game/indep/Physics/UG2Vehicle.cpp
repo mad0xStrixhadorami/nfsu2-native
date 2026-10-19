@@ -358,6 +358,11 @@ void Vehicle::Substep(const TrackWorld &world, float h)
     const float threshold = Curve(kRestThreshold, 8, 0, 1, std::max(Len(b.vel) * 0.25f, wl * 0.5f));
     b.rest += (b.rest < threshold ? 0.1f : -10.0f) * h;
     b.rest = std::max(0.0f, b.rest);
+    // Stand-in: the settling drag is for a car resting on its wheels. With the world collision not
+    // ported, a car stopped by a wall in mid air (race 4201's tunnel portal) kept the drag and hovered
+    // 3 m above the road at ~1 m/s fall speed (ISSUES #145), so it only applies while a wheel is down.
+    if (!m_grounded)
+        b.rest = 0;
     b.torque = b.torque - b.angMomentum * (2 * b.rest);
     b.force = b.force - b.momentum * (8 * b.rest);
 
@@ -376,7 +381,8 @@ void Vehicle::Substep(const TrackWorld &world, float h)
     // World-floor recovery (stand-in for the body/world collision of 0x334110 not yet ported): if
     // the car has left the loaded terrain there is no ground to land on, so hold it near the last
     // grounded height instead of falling forever.
-    if (!m_grounded && b.pos.z < m_lastGroundZ - 1.0f) {
+    // With terrain below (a hole above a lower road, a ledge) the car just falls to it.
+    if (!m_grounded && !m_groundBelow && b.pos.z < m_lastGroundZ - 1.0f) {
         b.pos.z = m_lastGroundZ;
         if (b.momentum.z < 0)
             b.momentum.z = 0;
@@ -413,13 +419,16 @@ void Vehicle::SuspensionAndContact(const TrackWorld &world, float h)
     Body &b = m_body;
     const Vec3 up = b.rot.r[2];
     float raw[4];
+    bool groundBelow = false;
     for (int i = 0; i < 4; ++i) {
         Wheel &w = m_wheel[i];
         Suspension &s = m_susp[i];
         const Vec3 hard = b.pos + ToWorld(w.local);
         float gz, n[3];
         const float prevX = s.x;
-        if (world.GroundHeight(hard.x, hard.y, hard.z + 0.6f, gz, n) && up.z > 0.001f) {
+        const bool ground = world.GroundHeight(hard.x, hard.y, hard.z + 0.6f, gz, n) && up.z > 0.001f;
+        groundBelow |= ground;
+        if (ground) {
             // Distance along up from the hardpoint to the ground, plus the radius (0x00323b60).
             raw[i] = (gz - hard.z) / up.z + w.radius;
             w.normal = {n[0], n[1], n[2]};
@@ -462,6 +471,7 @@ void Vehicle::SuspensionAndContact(const TrackWorld &world, float h)
             ApplyForce(up * f, w.contact);
     }
     m_grounded = m_susp[0].grounded || m_susp[1].grounded || m_susp[2].grounded || m_susp[3].grounded;
+    m_groundBelow = groundBelow;
     if (m_grounded)
         m_lastGroundZ = b.pos.z;
 }

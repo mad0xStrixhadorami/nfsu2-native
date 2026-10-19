@@ -81,6 +81,21 @@ private:
         float v[9];
         uint8_t surface, flags;
     };
+    // The collision mesh as the game queries it (0x00336180, ISSUES #145): per scenery section a grid of
+    // 32 m cells (0x34137: {u16 first, u16 count} into 0x34136: {u16 face, u16 8 m sub-cell mask}).
+    struct CFace {
+        float v[12];            // 4 vertices (a triangle repeats nothing: only 3 are used)
+        float n[3], d;          // unit normal of (v1-v0)x(v2-v0) and n.v0
+        uint8_t group, surface, flags;
+        bool quad;
+    };
+    struct CSection {
+        float ox, oy;
+        int cols, rows;
+        std::vector<CFace> faces;
+        std::vector<uint32_t> index; // face | mask << 16
+        std::vector<uint32_t> cells; // first | count << 16
+    };
     // Render data (textured): world-space vertices with UV and pre-lit colour, and the texture
     // name hash (0 = untextured, drawn in the flat shade colour).
     struct RVertex {
@@ -105,6 +120,11 @@ private:
 
     std::unordered_map<int64_t, Cell> m_cells;
     std::unordered_map<int64_t, std::vector<CTri>> m_collision;
+    std::vector<CSection> m_csections;
+    std::unordered_map<int64_t, std::vector<uint32_t>> m_csectionGrid; // 64 m cell -> sections
+    // The game's ground query over the collision mesh: the highest upward floor under (x, y) that is
+    // not above zq, found only in the faces the world has enabled (group 0, not a wall).
+    bool CollisionGround(float x, float y, float zq, float &z, float *normal) const;
     size_t m_collisionFaces = 0;
     int m_groundSource = 0;
     Camera m_start;

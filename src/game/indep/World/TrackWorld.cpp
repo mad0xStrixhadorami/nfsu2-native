@@ -112,8 +112,75 @@ template <typename F> void TrackWorld::ForNearbyCollision(float x, float y, F &&
         }
 }
 
+// 0x00336180 (ground query) over the collision mesh. The game looks the point up in the section's
+// 32 m cell, walks the cell's face list (filtered by the 8 m sub-cell mask), skips faces of a barrier
+// group that is not enabled (face byte 0) and the wall faces (flags & 0x0a), keeps those whose XY
+// footprint holds the point (0x00335328: every edge function <= 0, i.e. an upward-facing,
+// counter-clockwise face -- a ceiling or an underside never passes) and takes the highest one at or
+// below the query height. A face's height is (n.v0 - nx x - ny y) / nz. Group faces stay off: the
+// per-race enable table (DAT_00523ddc) is not ported.
+bool TrackWorld::CollisionGround(float x, float y, float zq, float &z, float *normal) const
+{
+    const auto it = m_csectionGrid.find(CellKey(int(std::floor(x / kCellSize)), int(std::floor(y / kCellSize))));
+    if (it == m_csectionGrid.end())
+        return false;
+    bool found = false;
+    float best = -1e30f;
+    for (uint32_t si : it->second) {
+        const CSection &sec = m_csections[si];
+        if (x < sec.ox || y < sec.oy || x >= sec.ox + sec.cols * 32.0f || y >= sec.oy + sec.rows * 32.0f)
+            continue;
+        const int col = std::clamp(int((x - sec.ox) * 0.03125f), 0, sec.cols - 1);
+        const int row = std::clamp(int((y - sec.oy) * 0.03125f), 0, sec.rows - 1);
+        const uint32_t cell = sec.cells[size_t(row) * sec.cols + col];
+        const uint32_t first = cell & 0xffff, count = cell >> 16;
+        const int xq = int((x - (sec.ox + col * 32.0f)) * 0.125f) & 31;
+        const int yq = int((y - (sec.oy + row * 32.0f)) * 0.125f) & 7;
+        const uint32_t want = (1u << xq) << (yq << 2);
+        for (uint32_t k = first; k < first + count && k < sec.index.size(); ++k) {
+            if (!((sec.index[k] >> 16) & want))
+                continue;
+            const uint32_t fi = sec.index[k] & 0xffff;
+            if (fi >= sec.faces.size())
+                continue;
+            const CFace &f = sec.faces[fi];
+            if (f.group != 0 || (f.flags & 0x0a) || f.n[2] < 1e-4f)
+                continue;
+            // 0x00335328: max of the edge functions of v0->v1, v1->v2, [v2->v3,] v3->v0 (a triangle's
+            // last vertex repeats v2, so its closing edge is v2->v0).
+            auto edge = [&](int a, int b) {
+                return (f.v[b * 3 + 1] - f.v[a * 3 + 1]) * (x - f.v[a * 3]) -
+                       (f.v[b * 3] - f.v[a * 3]) * (y - f.v[a * 3 + 1]);
+            };
+            float e = std::max(edge(0, 1), edge(1, 2));
+            if (f.quad)
+                e = std::max({e, edge(2, 3), edge(3, 0)});
+            else
+                e = std::max(e, edge(2, 0));
+            if (e > 0.0f)
+                continue;
+            const float h = (f.d - f.n[0] * x - f.n[1] * y) / f.n[2];
+            if (h <= zq && h > best) {
+                best = h;
+                found = true;
+                if (normal)
+                    normal[0] = f.n[0], normal[1] = f.n[1], normal[2] = f.n[2];
+            }
+        }
+    }
+    if (found)
+        z = best;
+    return found;
+}
+
 bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *normal) const
 {
+    // The game's own surface first (the collision mesh); the render triangles only where it has no
+    // face at all (the ISSUES #133 hybrid let a tunnel roof count as ground, #145).
+    if (m_groundSource != 1 && CollisionGround(x, y, zMax, z, normal))
+        return true;
+    if (m_groundSource == 2)
+        return false;
     bool found = false;
     float best = -1e30f;
     float bestN[3] = {0, 0, 1};
@@ -145,7 +212,7 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
         }
     };
     // SetGroundSource (dev aid): restrict the ground query to the render triangles or the collision mesh.
-    const bool useRender = m_groundSource != 2, useColl = m_groundSource != 1;
+    const bool useRender = true, useColl = false; // collision faces are queried exactly above
     if (useRender)
         ForNearbyTris(x, y, [&](const Tri &t) { test(t.v, t.v + 3, t.v + 6); });
     // The collision mesh: faces are triangles, or quads (flags & 0x10) split v0-v1-v2 / v0-v2-v3.
@@ -437,6 +504,68 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     ForEachChunk(d, 0, n, [&](uint32_t id, size_t body, size_t len) {
         if (id != 0x80034130)
             return;
+        // The section's grid (0x00336180 reads them through the object at +0x08..+0x3c).
+        size_t hdr = 0, faceBody = 0, faceLen = 0, idxBody = 0, idxLen = 0, cellBody = 0, cellLen = 0;
+        ForEachChunk(d, body, body + len, [&](uint32_t cid, size_t cbody, size_t clen) {
+            if (cid == 0x34131 && clen >= 16) hdr = cbody;
+            if (cid == 0x34134) faceBody = cbody, faceLen = clen;
+            if (cid == 0x34136) idxBody = cbody, idxLen = clen;
+            if (cid == 0x34137) cellBody = cbody, cellLen = clen;
+        });
+        if (hdr && faceBody) {
+            CSection sec;
+            uint16_t cols, rows;
+            memcpy(&cols, d + hdr + 4, 2);
+            memcpy(&rows, d + hdr + 6, 2);
+            memcpy(&sec.ox, d + hdr + 8, 4);
+            memcpy(&sec.oy, d + hdr + 12, 4);
+            sec.cols = cols, sec.rows = rows;
+            if (cols && rows && cellLen >= size_t(cols) * rows * 4 && idxLen) {
+                for (size_t f = faceBody; f + 32 <= faceBody + faceLen; f += 32) {
+                    CFace cf;
+                    int16_t zh, sx[4], sy[4], sz[4];
+                    memcpy(&zh, d + f + 4, 2);
+                    memcpy(sx, d + f + 8, 8);
+                    memcpy(sy, d + f + 16, 8);
+                    memcpy(sz, d + f + 24, 8);
+                    cf.group = d[f], cf.surface = d[f + 2], cf.flags = d[f + 3];
+                    cf.quad = (cf.flags & 0x10) != 0;
+                    for (int k = 0; k < 4; ++k) {
+                        cf.v[k * 3] = sx[k] / 8.0f;
+                        cf.v[k * 3 + 1] = sy[k] / 8.0f;
+                        cf.v[k * 3 + 2] = float(zh) + sz[k] / 256.0f;
+                    }
+                    const float ax = cf.v[3] - cf.v[0], ay = cf.v[4] - cf.v[1], az = cf.v[5] - cf.v[2];
+                    const float bx = cf.v[6] - cf.v[0], by = cf.v[7] - cf.v[1], bz = cf.v[8] - cf.v[2];
+                    float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+                    const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    if (nl > 1e-9f)
+                        nx /= nl, ny /= nl, nz /= nl;
+                    cf.n[0] = nx, cf.n[1] = ny, cf.n[2] = nz;
+                    cf.d = nx * cf.v[0] + ny * cf.v[1] + nz * cf.v[2];
+                    sec.faces.push_back(cf);
+                }
+                for (size_t k = 0; k + 4 <= idxLen; k += 4) {
+                    uint16_t fi, mask;
+                    memcpy(&fi, d + idxBody + k, 2);
+                    memcpy(&mask, d + idxBody + k + 2, 2);
+                    sec.index.push_back(uint32_t(fi) | uint32_t(mask) << 16);
+                }
+                for (size_t k = 0; k < size_t(cols) * rows; ++k) {
+                    uint16_t first, count;
+                    memcpy(&first, d + cellBody + k * 4, 2);
+                    memcpy(&count, d + cellBody + k * 4 + 2, 2);
+                    sec.cells.push_back(uint32_t(first) | uint32_t(count) << 16);
+                }
+                const uint32_t si = uint32_t(m_csections.size());
+                const int x0 = int(std::floor(sec.ox / kCellSize)), x1 = int(std::floor((sec.ox + cols * 32.0f) / kCellSize));
+                const int y0 = int(std::floor(sec.oy / kCellSize)), y1 = int(std::floor((sec.oy + rows * 32.0f) / kCellSize));
+                for (int gx = x0; gx <= x1; ++gx)
+                    for (int gy = y0; gy <= y1; ++gy)
+                        m_csectionGrid[CellKey(gx, gy)].push_back(si);
+                m_csections.push_back(std::move(sec));
+            }
+        }
         ForEachChunk(d, body, body + len, [&](uint32_t cid, size_t cbody, size_t clen) {
             if (cid != 0x34134)
                 return;
