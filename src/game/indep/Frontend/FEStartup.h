@@ -6,6 +6,7 @@
 #include "game/indep/Frontend/FEIconScroller.h"
 #include "game/indep/Frontend/FEWidgetMenu.h"
 #include "game/indep/Frontend/FENative.h"
+#include "game/indep/Career/Profile.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -108,6 +109,18 @@ private:
     bool m_careerExists = false; // DAT_004f0e70: a saved career is present
     void HandleStartCareerLoaded(FEPackage *pkg);
     void HandleStartCareerMessage(uint32_t msg, FEPackage *pkg);
+    // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode
+    // 0x21961) and Career Garage (0x002592c0, mode 0xc11) through it; the port performs the card
+    // operation natively and continues to the screen the option asked for.
+    void HandleMemcardLoaded(FEPackage *pkg);
+    void HandleMemcardMessage(uint32_t msg, FEPackage *pkg);
+    void BeginCareer();          // New Career: create the profile and go to career car select
+    void RecordCareerCar();      // career car select accept: store the starter car and save
+    void ResumeCareer();         // Resume Career: load the profile and enter the city
+    bool LoadCareerProfile();    // load from the card into m_profile (keeps m_careerExists in sync)
+    Career::Profile m_profile;   // 0x004f1744 (0xac54 bytes) - see Career/Profile.h
+    std::string m_memcardNext;   // screen the memory-card step goes to when it finishes
+    bool m_memcardCreate = false; // the step creates a profile (New Career) instead of loading one
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsLoaded(FEPackage *pkg);

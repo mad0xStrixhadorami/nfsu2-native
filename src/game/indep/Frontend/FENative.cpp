@@ -427,6 +427,19 @@ void FENativeInterface::CycleCarPreview(int direction)
     }
 }
 
+// Restore a saved career car as the current car-select / race car (career save load).
+bool FENativeInterface::SetPreviewCar(const std::string &model)
+{
+    if (model.empty() || !LoadCarPreview(model.c_str()))
+        return false;
+    for (size_t i = 0; i < m_carRoster.size(); ++i)
+        if (m_carRoster[i] == m_previewCarName) {
+            m_previewCarIndex = i;
+            break;
+        }
+    return true;
+}
+
 FENativeInterface::~FENativeInterface()
 {
     if (m_controller)

@@ -69,6 +69,8 @@ public:
     void SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
     void CycleCarPreview(int direction); // Stand-in for the car-select vehicle carousel.
+    // Load a specific car as the car-select/race preview (career mode restores the saved car).
+    bool SetPreviewCar(const std::string &model);
     const std::string &PreviewCarName() const { return m_previewCarName; } // car folder, e.g. SKYLINE
     // Wheel placement for a car folder from the database (false if unknown).
     bool CarWheels(const std::string &folder, PlayerCar::Wheel out[4]) const

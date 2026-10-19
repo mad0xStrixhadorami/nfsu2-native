@@ -6,6 +6,8 @@
 #include <strings.h>
 
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
+#include "game/indep/Career/Memcard.h"
+#include "game/indep/Career/Profile.h"
 #include "game/indep/Frontend/FENative.h"
 
 namespace {
@@ -193,6 +195,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleStartCareerLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "MC_Main.fng") == 0) {
+        HandleMemcardLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_OptionsMain.fng") == 0) {
         HandleOptionsMainLoaded(pkg);
         return;
@@ -290,6 +296,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleStartCareerMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "MC_Main.fng") == 0) {
+        HandleMemcardMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_Options.fng") == 0) {
         // Pad messages for this list come from the pad in Tick(); ignore FEng's copies.
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
@@ -354,10 +364,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         else if (pressed & FENativeInterface::kPadRTrigger)
             CycleCarFilter(1, active);
         // Accept (0x001f32f8, quick race mode 2: PAD_ACCEPT -> StartRace 0x0025d4d8). Mode 0 is a
-        // car select pushed directly with NFSU2_PACKAGE. Mode 8 is career car select.
+        // car select pushed directly with NFSU2_PACKAGE. Mode 8 is career car select (buy the
+        // starter car into the profile before the race starts).
         else if ((pressed & FENativeInterface::kPadAccept) &&
-                 (m_raceMode == 2 || m_raceMode == 0 || m_raceMode == 8 || m_raceMode == 1))
+                 (m_raceMode == 2 || m_raceMode == 0 || m_raceMode == 8 || m_raceMode == 1)) {
+            if (m_raceMode == 8) {
+                RecordCareerCar();
+                // Career opens in the city: free roam, no track/route (as the Resume path).
+                m_raceType = 9;
+                m_raceNumber = 0;
+            }
             RequestRace();
+        }
         else if (pressed & FENativeInterface::kPadBack) {
             if (m_raceMode == 1 || m_raceMode == 8)
                 SwitchFlow(active->GetName(), "UI_StartCareer.fng");
@@ -881,8 +899,9 @@ void FEStartupSequence::HandleStartCareerLoaded(FEPackage *pkg)
     };
     // Option list per the constructor 0x001e71f0: with a saved career (DAT_004f0e70 != 0) the first
     // option is Resume Career and New Career follows; without one New Career comes first and there is
-    // no Resume. Career Garage is always last. We have no save data yet, so m_careerExists is false
-    // until a career has been started in this run.
+    // no Resume. Career Garage is always last. DAT_004f0e70 is the career-present flag; the port
+    // derives it from the memory card (Career::CareerExists), so a save survives a restart.
+    m_careerExists = Career::CareerExists();
     std::vector<FEIconScroller::Def> defs;
     m_careerActions.clear();
     for (const auto &o : kOptions) {
@@ -924,23 +943,115 @@ void FEStartupSequence::HandleStartCareerMessage(uint32_t msg, FEPackage *pkg)
         int action = m_careerActions[sel];
         printf("[Career] action %d selected\n", action);
         if (action == 0) {
-            // Resume Career -> enters world free roam (L4RA)
-            m_raceMode = 1;
-            m_raceType = 9; // free roam
-            RequestRace();
+            // Resume Career -> 0x00259300 (career state 0xdd60e403 present): load through
+            // 0x00265970 / 0x0025e388 -> enter the world. The career opens in the crib (UI_CareerCrib);
+            // the port enters the city free roam (L4RA), as before.
+            ResumeCareer();
         } else if (action == 1) {
-            // New Career -> choose starter car (stand-in). UG2: the option handlers are memory-card
-            // flows -- vtable 0x470618's handler 0x00259328 pushes MC_Main.fng (mode 0x21961), the
-            // first option's 0x00259300 starts career creation through 0x002c8aa8 (ISSUES #135).
-            m_raceMode = 8; // career car select
-            NavigateTo(pkg->GetName(), "UI_QRCarSelect.fng");
+            // New Career -> 0x00259328 (vtable 0x470618): MC_Main.fng with mode 0x21961 - create the
+            // profile save on the memory card, then career creation.
+            m_memcardNext = "UI_QRCarSelect.fng";
+            m_memcardCreate = true;
+            NavigateTo(pkg->GetName(), "MC_Main.fng");
         } else if (action == 2) {
-            // Career Garage -> GarageMain.fng (stand-in; UG2's handler 0x002592c0 pushes MC_Main.fng
-            // with mode 0xc11 first, ISSUES #135)
-            NavigateTo(pkg->GetName(), "GarageMain.fng");
+            // Career Garage -> 0x002592c0: MC_Main.fng with mode 0xc11 - pick the profile, then
+            // GarageMain.fng.
+            m_memcardNext = "GarageMain.fng";
+            NavigateTo(pkg->GetName(), "MC_Main.fng");
         }
         return;
     }
+}
+
+// MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the memory-card screen.
+// Its own class builds the file list from the memcard library (FEPkgMemcardList / 0x00228348) and
+// the card controls; that UI is not ported yet (ISSUES #137). The card *operation* is native: the
+// port shows the real package, performs the save/load, and continues on Accept. Mode (DAT_004e3618)
+// comes from the handler that opened it (0x21961 New Career, 0xc11 Career Garage).
+void FEStartupSequence::HandleMemcardLoaded(FEPackage * /*pkg*/)
+{
+    printf("[Memcard] MC_Main.fng: card at %s, %d save(s)\n", Career::MemoryCard::Get().SlotDir().c_str(),
+           Career::MemoryCard::Get().Count());
+    if (m_memcardCreate) {
+        m_memcardCreate = false;
+        BeginCareer(); // 0x00259328 -> profile creation (the memory-card step is this screen)
+    }
+}
+
+void FEStartupSequence::HandleMemcardMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg != kMsgPadAccept && msg != kMsgButtonPressed && msg != kMsgPadBack && msg != kMsgPadStart)
+        return;
+    if (!m_navPending) {
+        if (msg == kMsgPadBack) {
+            printf("[Memcard] cancelled\n");
+            NavigateTo(pkg->GetName(), "UI_StartCareer.fng");
+        } else {
+            printf("[Memcard] continue -> %s\n", m_memcardNext.c_str());
+            NavigateTo(pkg->GetName(), m_memcardNext.c_str());
+        }
+    }
+}
+
+// 0x001e71f0 / 0x00259328: a new career starts with an empty profile and the starting cash/respect;
+// the save is written at once (UG2 does the same, then asks for a name and a starter car).
+void FEStartupSequence::BeginCareer()
+{
+    m_profile = Career::Profile();
+    m_profile.valid = true;
+    m_profile.cars.clear();
+    m_profile.currentCar = 0;
+    printf("[Career] new profile %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
+           m_profile.respect);
+    if (!Career::SaveCareer(m_profile))
+        printf("[Career] could not write the save (continue without a card)\n");
+    m_careerExists = Career::CareerExists();
+    m_raceMode = 8; // career car select
+}
+
+// Career car select accept: the chosen car becomes the starter car (UG2 buys it with the career
+// money - the car-lot prices are in no decoded chunk, so the port takes it free, ISSUES #137).
+void FEStartupSequence::RecordCareerCar()
+{
+    if (!m_profile.valid)
+        return;
+    const std::string &car = m_fe->PreviewCarName();
+    if (car.empty())
+        return;
+    if (!m_profile.Owns(car)) {
+        Career::OwnedCar owned;
+        owned.model = car;
+        m_profile.cars.push_back(owned);
+        m_profile.currentCar = int(m_profile.cars.size()) - 1;
+        printf("[Career] starter car: %s\n", car.c_str());
+    }
+    Career::SaveCareer(m_profile);
+    m_careerExists = true;
+}
+
+void FEStartupSequence::ResumeCareer()
+{
+    if (!LoadCareerProfile()) {
+        printf("[Career] resume: no readable save\n");
+        return;
+    }
+    m_navPending = true; // leaving the front end for the world (one accept press only)
+    if (const Career::OwnedCar *car = m_profile.CurrentCar())
+        m_fe->SetPreviewCar(car->model);
+    m_raceMode = 1;  // DAT_00506b50: career
+    m_raceType = 9;  // free roam (the crib/city); race number 0 -> no route
+    m_raceNumber = 0;
+    RequestRace();
+}
+
+bool FEStartupSequence::LoadCareerProfile()
+{
+    if (Career::LoadCareer(m_profile)) {
+        m_careerExists = true;
+        return true;
+    }
+    m_careerExists = false;
+    return false;
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel
@@ -1302,6 +1413,12 @@ void FEStartupSequence::RequestRace()
     for (const RaceInfo &r : m_fe->Races())
         if (r.number == m_raceNumber && r.region[0])
             m_raceRegion = r.region;
+    // Career opens in the city with no track chosen. The port starts it in the garage/crib region
+    // (L4RG, the region #118's free run and #130's lane graph use): the career crib is in it (ISSUES
+    // #121 moved garage scenery there) and its route-less spawn is on a road. L4RA's route-less spawn
+    // drops the car on a slope (ISSUES #138).
+    if (m_raceNumber == 0 && (m_raceMode == 1 || m_raceMode == 8))
+        m_raceRegion = "L4RG";
     m_raceRequested = true;
     printf("[Race] start: type %d track %d region %s\n", m_raceType, m_raceNumber, m_raceRegion.c_str());
 }
