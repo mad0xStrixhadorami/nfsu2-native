@@ -1644,6 +1644,13 @@ bool FEStartupSequence::LoadCareerProfile()
                 b = e + 1;
             }
         }
+        // Dev aid: NFSU2_DONE_REGION=n marks every event of regions 0..n complete in memory.
+        if (const char *dr = getenv("NFSU2_DONE_REGION")) {
+            const int upTo = atoi(dr);
+            for (const Career::Event &e : Career::EventTable::Get().All())
+                if (e.region <= upTo)
+                    m_profile.Complete(e.id);
+        }
         // Dev aid: NFSU2_BEST_TIME=<race>:<ms> records a best time and saves it (tests Previous Time).
         if (const char *bt = getenv("NFSU2_BEST_TIME")) {
             int race = 0, ms = 0;
