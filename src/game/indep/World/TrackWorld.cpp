@@ -318,6 +318,10 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, in
                                 const float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
                                 if (tt < 0 || tt > 1)
                                     continue;
+                                if (getenv("NFSU2_WALL_DEBUG"))
+                                    printf("[Wall] group %u (%s) flags %02x surface %u at %.1f,%.1f,%.1f\n", f.group,
+                                           f.group < m_groupNames.size() ? m_groupNames[f.group].c_str() : "?", f.flags,
+                                           f.surface, a[0], a[1], a[2]);
                                 if (normal) {
                                     float nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
                                     const float len = std::sqrt(nx * nx + ny * ny + nz * nz);

@@ -502,8 +502,9 @@ int main(int argc, char **argv)
         for (size_t g = 1; g < world.BarrierGroupCount(); ++g) {
             const std::string &name = world.BarrierGroupName(g);
             const std::string suffix = "_" + std::to_string(raceNumber);
-            world.SetBarrierGroupEnabled(g, raceNumber != 0 && name.size() > suffix.size() &&
-                                                name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0);
+            const bool on = raceNumber != 0 && name.size() > suffix.size() &&
+                            name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+            world.SetBarrierGroupEnabled(g, on);
         }
         // Start grid: of the race's grids, the one heading along the route (the other is for the
         // reverse direction); the player starts at the back, opponents ahead.
