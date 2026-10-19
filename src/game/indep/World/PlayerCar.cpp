@@ -84,6 +84,20 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             body = &s;
         AddFiltered(s, m_model, m_triTex);
     }
+    if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))
+        printf("[Wheel] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) textures %zu\n", frontWheel->name.c_str(),
+               frontWheel->tris.size(), frontWheel->bboxMin[0], frontWheel->bboxMin[1], frontWheel->bboxMin[2],
+               frontWheel->bboxMax[0], frontWheel->bboxMax[1], frontWheel->bboxMax[2], frontWheel->textures.size());
+    if (frontWheel && getenv("NFSU2_WHEEL_DEBUG")) {
+        float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f;
+        for (const SolidMesh::Triangle &t : frontWheel->tris)
+            for (int k = 0; k < 3; ++k)
+                u0 = std::min(u0, t.v[k].u), u1 = std::max(u1, t.v[k].u), v0 = std::min(v0, t.v[k].v), v1 = std::max(v1, t.v[k].v);
+        printf("[Wheel] uv range u %.3f..%.3f v %.3f..%.3f\n", u0, u1, v0, v1);
+    }
+    if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))
+        for (uint32_t t : frontWheel->textures)
+            printf("[Wheel] texture slot hash %08x\n", t);
     if (!rearWheel)
         rearWheel = frontWheel;
     m_rideHeight = 0;

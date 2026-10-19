@@ -556,6 +556,25 @@ int main(int argc, char **argv)
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
+        // Dev aid: NFSU2_TEX_DUMP=<hex name hash> saves that texture of the player's car pack as BMP.
+        if (const char *dump = getenv("NFSU2_TEX_DUMP")) {
+            const uint32_t want = uint32_t(strtoul(dump, nullptr, 16));
+            std::vector<uint8_t> data = ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str());
+            TexturePack pack;
+            if (pack.Parse(data.data(), data.size()))
+                for (size_t i = 0; i < pack.Count(); ++i)
+                    if (pack.At(i).nameHash == want) {
+                        DecodedTexture t;
+                        if (pack.Decode(pack.At(i), t)) {
+                            SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(t.rgba.data(), t.width, t.height, 32,
+                                                                                    t.width * 4, SDL_PIXELFORMAT_ABGR8888);
+                            SDL_SaveBMP(surf, "/tmp/tex_dump.bmp");
+                            SDL_FreeSurface(surf);
+                            printf("[Tex] dumped %s %dx%d bpp %d alpha usage %d blend %d\n", pack.At(i).name.c_str(), t.width,
+                                   t.height, pack.At(i).bitsPerPixel, pack.At(i).alphaUsage, pack.At(i).alphaBlend);
+                        }
+                    }
+        }
         // Car audio banks by car type and engine upgrade level (stock = 0) from UG2's table (ISSUES #128).
         if (musicVolume > 0) {
             const CarAudio::Level &audio =
