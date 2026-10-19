@@ -1199,8 +1199,8 @@ static uint32_t RaceTypeLabel(int type)
     }
 }
 
-// The race type of a career event: the original takes it from the event's race record (0x00272e18 /
-// 0x00272ee8); the port picks the first type the event's track supports, URL for the kind-1 events.
+// The race type of a career event: the source in the original is not found yet (0x00272e18 /
+// 0x00272ee8 are the best-time lookups); the port picks the first type the event's track supports, URL for the kind-1 events.
 static int CareerRaceType(const Career::Event &ev, const RaceInfo &r)
 {
     const uint32_t f = r.typeFlags;
