@@ -27,6 +27,7 @@
 #include "Speed/Indep/Src/FEng/FEString.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
+#include "game/indep/Career/Events.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/Sound/CarAudioTable.h"
@@ -190,6 +191,7 @@ int main(int argc, char **argv)
         }
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
+        Career::EventTable::Get().Load(globalB.data(), globalB.size());
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
         if (bootPkg)
@@ -231,6 +233,7 @@ int main(int argc, char **argv)
         // 2. LoadGlobalChunks (0x002df9a0): load GLOBAL\GLOBALB.LZC while loading_boot.fng is shown.
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
+        Career::EventTable::Get().Load(globalB.data(), globalB.size());
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)
             engine->UnloadPackage(bootPkg);
@@ -253,6 +256,22 @@ int main(int argc, char **argv)
         if (loadPkg)
             engine->UnloadPackage(loadPkg);
         startup.Start();
+    }
+
+    // NFSU2_EVENTS=1: dump the career event table (0x34a11).
+    if (getenv("NFSU2_EVENTS")) {
+        const Career::EventTable &t = Career::EventTable::Get();
+        printf("[Career] %zu events\n", t.Count());
+        for (size_t i = 0; i < t.Count(); ++i) {
+            const Career::Event &e = t.At(i);
+            printf("[Career] %3zu %08x stage %3u region %u kind %u purse %5u respect %3u%s%s races", i,
+                   e.id, unsigned(e.stage), unsigned(e.region), unsigned(e.kind), e.purse, e.respect,
+                   e.special ? " special" : "", e.listed ? " listed" : "");
+            for (int16_t r : e.races)
+                printf(" %d", r);
+            printf("\n");
+        }
+        fflush(stdout);
     }
 
     Uint32 last = SDL_GetTicks();
@@ -339,6 +358,7 @@ int main(int argc, char **argv)
     std::vector<float> aiFinish;
     float raceClock = 0, finishedFor = 0;
     std::string currentRegion;
+    int worldRaceNumber = 0; // the race the world session is running (0 = free roam)
     FEPackage *hud = nullptr;
     RaceSession race;
     u32 worldLastPad = 0;
@@ -360,7 +380,17 @@ int main(int argc, char **argv)
     if (musicVolume > 0 && uiSound.Load(ReadGameFile(*fs, "SOUND\\GLOBAL\\FE_COMMON_MB.abk")))
         fe.SetSoundHook([&uiSound](uint32_t msg) { uiSound.OnMessage(msg); });
     std::function<void(const std::string &)> enterWorld;
-    enterWorld = [&](const std::string &region) {
+    enterWorld = [&](const std::string &regionIn) {
+        // NFSU2_RACE selects a race by its race-database number; the track's own region then wins over
+        // the region the front end asked for (career enters the city, but a forced race lives in the
+        // region its race record names, e.g. 4602 -> L4RF).
+        std::string region = regionIn;
+        if (const char *n = getenv("NFSU2_RACE")) {
+            const int want = atoi(n);
+            for (const RaceInfo &r : fe.Races())
+                if (r.number == want && r.region[0])
+                    region = r.region;
+        }
         currentRegion = region;
         pausePkg = nullptr;
         resultsPkg = nullptr;
@@ -440,6 +470,7 @@ int main(int argc, char **argv)
             raceNumber = 0;
         else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath)))
             raceConfig.route = &route;
+        worldRaceNumber = raceNumber;
         // Barriers the route runs through belong to other races' layouts; keep the rest (side
         // streets closed). Without a route every barrier stays. Free run opens the whole region.
         world.EnableBarriers([&](const float *bb) {
@@ -471,7 +502,11 @@ int main(int argc, char **argv)
                 }
             }
         }
-        const int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(raceConfig.type == 8 ? 1 : startup.RaceOpponents(), int(grid.size()) - 1);
+        int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(raceConfig.type == 8 ? 1 : startup.RaceOpponents(), int(grid.size()) - 1);
+        // NFSU2_OPPONENTS overrides the field size (test aid: 0 clears the track for an automated
+        // player, e.g. to exercise the career purse without a rival blocking the route).
+        if (const char *n = getenv("NFSU2_OPPONENTS"))
+            opponents = grid.empty() ? 0 : std::clamp(atoi(n), 0, int(grid.size()) - 1);
         if (!grid.empty()) {
             camera = grid[std::min<size_t>(opponents, grid.size() - 1)];
             printf("[World] race %d: grid of %zu, %d opponents\n", raceNumber, grid.size(), opponents);
@@ -895,6 +930,12 @@ int main(int argc, char **argv)
                     std::stable_sort(rows.begin(), rows.end(), [](const PostRaceRow &a, const PostRaceRow &b) {
                         return (a.time >= 0) != (b.time >= 0) ? a.time >= 0 : a.time < b.time;
                     });
+                    // A career race pays the 0x34a11 event's purse/respect (ISSUES #140).
+                    int place = 0;
+                    for (size_t i = 0; i < rows.size(); ++i)
+                        if (rows[i].name == "YOU")
+                            place = int(i) + 1;
+                    startup.AwardCareerResult(worldRaceNumber, place);
                     resultsPkg = engine->PushPackage("UI_PostRaceResults.fng", 0, 0xff);
                     FillPostRaceResults(resultsPkg, rows);
                     printf("[Race] results:");

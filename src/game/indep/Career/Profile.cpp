@@ -70,6 +70,10 @@ std::vector<uint8_t> Serialize(const Profile &p)
         PutStr(payload, c.model);
         PutU32(payload, c.paint);
     }
+    // Appended after the cars so a save written by the older port (no completion list) still parses.
+    PutU32(payload, uint32_t(p.completedEvents.size()));
+    for (uint32_t id : p.completedEvents)
+        PutU32(payload, id);
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -115,6 +119,17 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             return false;
         p.cars.push_back(c);
     }
+    if (q + 4 <= payload.size()) { // the completion list is optional (see Serialize)
+        uint32_t done = 0;
+        if (!GetU32(payload, q, done) || done > 4096)
+            return false;
+        for (uint32_t i = 0; i < done; ++i) {
+            uint32_t id;
+            if (!GetU32(payload, q, id))
+                return false;
+            p.completedEvents.push_back(id);
+        }
+    }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;
     p.valid = true;
@@ -154,8 +169,9 @@ bool LoadCareer(Profile &out, const std::string &name)
         fprintf(stderr, "[Career] %s is not a readable save\n", pick.c_str());
         return false;
     }
-    printf("[Career] loaded %s from %s (money %d, respect %d, %zu cars)\n", out.name.c_str(),
-           card.SlotDir().c_str(), out.money, out.respect, out.cars.size());
+    printf("[Career] loaded %s from %s (money %d, respect %d, %zu cars, %zu events done)\n",
+           out.name.c_str(), card.SlotDir().c_str(), out.money, out.respect, out.cars.size(),
+           out.completedEvents.size());
     return true;
 }
 

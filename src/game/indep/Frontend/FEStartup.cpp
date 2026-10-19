@@ -1282,6 +1282,60 @@ bool FEStartupSequence::LoadCareerProfile()
     return false;
 }
 
+// 0x0025xxx (race over) -> the event's purse. The event that runs a given race is found with
+// 0x002635d8 (the record whose +0x18 race list contains the race number); completion is the
+// 0x00268bd8 test on the record's +0x08 id that the world map (0x001ee590) puts at item index 7.
+// UG2 pays the purse for winning; the port pays a podium share (2nd 1/2, 3rd 1/4) and only completes
+// the event on a win, and it advances the stage when every event of that stage is complete.
+void FEStartupSequence::AwardCareerResult(int raceNumber, int place)
+{
+    if (!m_profile.valid || !IsCareerRun() || place <= 0)
+        return;
+    const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);
+    if (!ev) {
+        printf("[Career] race %d is not a career event\n", raceNumber);
+        return;
+    }
+    if (m_profile.Completed(ev->id)) {
+        printf("[Career] event %08x already complete (race %d, P%d)\n", ev->id, raceNumber, place);
+        return;
+    }
+    int money = 0, respect = 0;
+    if (place == 1) {
+        money = int(ev->purse);
+        respect = int(ev->respect);
+    } else if (place == 2) {
+        money = int(ev->purse) / 2;
+    } else if (place == 3) {
+        money = int(ev->purse) / 4;
+    }
+    if (money == 0 && respect == 0) {
+        printf("[Career] event %08x (race %d): P%d, no purse - win it to complete\n", ev->id, raceNumber,
+               place);
+        return;
+    }
+    m_profile.money += money;
+    m_profile.respect += respect;
+    if (place == 1)
+        m_profile.Complete(ev->id);
+    Career::SaveCareer(m_profile);
+
+    size_t stageTotal = 0, stageDone = 0;
+    for (const Career::Event &e : Career::EventTable::Get().All())
+        if (e.stage == ev->stage) {
+            ++stageTotal;
+            if (m_profile.Completed(e.id))
+                ++stageDone;
+        }
+    if (place == 1 && stageTotal && stageDone == stageTotal && m_profile.stage < int(ev->stage))
+        m_profile.stage = int(ev->stage);
+    printf("[Career] event %08x (race %d, stage %u) P%d: +%d money +%d respect -> money %d, respect %d"
+           " (stage %u: %zu/%zu)%s\n",
+           ev->id, raceNumber, unsigned(ev->stage), place, money, respect, m_profile.money,
+           m_profile.respect, unsigned(ev->stage), stageDone, stageTotal,
+           place == 1 ? ", completed" : "");
+}
+
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel
 // with one entry per option category, same base as the main menu. AddOption order is the on-screen
 // order (as in UI_Main). Each item's handler 0x00200428..0x00200528 sets DAT_004f12cc (the category

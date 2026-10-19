@@ -8,6 +8,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Career/Profile.h"
 #include "game/indep/Career/Memcard.h"
+#include "game/indep/Career/Events.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -82,6 +83,14 @@ public:
 
     bool IsFinished() const { return m_finished; }
     const char *CurrentPackage() const;
+
+    // A world session started from a career screen (m_raceMode 1 = Resume, 8 = new career's car
+    // select); quick race uses 2/4 and never pays career money.
+    bool IsCareerRun() const { return m_raceMode == 1 || m_raceMode == 8; }
+
+    // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
+    // its purse/respect, marking it complete on a win. Called from the results screen.
+    void AwardCareerResult(int raceNumber, int place);
 
 private:
 

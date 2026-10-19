@@ -35,7 +35,23 @@ struct Profile {
     std::string region = "L4RA"; // current region bundle
     int currentCar = 0;          // index into cars
     std::vector<OwnedCar> cars;
+    // Completed 0x34a11 events, keyed by the record's +0x08 id - the same test 0x00268bd8 makes for
+    // the world map (0x001ee590 stores the result at item index 7).
+    std::vector<uint32_t> completedEvents;
     uint32_t playTime = 0; // seconds
+
+    bool Completed(uint32_t id) const
+    {
+        for (uint32_t e : completedEvents)
+            if (e == id)
+                return true;
+        return false;
+    }
+    void Complete(uint32_t id)
+    {
+        if (!Completed(id))
+            completedEvents.push_back(id);
+    }
 
     const OwnedCar *CurrentCar() const
     {
