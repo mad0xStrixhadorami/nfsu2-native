@@ -122,11 +122,24 @@ private:
     std::unordered_map<int64_t, Cell> m_cells;
     std::unordered_map<int64_t, std::vector<CTri>> m_collision;
     std::vector<CSection> m_csections;
+    std::vector<std::string> m_groupNames;
+    std::vector<uint8_t> m_groupOn;
     std::unordered_map<int64_t, std::vector<uint32_t>> m_csectionGrid; // 64 m cell -> sections
     // The game's ground query over the collision mesh: the highest upward floor under (x, y) that is
     // not above zq, found only in the faces the world has enabled (group 0, not a wall).
+public:
     // Wall faces (flags & 0x02) of the collision mesh crossed by the segment (0x00337888 collects them).
-    bool CollisionWall(const float *a, const float *b, float *normal) const;
+    // onlyGroup >= 0 tests just that barrier group, enabled or not (dev aid for reading the groups).
+    bool CollisionWall(const float *a, const float *b, float *normal, int onlyGroup = -1) const;
+    // The barrier-group table (chunk 0x3412f of the region bundle TRACKS\<region>.BUN, loader
+    // 0x00338078 keeps its payload at DAT_00523ddc: 0x20-byte records, +8 = enabled byte, +9 = name
+    // "BARRIERS_<race>"). A collision face's group byte indexes it; group 0 is always on.
+    void LoadBarrierGroups(const std::vector<uint8_t> &regionBundle);
+    size_t BarrierGroupCount() const { return m_groupNames.size(); }
+    const std::string &BarrierGroupName(size_t g) const { return m_groupNames[g]; }
+    void SetBarrierGroupEnabled(size_t g, bool on) { if (g < m_groupOn.size()) m_groupOn[g] = on; }
+    bool GroupEnabled(uint8_t g) const { return g == 0 || (g < m_groupOn.size() && m_groupOn[g]); }
+private:
     bool CollisionGround(float x, float y, float zq, float &z, float *normal) const;
     size_t m_collisionFaces = 0;
     int m_groundSource = 0;

@@ -144,7 +144,7 @@ bool TrackWorld::CollisionGround(float x, float y, float zq, float &z, float *no
             if (fi >= sec.faces.size())
                 continue;
             const CFace &f = sec.faces[fi];
-            if (f.group != 0 || (f.flags & 0x0a) || f.n[2] < 1e-4f)
+            if (!GroupEnabled(f.group) || (f.flags & 0x0a) || f.n[2] < 1e-4f)
                 continue;
             // 0x00335328: max of the edge functions of v0->v1, v1->v2, [v2->v3,] v3->v0 (a triangle's
             // last vertex repeats v2, so its closing edge is v2->v0).
@@ -230,10 +230,33 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
     return found;
 }
 
+// Chunk 0x3412f (see the header): the barrier-group records.
+void TrackWorld::LoadBarrierGroups(const std::vector<uint8_t> &bundle)
+{
+    m_groupNames.clear();
+    m_groupOn.clear();
+    std::function<void(size_t, size_t)> walk = [&](size_t begin, size_t end) {
+        ForEachChunk(bundle.data(), begin, end, [&](uint32_t id, size_t body, size_t len) {
+            if (id == 0x3412f) {
+                for (size_t o = 0; o + 32 <= len; o += 32) {
+                    const uint8_t *r = bundle.data() + body + o;
+                    m_groupOn.push_back(r[8]);
+                    m_groupNames.emplace_back(reinterpret_cast<const char *>(r + 9),
+                                              strnlen(reinterpret_cast<const char *>(r + 9), 23));
+                }
+            } else if (id & 0x80000000) {
+                walk(body, body + len);
+            }
+        });
+    };
+    walk(0, bundle.size());
+    printf("[World] %zu barrier groups\n", m_groupNames.size());
+}
+
 // Segment a->b against the wall faces of the collision mesh (flags & 0x02, group 0). A wall face is
 // a vertical polygon; flag 0x04 makes it unbounded in Z (the decoder 0x00335098 sets its Z to
 // -2048 / +2048). Returns the face normal facing the segment start.
-bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal) const
+bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, int onlyGroup) const
 {
     const float lo[2] = {std::min(a[0], b[0]) - 0.5f, std::min(a[1], b[1]) - 0.5f};
     const float hi[2] = {std::max(a[0], b[0]) + 0.5f, std::max(a[1], b[1]) + 0.5f};
@@ -258,7 +281,9 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal) co
                             if (fi >= sec.faces.size())
                                 continue;
                             const CFace &f = sec.faces[fi];
-                            if (f.group != 0 || !(f.flags & 0x02))
+                            if (!(f.flags & 0x02))
+                                continue;
+                            if (onlyGroup >= 0 ? f.group != onlyGroup : !GroupEnabled(f.group))
                                 continue;
                             float v[12];
                             memcpy(v, f.v, sizeof(v));
@@ -312,55 +337,9 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal) co
 
 bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal) const
 {
-    const float dx = bx - ax, dy = by - ay, dz = bz - az;
-    bool hit = false;
-    auto testTri = [&](const float *a, const float *b, const float *c) {
-        if (hit)
-            return;
-        float e1x = b[0] - a[0], e1y = b[1] - a[1], e1z = b[2] - a[2];
-        float e2x = c[0] - a[0], e2y = c[1] - a[1], e2z = c[2] - a[2];
-        float nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
-        float n2 = nx * nx + ny * ny + nz * nz;
-        if (n2 < 1e-8f || nz * nz > 0.25f * n2)
-            return; // not steep enough to be a wall
-        // Moeller-Trumbore segment test.
-        float px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
-        float det = e1x * px + e1y * py + e1z * pz;
-        if (std::fabs(det) < 1e-8f)
-            return;
-        float inv = 1.0f / det;
-        float sx = ax - a[0], sy = ay - a[1], sz = az - a[2];
-        float u = (sx * px + sy * py + sz * pz) * inv;
-        if (u < 0 || u > 1)
-            return;
-        float qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
-        float v = (dx * qx + dy * qy + dz * qz) * inv;
-        if (v < 0 || u + v > 1)
-            return;
-        float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
-        hit = tt >= 0 && tt <= 1;
-        if (hit) {
-            const float len = std::sqrt(n2);
-            nx /= len, ny /= len, nz /= len;
-            // Face the segment start (the side the car is coming from).
-            if (nx * dx + ny * dy + nz * dz > 0)
-                nx = -nx, ny = -ny, nz = -nz;
-            if (normal)
-                normal[0] = nx, normal[1] = ny, normal[2] = nz;
-            if (getenv("NFSU2_WORLD_DEBUG"))
-                printf("[World] wall (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f) n(%.2f %.2f %.2f)\n", a[0], a[1],
-                       a[2], b[0], b[1], b[2], c[0], c[1], c[2], nx, ny, nz);
-        }
-    };
     // Walls are the collision mesh's wall faces (0x00337888 collects the flag-0x02 faces of the cells
-    // the move crosses) plus the race barriers this race enabled. The scenery's own steep render
+    // the move crosses; barrier groups only while the race enabled them, #147). The scenery's own steep render
     // triangles (kerbs, poles, tunnel linings) are not walls: they stopped the car at low ledges (#146).
-    ForNearbyTris(ax, ay, [&](const Tri &t) {
-        if (t.barrier)
-            testTri(t.v, t.v + 3, t.v + 6);
-    });
-    if (hit)
-        return true;
     const float a[3] = {ax, ay, az}, b[3] = {bx, by, bz};
     return CollisionWall(a, b, normal);
 }

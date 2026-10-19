@@ -446,6 +446,10 @@ int main(int argc, char **argv)
             fprintf(stderr, "[World] could not load %s\n", path.c_str());
             return;
         }
+        {
+            std::vector<uint8_t> regionBundle = ReadGameFile(*fs, ("TRACKS\\" + region + ".BUN").c_str());
+            world.LoadBarrierGroups(regionBundle);
+        }
         camera = world.StartCamera();
         flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
         int raceNumber = startup.RaceNumber();
@@ -486,6 +490,15 @@ int main(int argc, char **argv)
             route.Sample(route.Project(cx, cy), x, y, dx, dy);
             return std::hypot(cx - x, cy - y) > 6.0f;
         });
+        // Collision barrier groups (ISSUES #147): the groups named for this race
+        // (PLAYER_BARRIERS_<race>, BARRIERS_<race>) are on, every other race's are off -- each race's
+        // own groups never cross its route, the others' do. Free roam has none.
+        for (size_t g = 1; g < world.BarrierGroupCount(); ++g) {
+            const std::string &name = world.BarrierGroupName(g);
+            const std::string suffix = "_" + std::to_string(raceNumber);
+            world.SetBarrierGroupEnabled(g, raceNumber != 0 && name.size() > suffix.size() &&
+                                                name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0);
+        }
         // Start grid: of the race's grids, the one heading along the route (the other is for the
         // reverse direction); the player starts at the back, opponents ahead.
         std::string markersPath = "TRACKS\\ROUTES" + region + "\\TRACKPOSMARKERSALL.BIN";
@@ -697,6 +710,23 @@ int main(int argc, char **argv)
             printf("[Career] crib %s\n", cribPkg ? "shown" : "missing");
         }
         // Dev aid: NFSU2_ROUTE_CHECK=1 lists stretches of the race route (and +-2.5 m beside it) with no ground.
+        // Dev aid: which barrier groups' walls does the race route run through (ISSUES #147)?
+        if (getenv("NFSU2_GROUP_DUMP") && route.Valid()) {
+            for (size_t g = 1; g < world.BarrierGroupCount(); ++g) {
+                int hits = 0, samples = 0;
+                for (float d = 0; d + 2.0f <= route.Length(); d += 2.0f) {
+                    float x0, y0, x1, y1, dx, dy, z0 = 0, z1 = 0;
+                    route.Sample(d, x0, y0, dx, dy);
+                    route.Sample(d + 2.0f, x1, y1, dx, dy);
+                    world.GroundHeight(x0, y0, 80.0f, z0);
+                    world.GroundHeight(x1, y1, 80.0f, z1);
+                    const float a[3] = {x0, y0, z0 + 0.8f}, b[3] = {x1, y1, z1 + 0.8f};
+                    ++samples;
+                    hits += world.CollisionWall(a, b, nullptr, int(g)) ? 1 : 0;
+                }
+                printf("[Group] %zu %s crosses the route %d / %d\n", g, world.BarrierGroupName(g).c_str(), hits, samples);
+            }
+        }
         if (getenv("NFSU2_ROUTE_CHECK") && route.Valid()) {
             float runStart = -1, runLast = 0;
             int runs = 0;
