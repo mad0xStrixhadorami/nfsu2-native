@@ -134,17 +134,24 @@ bool SaveCareer(const Profile &p)
     return ok;
 }
 
-bool LoadCareer(Profile &out)
+bool LoadCareer(Profile &out, const std::string &name)
 {
     MemoryCard &card = MemoryCard::Get();
     std::vector<CardFile> files = card.List();
     if (files.empty())
         return false;
+    std::string pick = name.empty() ? files.front().name : MemoryCard::SanitizeName(name);
+    bool known = false;
+    for (const CardFile &f : files)
+        if (f.name == pick)
+            known = true;
+    if (!known)
+        return false;
     std::vector<uint8_t> data;
-    if (!card.Read(files.front().name, data))
+    if (!card.Read(pick, data))
         return false;
     if (!Deserialize(data, out)) {
-        fprintf(stderr, "[Career] %s is not a readable save\n", files.front().name.c_str());
+        fprintf(stderr, "[Career] %s is not a readable save\n", pick.c_str());
         return false;
     }
     printf("[Career] loaded %s from %s (money %d, respect %d, %zu cars)\n", out.name.c_str(),

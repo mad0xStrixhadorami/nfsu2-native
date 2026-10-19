@@ -4,3 +4,4 @@ reference/
 *.bin
 *.iso
 __pycache__/
+build64/

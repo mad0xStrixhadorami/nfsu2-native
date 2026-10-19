@@ -44,6 +44,80 @@ constexpr const char *kStartupTablePAL[12] = {
     "UI_Main.fng",
 };
 
+// Memory-card screens. MC_List.fng (create 0x002286b8, ctor 0x00228348) is the file browser: 8 rows,
+// each a group (backing + two icons) with a name string on the left and a value string on the right.
+// MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700) is the card status screen the
+// career options open; its CALL button (0x47ff4e7c, labelled "CALL" by 0x00293378 in the tick) pushes
+// MC_List.fng over it, and 0x00228990/0x00226908 build the rows from the memcard library. The
+// packages carry no object names (Ghidra reads raw hashes), but each row's three objects are numbered
+// 1..8, so their hashes are consecutive and the rows run top to bottom (y -120..161).
+constexpr uint32_t kMcListRow[8] = {0x66e29936, 0x66e29937, 0x66e29938, 0x66e29939,
+                                    0x66e2993a, 0x66e2993b, 0x66e2993c, 0x66e2993d};
+constexpr uint32_t kMcListName[8] = {0xb2980ba8, 0xb2980ba9, 0xb2980baa, 0xb2980bab,
+                                     0xb2980bac, 0xb2980bad, 0xb2980bae, 0xb2980baf};
+// The row's right-hand column is 9b483b01..08 (template 0x465ac8, x 415); it sits outside the 640x480
+// frame in this layout, so the port leaves it alone.
+constexpr int kMcListRows = 8;
+// MC_List.fng ships its dialog (frame, side buttons, scroll bar, title) at alpha 0; EA's class fades
+// it in when the rows are filled (0x00228348 / 0x00228990). These are the frame objects to reveal.
+constexpr uint32_t kMcListFrame[] = {0x8d7e0c53, 0x44496a02, 0x44496a03, 0x688a1551, 0x3fbb7a4e};
+// MC_Main.fng's free-standing status string ("Checking for memory card (PS2) in MEMORY CARD slot 1")
+constexpr uint32_t kMcStatusString = 0x1e2640fa;
+
+// Show/hide a FEng object the way the card classes do: alpha in FEObjData::Col.a, and bit 0 of the
+// object flags (FF_Invisible per cFEngGameInterface::RenderObject 0x00290788). Row groups ship with
+// a=0, which makes FEngine::RenderGroup 0x00290120 skip the whole subtree.
+void RevealObject(FEPackage *pkg, uint32_t hash, bool show)
+{
+    FEObject *o = pkg ? pkg->FindObjectByHash(hash) : nullptr;
+    if (!o || !o->GetObjData())
+        return;
+    FEObjData *d = o->GetObjData();
+    d->Col.a = show ? 255 : 0;
+    if (show)
+        d->Col.r = d->Col.g = d->Col.b = 255; // the screen ships its frames tinted; draw them plain
+    if (show)
+        o->Flags &= ~(1u | 0x04000000u); // visible: clear FF_Invisible and the list's hidden bit
+    else
+        o->Flags |= 0x04000000u;
+    o->Flags |= 0x400000u; // FF_DirtyCode
+    // The rows' children carry FF_Invisible too; a group with a!=0 draws them, so clear it there.
+    if (show && o->Type == FE_Group)
+        for (FEObject *c = static_cast<FEGroup *>(o)->GetFirstChild(); c; c = c->GetNext())
+            if (c->GetObjData()) {
+                if (c->GetObjData()->Col.a == 0)
+                    c->GetObjData()->Col.a = 255;
+                c->Flags &= ~1u;
+                c->Flags |= 0x400000u;
+            }
+}
+
+// MC_List.fng's groups ship with the authoring tool's placeholder tint (which EA's class overwrites
+// before the dialog is shown); the port would otherwise draw the whole dialog through a red cast.
+// Plain white on the groups keeps the package's own leaf colours (the title stays its language colour).
+void WhitenGroups(FEObject *obj)
+{
+    for (; obj; obj = obj->GetNext()) {
+        if (obj->GetObjData() && obj->Type == FE_Group) {
+            obj->GetObjData()->Col.r = obj->GetObjData()->Col.g = obj->GetObjData()->Col.b = 255;
+            obj->Flags |= 0x400000u;
+        }
+        if (obj->Type == FE_Group)
+            WhitenGroups(static_cast<FEGroup *>(obj)->GetFirstChild());
+    }
+}
+// The screen the player is looking at is the last package in the list: FEPackageList keeps its
+// packages ordered by priority (AddPackage) and a pushed screen gets priority 1 over the screen it
+// covers - 0x00225fb8 opens MC_List.fng that way (FUN_002925b0 = the engine's push). The port's
+// GetFirstPackage() is the bottom of that stack, so the card flow asks for the top instead.
+FEPackage *TopScreen(FEngine *engine)
+{
+    FEPackage *top = nullptr;
+    for (FEPackage *pkg = engine->GetPackageList()->GetFirstPackage(); pkg; pkg = pkg->GetNext())
+        top = pkg;
+    return top;
+}
+
 // Object/script hashes used by SplashScreen (0x0023c2d8, 0x0023c4a0):
 constexpr uint32_t kHashESRBIcon = 0x43d41f73;       // bStringHash("ESRBicon")
 constexpr uint32_t kHashStartClick = 0xc4df3ff2;     // bStringHash("start_click")
@@ -195,7 +269,7 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleStartCareerLoaded(pkg);
         return;
     }
-    if (strcasecmp(name, "MC_Main.fng") == 0) {
+    if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         HandleMemcardLoaded(pkg);
         return;
     }
@@ -296,8 +370,11 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleStartCareerMessage(msg, pkg);
         return;
     }
-    if (strcasecmp(name, "MC_Main.fng") == 0) {
-        HandleMemcardMessage(msg, pkg);
+    if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
+        // Pad messages for the card screens are taken from the pad in Tick(); ignore FEng's copies.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleMemcardMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_Options.fng") == 0) {
@@ -348,6 +425,12 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     const uint32_t pressed = pad & ~m_lastPad;
     m_lastPad = pad;
     FEPackage *active = m_engine->GetPackageList()->GetFirstPackage();
+    FEPackage *top = TopScreen(m_engine);
+    if (getenv("NFSU2_MSGDEBUG") && pressed && top && top->GetName() &&
+        (strcasecmp(top->GetName(), "MC_Main.fng") == 0 || strcasecmp(top->GetName(), "MC_List.fng") == 0)) {
+        fprintf(stderr, "[mc-pad] top=%s input=%d pressed=%02x\n", top->GetName(),
+                int(top->IsInputEnabled()), pressed);
+    }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
         strcasecmp(active->GetName(), "UI_QRCarSelect.fng") == 0) {
         // Stand-in: the real carousel uses UG2 car-select messages (0x36db742/0x36db743).
@@ -394,6 +477,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleStartCareerMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleStartCareerMessage(kMsgPadBack, active);
+        return;
+    }
+    // Memory-card screens (MC_Main.fng / MC_List.fng): their rows are plain objects (no FEng
+    // responses), so the pad is read directly here, as for UI_StartCareer above. MC_List.fng is
+    // pushed over MC_Main.fng, so the screen that has the pad is the top of the package stack.
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        (strcasecmp(top->GetName(), "MC_Main.fng") == 0 ||
+         strcasecmp(top->GetName(), "MC_List.fng") == 0)) {
+        static const struct { uint32_t bit, msg; } kMcMap[] = {
+            {FENativeInterface::kPadUp, kMsgPadUp},     {FENativeInterface::kPadDown, kMsgPadDown},
+            {FENativeInterface::kPadAccept, kMsgPadAccept}, {FENativeInterface::kPadBack, kMsgPadBack}};
+        for (auto &m : kMcMap)
+            if (pressed & m.bit) {
+                HandleMemcardMessage(m.msg, top);
+                break;
+            }
         return;
     }
     FEPackage *list = m_widgets.Package();
@@ -963,34 +1062,163 @@ void FEStartupSequence::HandleStartCareerMessage(uint32_t msg, FEPackage *pkg)
     }
 }
 
-// MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the memory-card screen.
-// Its own class builds the file list from the memcard library (FEPkgMemcardList / 0x00228348) and
-// the card controls; that UI is not ported yet (ISSUES #137). The card *operation* is native: the
-// port shows the real package, performs the save/load, and continues on Accept. Mode (DAT_004e3618)
-// comes from the handler that opened it (0x21961 New Career, 0xc11 Career Garage).
-void FEStartupSequence::HandleMemcardLoaded(FEPackage * /*pkg*/)
+// MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the card status screen that
+// the career options open (mode DAT_004e3618: 0x21961 New Career, 0xc11 Career Garage). Its class
+// polls the memcard library (0x0023d570 / 0x0023d9b0) and writes the status string; on the screen
+// tick it also relabels object 0x47ff4e7c with the "CALL" script (0x00293378 -> 0x00293240) - that is
+// the button that opens the file browser (0x00225fb8 pushes MC_List.fng over this screen,
+// FUN_002925b0 = push). The port performs the card operations natively and reports the native card.
+void FEStartupSequence::HandleMemcardLoaded(FEPackage *pkg)
 {
-    printf("[Memcard] MC_Main.fng: card at %s, %d save(s)\n", Career::MemoryCard::Get().SlotDir().c_str(),
-           Career::MemoryCard::Get().Count());
+    if (strcasecmp(pkg->GetName(), "MC_List.fng") == 0) {
+        FillMemcardList(pkg);
+        return;
+    }
+    // 0x00228700 (the screen-tick branch) relabels object 0x47ff4e7c with the "CALL" text at 0x566640
+    // (FUN_00293378 -> 0x00293240) - that is the button that opens the file browser.
+    FENativeInterface::SetString(pkg, 0x47ff4e7c, "CALL");
     if (m_memcardCreate) {
         m_memcardCreate = false;
-        BeginCareer(); // 0x00259328 -> profile creation (the memory-card step is this screen)
+        BeginCareer(); // 0x00259328: the new profile is written to the card at once
     }
+    // The real screen polls the card every 0x15 ticks (0x0023d570 / 0x0023d9b0); the port reads it here.
+    Career::MemoryCard &card = Career::MemoryCard::Get();
+    char status[160];
+    snprintf(status, sizeof(status), "Memory card (PS2) in MEMORY CARD slot 1: %d save(s)",
+             card.Count());
+    FENativeInterface::SetString(pkg, kMcStatusString, status);
+    printf("[Memcard] MC_Main.fng: %s (%s)\n", status, card.SlotDir().c_str());
+}
+
+// 0x00228348 / 0x00228990: fill the file rows. UG2 adds a widget per card entry (0x00228990) after
+// 0x00226908 filters the list the memcard library built; the port drives the package's own 8 rows.
+void FEStartupSequence::FillMemcardList(FEPackage *pkg)
+{
+    m_memcardFiles = Career::MemoryCard::Get().List();
+    m_memcardSel = 0;
+    for (size_t i = 0; i < m_memcardFiles.size(); ++i)
+        if (!m_memcardPick.empty() && m_memcardFiles[i].name == m_memcardPick)
+            m_memcardSel = int(i);
+    if (m_memcardSel >= int(m_memcardFiles.size()))
+        m_memcardSel = 0;
+    ApplyMemcardList(pkg, true);
+}
+
+// The dialog's own scripts (FEPackage::UpdateObject -> script tracks) rewrite the rows' colours and
+// alphas every frame, so the reveal has to be re-applied after the scripts run; PreRender does that
+// (the rows would otherwise reappear with the package's untinted placeholder colours).
+void FEStartupSequence::ApplyMemcardList(FEPackage *pkg, bool log)
+{
+    WhitenGroups(pkg->GetFirstObject());
+    for (int i = 0; i < kMcListRows; ++i) {
+        const bool used = i < int(m_memcardFiles.size());
+        RevealObject(pkg, kMcListRow[i], used);
+        RevealObject(pkg, kMcListName[i], used);
+        if (!used)
+            continue;
+        const Career::CardFile &f = m_memcardFiles[size_t(i)];
+        FENativeInterface::SetString(pkg, kMcListName[i], f.name.c_str());
+        if (FEObject *row = pkg->FindObjectByHash(kMcListRow[i])) {
+            if (row->GetObjData())
+                row->GetObjData()->Col.a = (i == m_memcardSel) ? 255 : 170; // cursor highlight
+            row->Flags |= 0x400000u;
+        }
+    }
+    for (uint32_t h : kMcListFrame)
+        RevealObject(pkg, h, true);
+    if (log)
+        printf("[Memcard] MC_List.fng: %zu save(s), %d selected\n", m_memcardFiles.size(), m_memcardSel);
+}
+
+// Called from the front-end loop just before FEngine::Render, i.e. after the script update.
+void FEStartupSequence::PreRender()
+{
+    if (!m_engine || m_memcardFiles.empty())
+        return;
+    if (FEPackage *pkg = m_engine->GetPackageList()->FindPackage("MC_List.fng"))
+        ApplyMemcardList(pkg, false);
+}
+
+// 0x00225fb8: push MC_List.fng over MC_Main.fng (FUN_002925b0 is the engine's push).
+void FEStartupSequence::OpenMemcardList()
+{
+    if (m_memcardListOpen)
+        return; // already open (the pad message can arrive twice in a frame)
+    FEPackage *top = TopScreen(m_engine);
+    if (top && top->GetName() && strcasecmp(top->GetName(), "MC_List.fng") == 0)
+        return;
+    printf("[Memcard] open file list\n");
+    m_memcardListOpen = true;
+    m_engine->QueuePackagePush("MC_List.fng", 0xff);
+}
+
+void FEStartupSequence::ChooseMemcardFile()
+{
+    if (m_memcardSel >= int(m_memcardFiles.size())) {
+        printf("[Memcard] nothing to choose\n");
+        return;
+    }
+    m_memcardPick = m_memcardFiles[size_t(m_memcardSel)].name;
+    m_memcardListOpen = false;
+    printf("[Memcard] selected %s -> %s\n", m_memcardPick.c_str(), m_memcardNext.c_str());
+    // Anything but the New Career flow wants that save loaded (Career Garage opens it).
+    if (m_memcardNext != "UI_QRCarSelect.fng" && Career::LoadCareer(m_profile, m_memcardPick)) {
+        m_careerExists = true;
+        if (const Career::OwnedCar *car = m_profile.CurrentCar())
+            m_fe->SetPreviewCar(car->model);
+    }
+    m_navPending = true;
+    CloseMemcardScreens();
+    NavigateTo("MC_Main.fng", m_memcardNext.c_str());
+}
+
+// A switch (QueuePackageSwitch -> FEngine::ProcessPackageCommands 0x002901...; command 3) only unloads
+// the package that currently has control, and the card screens are stacked (MC_List.fng was pushed
+// over MC_Main.fng, which lost control), so both are removed here before the next screen is queued.
+void FEStartupSequence::CloseMemcardScreens()
+{
+    for (FEPackage *pkg = m_engine->GetPackageList()->GetFirstPackage(); pkg != nullptr;) {
+        FEPackage *next = pkg->GetNext();
+        if (pkg->GetName() && (strcasecmp(pkg->GetName(), "MC_Main.fng") == 0 ||
+                               strcasecmp(pkg->GetName(), "MC_List.fng") == 0))
+            m_engine->UnloadPackage(pkg);
+        pkg = next;
+    }
+    m_memcardListOpen = false;
 }
 
 void FEStartupSequence::HandleMemcardMessage(uint32_t msg, FEPackage *pkg)
 {
-    if (msg != kMsgPadAccept && msg != kMsgButtonPressed && msg != kMsgPadBack && msg != kMsgPadStart)
-        return;
-    if (!m_navPending) {
-        if (msg == kMsgPadBack) {
-            printf("[Memcard] cancelled\n");
-            NavigateTo(pkg->GetName(), "UI_StartCareer.fng");
-        } else {
-            printf("[Memcard] continue -> %s\n", m_memcardNext.c_str());
-            NavigateTo(pkg->GetName(), m_memcardNext.c_str());
+    const bool isList = strcasecmp(pkg->GetName(), "MC_List.fng") == 0;
+    if (isList) {
+        if (msg == kMsgPadUp || msg == kMsgPadDown) {
+            const int n = int(m_memcardFiles.size());
+            if (n > 0) {
+                m_memcardSel = (m_memcardSel + (msg == kMsgPadDown ? 1 : n - 1)) % n;
+                FillMemcardList(pkg);
+            }
+            return;
         }
+        if (msg == kMsgPadBack && !m_navPending) {
+            printf("[Memcard] file list closed\n");
+            m_memcardListOpen = false;
+            m_engine->UnloadPackage(pkg);
+            return;
+        }
+        if ((msg == kMsgPadAccept || msg == kMsgButtonPressed) && !m_navPending)
+            ChooseMemcardFile();
+        return;
     }
+    // MC_Main.fng. CloseMemcardScreens frees this package, so keep its name for NavigateTo/back stack.
+    if (msg == kMsgPadBack && !m_navPending) {
+        const std::string from = pkg->GetName();
+        printf("[Memcard] cancelled\n");
+        CloseMemcardScreens();
+        NavigateTo(from.c_str(), "UI_StartCareer.fng");
+        return;
+    }
+    if ((msg == kMsgPadAccept || msg == kMsgButtonPressed) && !m_navPending)
+        OpenMemcardList();
 }
 
 // 0x001e71f0 / 0x00259328: a new career starts with an empty profile and the starting cash/respect;

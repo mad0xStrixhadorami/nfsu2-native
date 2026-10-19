@@ -7,6 +7,7 @@
 #include "game/indep/Frontend/FEWidgetMenu.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Career/Profile.h"
+#include "game/indep/Career/Memcard.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -114,6 +115,15 @@ private:
     // operation natively and continues to the screen the option asked for.
     void HandleMemcardLoaded(FEPackage *pkg);
     void HandleMemcardMessage(uint32_t msg, FEPackage *pkg);
+    void OpenMemcardList();   // MC_Main's CALL button: push MC_List.fng over it (0x00225fb8)
+    void FillMemcardList(FEPackage *pkg); // 0x00228348: the 8 file rows from the card
+    void ApplyMemcardList(FEPackage *pkg, bool log); // reveal the rows/frame (re-run before each draw)
+    void CloseMemcardScreens(); // unload both stacked card screens before leaving them
+    void ChooseMemcardFile(); // MC_List Accept: use the highlighted save
+public:
+    // The card dialog's scripts rewrite the row colours every frame; re-apply the reveal after them.
+    void PreRender();
+private:
     void BeginCareer();          // New Career: create the profile and go to career car select
     void RecordCareerCar();      // career car select accept: store the starter car and save
     void ResumeCareer();         // Resume Career: load the profile and enter the city
@@ -121,6 +131,10 @@ private:
     Career::Profile m_profile;   // 0x004f1744 (0xac54 bytes) - see Career/Profile.h
     std::string m_memcardNext;   // screen the memory-card step goes to when it finishes
     bool m_memcardCreate = false; // the step creates a profile (New Career) instead of loading one
+    std::vector<Career::CardFile> m_memcardFiles; // the card's saves, as MC_List.fng shows them
+    int m_memcardSel = 0;
+    std::string m_memcardPick;   // the chosen save (empty = none)
+    bool m_memcardListOpen = false; // MC_List.fng is pushed over MC_Main.fng
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsLoaded(FEPackage *pkg);

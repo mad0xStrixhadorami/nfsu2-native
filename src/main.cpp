@@ -24,6 +24,7 @@
 #include "Speed/Indep/Src/FEng/FEGroup.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
+#include "Speed/Indep/Src/FEng/FEString.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -206,9 +207,13 @@ int main(int argc, char **argv)
             std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
                 for (; o; o = o->GetNext()) {
                     const FEObjData *d = o->GetObjData();
-                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x\n", depth * 2, "",
+                    char label[32] = "";
+                    if (o->Type == FE_String)
+                        snprintf(label, sizeof(label), " label %08x", static_cast<FEString *>(o)->GetLabelHash());
+                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x c=%u,%u,%u,%u %s%s\n", depth * 2, "",
                            o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
-                           d ? d->Size.y : 0, o->Flags);
+                           d ? d->Size.y : 0, o->Flags, d ? unsigned(d->Col.r) : 0u, d ? unsigned(d->Col.g) : 0u,
+                           d ? unsigned(d->Col.b) : 0u, d ? unsigned(d->Col.a) : 0u, o->pName ? o->pName : "", label);
                     if (o->Type == FE_Group)
                         dump(static_cast<FEGroup *>(o)->GetFirstChild(), depth + 1, o->NameHash);
                 }
@@ -716,9 +721,13 @@ int main(int argc, char **argv)
             std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
                 for (; o; o = o->GetNext()) {
                     const FEObjData *d = o->GetObjData();
-                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x\n", depth * 2, "",
+                    char label[32] = "";
+                    if (o->Type == FE_String)
+                        snprintf(label, sizeof(label), " label %08x", static_cast<FEString *>(o)->GetLabelHash());
+                    printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x c=%u,%u,%u,%u %s%s\n", depth * 2, "",
                            o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
-                           d ? d->Size.y : 0, o->Flags);
+                           d ? d->Size.y : 0, o->Flags, d ? unsigned(d->Col.r) : 0u, d ? unsigned(d->Col.g) : 0u,
+                           d ? unsigned(d->Col.b) : 0u, d ? unsigned(d->Col.a) : 0u, o->pName ? o->pName : "", label);
                     if (o->Type == FE_Group)
                         dump(static_cast<FEGroup *>(o)->GetFirstChild(), depth + 1, o->NameHash);
                 }
@@ -1043,6 +1052,7 @@ int main(int argc, char **argv)
 
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
+            startup.PreRender(); // after the FEng script update, before the frame is drawn
             engine->Render();
             fe.RenderCarPreviewOverlay();
             std::string region;

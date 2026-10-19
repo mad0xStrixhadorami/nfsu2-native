@@ -60,7 +60,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out);
 // A career profile is one save file on the card, named "<profile name>.SAV" (UG2 keeps its career
 // save in the same place, e.g. the CreateUIProfileManager / FEPkgMemcardList file list).
 bool SaveCareer(const Profile &p);   // false if the card is missing/full
-bool LoadCareer(Profile &out);       // loads the first (name-sorted) save into out
+bool LoadCareer(Profile &out, const std::string &name = std::string()); // name empty = first save
 bool DeleteCareer(const std::string &name);
 bool CareerExists(); // any save on the card
 
