@@ -27,6 +27,10 @@ struct Event {
     uint32_t prereq = 0;        // +0x10 (a stage number r-1 for the region-r events, see EventAvailable)
     uint8_t raw[0x88] = {};     // the record as stored (fields not decoded yet)
     std::vector<int16_t> races; // +0x18 race-database numbers (one event runs 1..3 races)
+    // The flag byte of each +0x18 slot ({s16 race, u8 flags, u8}): bit 0 is the reverse direction
+    // (0x00263848) and bit 1 marks the race as unlocked from the start (0x00263858). Parallel to
+    // races; used by the Quick Race track list (ISSUES #157).
+    std::vector<uint8_t> raceFlags;
 };
 
 // The parsed 0x34a11 table. It is static game data: load it once from the GLOBALB bundle.
@@ -51,6 +55,11 @@ public:
     bool EventAvailable(const Event &e, const std::vector<uint32_t> &done) const;
     bool StageCleared(int stage, const std::vector<uint32_t> &done) const;
     bool AreaAvailable(int area, const std::vector<uint32_t> &done) const; // world map tab
+
+    // Quick Race track lock (0x0026b438, called through 0x00271a90 flags bit 0). A race is playable
+    // when any 0x34a11 event that runs it either marks the slot as unlocked from the start (bit 1 of
+    // the slot's flag byte, 0x00263858) or is complete in the profile (0x00268bd8).
+    bool TrackUnlocked(int race, const std::vector<uint32_t> &done) const;
 
 private:
     std::vector<Event> m_events;

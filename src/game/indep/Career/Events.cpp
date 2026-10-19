@@ -61,8 +61,10 @@ bool EventTable::Load(const uint8_t *bundle, size_t size)
         e.special = p[0x0d] == 1;
         e.listed = p[0x7f] != 0;
         const uint8_t races = p[0x7e];
-        for (uint8_t r = 0; r < races && r < 3; ++r)
+        for (uint8_t r = 0; r < races && r < 3; ++r) {
             e.races.push_back(S16(p, 0x18 + r * 4));
+            e.raceFlags.push_back(p[0x1a + r * 4]); // +2 of the 4-byte slot
+        }
         m_events.push_back(std::move(e));
     }
     size_t series = 0, withRaces = 0;
@@ -145,6 +147,21 @@ bool EventTable::EventAvailable(const Event &e, const std::vector<uint32_t> &don
 bool EventTable::AreaAvailable(int area, const std::vector<uint32_t> &done) const
 {
     return area <= 1 || StageCleared(area - 1, done);
+}
+
+// 0x0026b438: walk every 0x34a11 event that runs this race (0x002635d8); the race is unlocked if
+// any of them passes 0x0026b3a8 -- the slot's flag bit 1 (0x00263858, "starter") or the event is
+// complete (0x00268bd8). The original returns false only when it runs out of events without a pass.
+bool EventTable::TrackUnlocked(int race, const std::vector<uint32_t> &done) const
+{
+    for (const Event &e : m_events)
+        for (size_t i = 0; i < e.races.size(); ++i)
+            if (e.races[i] == race) {
+                const uint8_t flags = i < e.raceFlags.size() ? e.raceFlags[i] : 0;
+                if ((flags & 2) != 0 || Done(e.id, done))
+                    return true;
+            }
+    return false;
 }
 
 } // namespace Career

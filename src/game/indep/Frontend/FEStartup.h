@@ -85,6 +85,11 @@ public:
     // 0x00292280: start the boot flow by pushing the first package in the sequence.
     void Start();
 
+    // The console reads the memory card at boot and keeps the career profile in 0x004f1744; the
+    // Quick Race track locks query that profile (0x0026b438 through 0x00271a90, ISSUES #157).
+    // Called once the event table is loaded (the dev aids read it).
+    void LoadBootProfile();
+
     // 0x0023b118: advance from fromPkgName to the next package in the startup sequence.
     void Advance(const char *fromPkgName);
 
@@ -163,6 +168,7 @@ private:
     size_t m_wmSel = 0;
     std::vector<const Career::Event *> m_wmEvents;
     bool m_careerEventRun = false; // the running world session is a career event started from the map
+    std::vector<bool> m_trackLocked; // per m_tracks entry: Quick Race lock (0x001facc0 item +8, #157)
     std::vector<int> m_cribActions;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode
     // 0x21961) and Career Garage (0x002592c0, mode 0xc11) through it; the port performs the card

@@ -164,6 +164,12 @@ void FEStartupSequence::Start()
     m_engine->PushPackage(m_screens[0].c_str(), 0, 0xff);
 }
 
+void FEStartupSequence::LoadBootProfile()
+{
+    if (!m_profile.valid)
+        LoadCareerProfile();
+}
+
 void FEStartupSequence::Advance(const char *fromPkgName)
 {
     // 0x0023b118: find fromPkgName in the startup list and switch to the next screen.
@@ -793,21 +799,33 @@ static uint32_t TrackIcon(const RaceInfo &r, int raceType)
 
 void FEStartupSequence::HandleQRTrackSelectLoaded(FEPackage *pkg)
 {
+    // 0x00271a90(flags = 1, race, 0, 0) -> 0x00271018 -> 0x0026b438: a track is playable when a
+    // 0x34a11 event that runs it marks the slot as a starter (flag bit 1) or is complete in the
+    // profile; iGpffffdf68 (NFSU2_UNLOCK_ALL) unlocks everything. Locked tracks stay in the list and
+    // show the padlock icon (0x001f9d28 returns 0xf05704ac when the item's +8 is set, 0x001facc0).
+    constexpr uint32_t kLockIcon = 0xf05704ac;
+    const bool unlockAll = getenv("NFSU2_UNLOCK_ALL") != nullptr;
+    const Career::EventTable &events = Career::EventTable::Get();
     std::vector<FEIconScroller::Def> defs;
     m_tracks.clear();
+    m_trackLocked.clear();
+    size_t lockedCount = 0;
     for (const RaceInfo &r : m_fe->Races()) {
         if (!TrackOffered(r, m_raceType))
             continue;
-        // Locked tracks (0x00271a90, career progress) are not modelled: all are offered.
+        const bool locked = !unlockAll && !events.TrackUnlocked(r.number, m_profile.completedEvents);
         char label[32];
         snprintf(label, sizeof(label), "TRACK_NAME_%d", r.number);
-        defs.push_back({TrackIcon(r, m_raceType), bStringHash(label)});
+        defs.push_back({locked ? kLockIcon : TrackIcon(r, m_raceType), bStringHash(label)});
         m_tracks.push_back(r);
+        m_trackLocked.push_back(locked);
+        lockedCount += locked;
     }
     size_t slots = 0;
     for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext())
         slots += o->NameHash == bStringHash("TRACK_ICON");
-    printf("[Menu] track select: %zu tracks for race type %d (%zu TRACK_ICON objects)\n", m_tracks.size(), m_raceType, slots);
+    printf("[Menu] track select: %zu tracks for race type %d (%zu TRACK_ICON objects, %zu locked)\n",
+           m_tracks.size(), m_raceType, slots, lockedCount);
     m_scroller.Setup(pkg, defs, 0, "ICON_MASTER", "TRACK_ICON"); // 0x0029af60 args
     // Title per mode (0x42adb44c): quick race / split screen track select.
     FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, m_raceMode == 4 ? 0x1bf733bd : 0xe5d63bb5);
@@ -848,8 +866,15 @@ void FEStartupSequence::HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg)
     if (m_scroller.Package() != pkg)
         return;
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        const size_t sel = m_scroller.Selected();
+        // 0x001fa6e8: Accept returns without starting when the highlighted item's +8 is set (locked
+        // track, #157); the padlock icon is the only feedback in the original too.
+        if (sel < m_trackLocked.size() && m_trackLocked[sel]) {
+            printf("[Menu] track %d is locked\n", m_tracks[sel].number);
+            return;
+        }
         if (!m_tracks.empty()) {
-            m_raceNumber = m_tracks[m_scroller.Selected()].number; // 0x001fa998: race settings
+            m_raceNumber = m_tracks[sel].number; // 0x001fa998: race settings
             printf("[Menu] track %d\n", m_raceNumber);
         }
         SwitchFlow(pkg->GetName(), QuickRaceNext(pkg->GetName()));

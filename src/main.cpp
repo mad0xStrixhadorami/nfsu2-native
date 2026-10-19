@@ -192,6 +192,7 @@ int main(int argc, char **argv)
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
+        startup.LoadBootProfile();
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
         if (bootPkg)
@@ -234,6 +235,7 @@ int main(int argc, char **argv)
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
+        startup.LoadBootProfile();
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)
             engine->UnloadPackage(bootPkg);
@@ -267,8 +269,8 @@ int main(int argc, char **argv)
             printf("[Career] %3zu %08x stage %3u region %u kind %u purse %5u respect %3u%s%s races", i,
                    e.id, unsigned(e.stage), unsigned(e.region), unsigned(e.kind), e.purse, e.respect,
                    e.special ? " special" : "", e.listed ? " listed" : "");
-            for (int16_t r : e.races)
-                printf(" %d", r);
+            for (size_t r = 0; r < e.races.size(); ++r)
+                printf(" %d/%02x", e.races[r], r < e.raceFlags.size() ? e.raceFlags[r] : 0);
             printf("\n");
             if (getenv("NFSU2_EVENTS_RAW")) {
                 printf("[Raw] %3zu", i);
