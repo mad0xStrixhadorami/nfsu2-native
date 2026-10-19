@@ -1289,6 +1289,25 @@ void FENativeInterface::RenderObject(FEObject *pObject)
         DrawImage(pObject);
         break;
     case FE_String:
+        if (pObject == m_textScroll.obj && !m_textScroll.lines.empty()) {
+            const TextScroll &ts = m_textScroll;
+            FEString *str = static_cast<FEString *>(pObject);
+            const float total = ts.lines.size() * ts.lineHeight + (ts.bottom - ts.top);
+            const float scroll = std::fmod((SDL_GetTicks() - ts.startMs) * 0.001f * ts.speed, total);
+            float cx, cy;
+            GetCenter(pObject, cx, cy);
+            for (size_t i = 0; i < ts.lines.size(); ++i) {
+                const float y = ts.startY + i * ts.lineHeight - scroll;
+                if (y < ts.top || y > ts.bottom || ts.lines[i].empty())
+                    continue;
+                str->SetString(ts.lines[i].c_str());
+                str->Flags |= 0x2u | 0x400000u;
+                SetCenter(pObject, cx, y);
+                DrawString(pObject);
+            }
+            SetCenter(pObject, cx, cy);
+            break;
+        }
         DrawString(pObject);
         break;
     case FE_Movie:
@@ -1533,8 +1552,21 @@ void FENativeInterface::DrawSubtitles(ActiveMovie &m)
     DrawString(&label);
 }
 
+void FENativeInterface::StartTextScroll(FEPackage *pkg, uint32_t objHash, std::vector<std::string> lines,
+                                        float startY, float lineHeight, float speed, float top, float bottom)
+{
+    FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr;
+    if (!obj || obj->Type != FE_String)
+        return;
+    m_textScroll = TextScroll{obj, std::move(lines), startY, lineHeight, speed, top, bottom, SDL_GetTicks()};
+    if (obj->GetObjData())
+        obj->GetObjData()->Size.x = obj->GetObjData()->Size.y = 0.7f; // the 0.7 text size the rest of the UI uses
+}
+
 bool FENativeInterface::PackageWillUnload(FEPackage *pkg)
 {
+    if (m_textScroll.obj && pkg->FindObjectByGUID(m_textScroll.obj->GUID) == m_textScroll.obj)
+        m_textScroll = TextScroll();
     m_movies.erase(std::remove_if(m_movies.begin(), m_movies.end(), [pkg](const ActiveMovie &m) { return m.pkg == pkg; }),
                    m_movies.end());
     for (auto it = m_movieNames.begin(); it != m_movieNames.end();)

@@ -281,6 +281,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCareerCarSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "Credits.fng") == 0) {
+        HandleCreditsLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         HandleMemcardLoaded(pkg);
         return;
@@ -1430,6 +1434,38 @@ void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pk
         m_cribRequested = true;
         RequestRace();
     }
+}
+
+// Credits.fng (the options carousel's Credits entry; OMCredits / CreditsScreen / CreditsArea strings in the
+// executable, text from "CREDITS\%s%s.TXT" = language + region suffix, here CREDITS\UK_ENGLISH.TXT for
+// the PAL English build). The package carries one centred template string (0xe6093486 "DEFAULT STRING",
+// y 291, below the 360 px panel); the screen repeats it per line and scrolls the lines up the panel.
+// The file is UTF-16LE with a BOM, CRLF lines. The port draws the template once per visible line
+// (FENativeInterface::StartTextScroll); accented letters outside ASCII are shown as '?' (the game
+// maps them through its font conversion table).
+void FEStartupSequence::HandleCreditsLoaded(FEPackage *pkg)
+{
+    std::vector<uint8_t> raw = m_fe->ReadGameFile("CREDITS\\UK_ENGLISH.TXT");
+    std::vector<std::string> lines;
+    if (raw.size() >= 4 && raw[0] == 0xff && raw[1] == 0xfe) {
+        std::string cur;
+        for (size_t i = 2; i + 1 < raw.size(); i += 2) {
+            const uint16_t c = uint16_t(raw[i] | (raw[i + 1] << 8));
+            if (c == '\r')
+                continue;
+            if (c == '\n') {
+                lines.push_back(cur);
+                cur.clear();
+            } else {
+                cur += c < 0x80 ? char(c) : '?';
+            }
+        }
+        if (!cur.empty())
+            lines.push_back(cur);
+    }
+    printf("[Menu] credits: %zu lines\n", lines.size());
+    FENativeInterface::SetVisible(pkg, 0xe6093486, true);
+    m_fe->StartTextScroll(pkg, 0xe6093486, std::move(lines), 190.0f, 19.0f, 28.0f, -170.0f, 172.0f);
 }
 
 // MC_Main.fng (create 0x00225f50, ctor 0x00226720, dispatch 0x00228700): the card status screen that

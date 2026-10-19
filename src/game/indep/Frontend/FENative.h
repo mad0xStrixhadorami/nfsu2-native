@@ -63,6 +63,7 @@ public:
     // Called for every FEng sound notification (UI sounds, ISSUES.md #126).
     void SetSoundHook(std::function<void(uint32_t msg)> hook) { m_soundHook = std::move(hook); }
     void SetFileReader(std::function<std::vector<uint8_t>(const char *)> reader) { m_readFile = std::move(reader); }
+    std::vector<uint8_t> ReadGameFile(const char *name) const { return m_readFile ? m_readFile(name) : std::vector<uint8_t>(); }
     // 0x00290cb8 (FEngMovieStarter): start the movie for a FE_Movie object, or report it done.
     void StartMovie(FEObject *obj, FEPackage *pkg);
     // 0x00259e48 / 0x00292f20 (FEngSetMovieName): set the movie a FE_Movie object plays.
@@ -191,6 +192,11 @@ public:
     void NotifySoundMessage(u32 Message, FEObject *pObject, u32 ControlMask, u32 pPackagePtr) override;
     void BeginPackageRendering(FEPackage *) override {}
     void EndPackageRendering(FEPackage *) override {}
+    // Credits.fng (ISSUES #158): the package ships one template string ("DEFAULT STRING", 0xe6093486)
+    // that the game's credits screen repeats per line while scrolling it up the panel. The host
+    // draws the template once per visible line, moving it up at `speed` px/s inside [top, bottom].
+    void StartTextScroll(FEPackage *pkg, uint32_t objHash, std::vector<std::string> lines, float startY,
+                         float lineHeight, float speed, float top, float bottom);
     void RenderCarPreviewOverlay(); // Stand-in overlay for the unported UG2 car renderer.
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
@@ -277,6 +283,12 @@ private:
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
+    struct TextScroll {
+        FEObject *obj = nullptr;
+        std::vector<std::string> lines;
+        float startY = 0, lineHeight = 24, speed = 30, top = -180, bottom = 180;
+        uint32_t startMs = 0;
+    } m_textScroll;
     std::function<void(uint32_t)> m_soundHook;
     SDL_GameController *m_controller = nullptr;
     u32 m_simulatedPadMask = 0;
