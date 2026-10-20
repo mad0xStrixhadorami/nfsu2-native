@@ -23,6 +23,10 @@ public:
     };
 
     void Setup(FEPackage *pkg, std::vector<Widget> widgets);
+    // Drop the current list when its screen is left.  The engine can reuse a package's address
+    // for the next screen, so a stale m_pkg is indistinguishable from the new top package by
+    // pointer alone (ISSUES #179).
+    void Clear();
     // Returns true if the message was consumed (Up/Down/Left/Right).
     bool HandleMessage(uint32_t msg);
     // FEHASH_INITCOMPLETE: the screen's intro scripts are done; set every row's highlight state.

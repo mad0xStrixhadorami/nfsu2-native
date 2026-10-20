@@ -693,12 +693,20 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     }
     FEPackage *list = m_widgets.Package();
     if (pressed && list && list->IsInputEnabled() && m_engine->GetPackageList()->GetFirstPackage() == list) {
+        // A list belongs to exactly one options screen.  The engine releases and reuses package
+        // storage, so a stale m_pkg could otherwise alias the next screen and eat its Left/Right
+        // input (the Quick Race mode selector has no OPTION_DATA_3/5 row objects, ISSUES #179).
+        const char *name = list->GetName();
+        if (!name || (strcasecmp(name, "UI_Options.fng") != 0 && strcasecmp(name, "UI_QRModeOptions.fng") != 0)) {
+            m_widgets.Clear();
+            return;
+        }
         static const struct { uint32_t bit, msg; } kMap[] = {{0x01, kMsgPadUp},    {0x02, kMsgPadDown},
                                                              {0x04, kMsgPadLeft},  {0x08, kMsgPadRight},
                                                              {0x10, kMsgPadAccept}, {0x20, kMsgPadBack}};
         for (auto &m : kMap)
             if (pressed & m.bit) {
-                if (strcasecmp(list->GetName(), "UI_Options.fng") == 0)
+                if (strcasecmp(name, "UI_Options.fng") == 0)
                     HandleOptionsMessage(m.msg, list);
                 else
                     HandleQRModeOptionsMessage(m.msg, list);
@@ -3336,6 +3344,7 @@ void FEStartupSequence::SwitchFlow(const char *from, const char *to)
     if (!to)
         return;
     printf("[Menu] %s -> %s\n", from, to);
+    m_widgets.Clear();
     m_navPending = true;
     m_engine->QueuePackageSwitch(to, 0xff);
 }
@@ -3348,6 +3357,7 @@ float FEStartupSequence::TickSeconds() const
 void FEStartupSequence::NavigateTo(const char *from, const char *target)
 {
     printf("[Menu] %s -> %s\n", from, target);
+    m_widgets.Clear();
     m_backStack.push_back(from);
     m_navPending = true;
     m_engine->QueuePackageSwitch(target, 0xff);

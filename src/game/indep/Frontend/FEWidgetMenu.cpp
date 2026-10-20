@@ -91,6 +91,14 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
     Refresh();
 }
 
+void FEWidgetMenu::Clear()
+{
+    m_pkg = nullptr;
+    m_widgets.clear();
+    m_selected = 0;
+    m_highlighted = SIZE_MAX;
+}
+
 void FEWidgetMenu::OnInitComplete()
 {
     m_highlighted = SIZE_MAX;
