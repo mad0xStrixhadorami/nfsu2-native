@@ -55,15 +55,18 @@ public:
     // are mounted at the body's position markers, while engine accents are car-specific solids that
     // already live in car space.  Style 0 keeps the stock part (no extra solid).
     struct InstalledParts {
-        int roof = 0;    // 1..17 -> ROOF_STYLE<NN>[_DUAL|_OFFSET][_CF], LOD _A
-        int exhaust = 0; // 1..10 -> EXHAUST_STYLE<NN>_LEVEL1_A
-        int engine = 0;  // 1..3  -> <CAR>_STYLE<NN>_ENGINE_A
-        bool roofDual = false, roofOffset = false, roofCarbon = false;
+        int roof = 0;     // 1..17 -> ROOF_STYLE<NN>[_DUAL|_OFFSET][_CF], LOD _A
+        int exhaust = 0;  // 1..10 -> EXHAUST_STYLE<NN>_LEVEL1_A
+        int engine = 0;   // 1..3  -> <CAR>_STYLE<NN>_ENGINE_A
+        int spoiler = 0;  // 1..40 -> SPOILER_STYLE<NN>[_CF]_A
+        bool roofDual = false, roofOffset = false, roofCarbon = false, spoilerCarbon = false;
         std::vector<uint8_t> roofGeometry;    // CARS\ROOF\GEOMETRY.BIN
         std::vector<uint8_t> exhaustGeometry; // CARS\EXHAUST\GEOMETRY.BIN
+        std::vector<uint8_t> spoilerGeometry; // CARS\SPOILER\GEOMETRY.BIN
     };
-    // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n> and
-    // NFSU2_PART_ENGINE=<n>.  Loads the two universal part files through `read` (game path -> bytes).
+    // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n>,
+    // NFSU2_PART_ENGINE=<n> and NFSU2_PART_SPOILER=<n>[_CF].  Loads the universal part files through
+    // `read` (game path -> bytes).
     static InstalledParts InstalledPartsFromEnvironment(
         const std::function<std::vector<uint8_t>(const char *)> &read);
 

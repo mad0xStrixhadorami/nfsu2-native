@@ -21,6 +21,7 @@ bool Contains(const std::string &s, const char *part) { return s.find(part) != s
 // 0x13401a marker name hashes (bStringHash of the marker names): the base solid carries the roof
 // scoop mount and each rear bumper one exhaust-tip mount (ISSUES.md #178).
 constexpr uint32_t kRoofScoopMarker = 0x90c81258;    // ROOF_SCOOP
+constexpr uint32_t kSpoilerMarker = 0xc93b73fd;     // SPOILER, base solid (-2.17 0.00 0.79)
 constexpr uint32_t kLeftExhaustMount = 0x69fdf59d;  // bumper exhaust-tip mount, left (-2.16, +0.25, 0.10)
 constexpr uint32_t kRightExhaustMount = 0xe2527054; // bumper exhaust-tip mount, right (-2.16, -0.25, 0.10)
 
@@ -166,10 +167,22 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
     }
     if (const char *engine = getenv("NFSU2_PART_ENGINE"))
         parts.engine = atoi(engine);
-    if (parts.roof || parts.exhaust || parts.engine)
+    if (const char *spoiler = getenv("NFSU2_PART_SPOILER")) {
+        parts.spoiler = atoi(spoiler);
+        parts.spoilerCarbon = strstr(spoiler, "CF") != nullptr;
+        if (parts.spoiler > 0 && read)
+            parts.spoilerGeometry = read("CARS\\SPOILER\\GEOMETRY.BIN");
+        if (parts.spoiler > 0 && parts.spoilerGeometry.empty()) {
+            fprintf(stderr, "[Parts] spoiler %d: CARS\\SPOILER\\GEOMETRY.BIN is missing\n", parts.spoiler);
+            parts.spoiler = 0;
+        }
+    }
+    if (parts.roof || parts.exhaust || parts.engine || parts.spoiler)
         printf("[Parts] installed roof %d%s%s%s exhaust %d engine %d\n", parts.roof,
                parts.roofDual ? " dual" : "", parts.roofOffset ? " offset" : "", parts.roofCarbon ? " carbon" : "",
                parts.exhaust, parts.engine);
+    if (parts.spoiler)
+        printf("[Parts] installed spoiler %d%s\n", parts.spoiler, parts.spoilerCarbon ? " carbon" : "");
     return parts;
 }
 
@@ -210,6 +223,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
     const SolidMesh::NamedSolid *frontBrake = nullptr, *rearBrake = nullptr;
     const SolidMesh::PositionMarker *roofMarker = nullptr, *exhaustMarker = nullptr;
+    const SolidMesh::PositionMarker *spoilerMarker = nullptr;
     float bumperRear = 0.0f; // rear bumper bbox min x (car space)
     // Service/traffic vehicles (TAXI, BUS, ...) have no tuning kits: their parts are <NAME>_BODY_A and
     // <NAME>_TIRE_FRONT_A (ISSUES #130), so accept those when there is no KIT00 part at all.
@@ -255,7 +269,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         }
         if (Contains(n, "SPOILER")) {
             // The stock KIT00 spoiler is a detached solid whose header transform mounts it on the
-            // trunk (#175).  It was previously skipped with the other origin-centred parts.
+            // trunk (#175).  An installed aftermarket wing replaces it (ISSUES #181).
+            if (parts && parts->spoiler > 0)
+                continue;
             const size_t before = m_model.size();
             AddTransformed(s, m_model, m_triTex);
             m_triSpoiler.resize(m_model.size(), 0);
@@ -275,8 +291,10 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // Mount points for the installed aftermarket parts: the base solid carries ROOF_SCOOP and
         // the rear bumper the exhaust-tip mounts (left, else right).  The bumper's rearmost face is
         // the reference for seating the tip (ISSUES #180).
-        if (Contains(n, "_BASE_"))
+        if (Contains(n, "_BASE_")) {
             roofMarker = s.FindMarker(kRoofScoopMarker);
+            spoilerMarker = s.FindMarker(kSpoilerMarker);
+        }
         if (Contains(n, "REAR_BUMPER")) {
             exhaustMarker = s.FindMarker(kLeftExhaustMount) ? s.FindMarker(kLeftExhaustMount)
                                                             : s.FindMarker(kRightExhaustMount);
@@ -437,6 +455,30 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         } else {
             fprintf(stderr, "[Parts] exhaust tip %s: %s\n", name,
                     it == exhaust.end() ? "solid not found" : "no LEFT/RIGHT_EXHAUST marker on the bumper");
+        }
+    }
+    // Installed aftermarket spoiler (#181): the universal file's 40 styles are a display line-up
+    // (header translations step along x/y), so the chosen solid is mounted at the base solid's
+    // SPOILER marker, the same point the stock KIT00 spoiler's header transform uses.
+    if (parts && parts->spoiler > 0 && !parts->spoilerGeometry.empty()) {
+        char name[48];
+        snprintf(name, sizeof(name), "SPOILER_STYLE%02d%s_A", parts->spoiler, parts->spoilerCarbon ? "_CF" : "");
+        std::vector<SolidMesh::NamedSolid> wings =
+            SolidMesh::DecodeNamedSolids(parts->spoilerGeometry.data(), parts->spoilerGeometry.size());
+        const auto it = std::find_if(wings.begin(), wings.end(), [name](const SolidMesh::NamedSolid &s) {
+            return s.name == name;
+        });
+        if (it != wings.end() && spoilerMarker) {
+            const size_t before = m_model.size();
+            AddMounted(*it, *spoilerMarker, m_model, m_triTex);
+            m_triSpoiler.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triSpoiler[i] = 1;
+            printf("[Parts] spoiler %s: %zu triangles at (%.2f %.2f %.2f)\n", name, m_model.size() - before,
+                   spoilerMarker->matrix[12], spoilerMarker->matrix[13], spoilerMarker->matrix[14]);
+        } else {
+            fprintf(stderr, "[Parts] spoiler %s: %s\n", name,
+                    it == wings.end() ? "solid not found" : "no SPOILER marker on the body");
         }
     }
     m_triRim.resize(m_model.size(), 0);
