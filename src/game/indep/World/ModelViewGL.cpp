@@ -9,7 +9,8 @@
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
                  float yaw, SDL_Color paint, const std::vector<uint32_t> *textures, size_t wheelsFrom,
                  const std::vector<uint8_t> *rimMask, SDL_Color rimPaint,
-                 const std::vector<uint8_t> *caliperMask, SDL_Color caliperPaint)
+                 const std::vector<uint8_t> *caliperMask, SDL_Color caliperPaint,
+                 const std::vector<uint8_t> *mirrorMask, SDL_Color mirrorPaint)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -77,7 +78,10 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
             continue;
         float lit = 0.3f + 0.7f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
         float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
-        if (i >= wheelsFrom) {
+        const bool mirror = mirrorMask && mirrorMask->size() == model.size() && (*mirrorMask)[i];
+        if (mirror)
+            rgb[0] = mirrorPaint.r / 255.0f, rgb[1] = mirrorPaint.g / 255.0f, rgb[2] = mirrorPaint.b / 255.0f;
+        else if (i >= wheelsFrom) {
             const bool rim = rimMask && rimMask->size() == model.size() && (*rimMask)[i];
             const bool caliper = caliperMask && caliperMask->size() == model.size() && (*caliperMask)[i];
             if (rim)

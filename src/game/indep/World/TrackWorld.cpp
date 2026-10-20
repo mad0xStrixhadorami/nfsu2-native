@@ -397,9 +397,10 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
 
 size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
                           SDL_Color paint, const std::vector<uint8_t> *rims, SDL_Color rimPaint,
-                          const std::vector<uint8_t> *calipers, SDL_Color caliperPaint)
+                          const std::vector<uint8_t> *calipers, SDL_Color caliperPaint,
+                          const std::vector<uint8_t> *mirrors, SDL_Color mirrorPaint)
 {
-    Car car{model, textures, paint, rims, rimPaint, calipers, caliperPaint, {}, {}, {}};
+    Car car{model, textures, paint, rims, rimPaint, calipers, caliperPaint, mirrors, mirrorPaint, {}, {}, {}};
     car.order.resize(model->size());
     for (size_t i = 0; i < car.order.size(); ++i)
         car.order[i] = i;
@@ -448,11 +449,16 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     const bool textured = car.textures && car.textures->size() == car.model->size();
     const bool rimmed = car.rims && car.rims->size() == car.model->size();
     const bool calipered = car.calipers && car.calipers->size() == car.model->size();
+    const bool mirrored = car.mirrors && car.mirrors->size() == car.model->size();
     for (size_t i : car.order) {
         const SolidMesh::Triangle &t = (*car.model)[i];
         float rgb[3];
         uint32_t tex = CarMaterial(textured ? (*car.textures)[i] : 0, car.paint, rgb);
-        if (rimmed && (*car.rims)[i]) {
+        if (mirrored && (*car.mirrors)[i]) {
+            rgb[0] = car.mirrorPaint.r / 255.0f, rgb[1] = car.mirrorPaint.g / 255.0f,
+            rgb[2] = car.mirrorPaint.b / 255.0f;
+            tex = 0;
+        } else if (rimmed && (*car.rims)[i]) {
             // The wheel texture's rim area is dark and would swallow the paint; draw the rim face
             // untextured so the chosen colour reads like the car-shop preview (#172).
             rgb[0] = car.rimPaint.r / 255.0f, rgb[1] = car.rimPaint.g / 255.0f, rgb[2] = car.rimPaint.b / 255.0f;

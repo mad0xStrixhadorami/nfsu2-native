@@ -55,7 +55,9 @@ public:
                   SDL_Color paint, const std::vector<uint8_t> *rims = nullptr,
                   SDL_Color rimPaint = {38, 38, 38, 255},
                   const std::vector<uint8_t> *calipers = nullptr,
-                  SDL_Color caliperPaint = {128, 128, 128, 255});
+                  SDL_Color caliperPaint = {128, 128, 128, 255},
+                  const std::vector<uint8_t> *mirrors = nullptr,
+                  SDL_Color mirrorPaint = {60, 110, 210, 255});
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
@@ -160,6 +162,8 @@ private:
         SDL_Color rimPaint = {38, 38, 38, 255};
         const std::vector<uint8_t> *calipers = nullptr; // 1 = painted brake caliper (#173)
         SDL_Color caliperPaint = {128, 128, 128, 255};
+        const std::vector<uint8_t> *mirrors = nullptr; // 1 = painted mirror housing (#174)
+        SDL_Color mirrorPaint = {60, 110, 210, 255};
         std::vector<size_t> order;  // model triangles grouped by texture
         std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
         std::vector<RTri> render;   // same, textured and lit, in `order`

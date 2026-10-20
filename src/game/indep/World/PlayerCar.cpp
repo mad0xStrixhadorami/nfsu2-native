@@ -89,6 +89,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triTex.clear();
     m_triRim.clear();
     m_triCaliper.clear();
+    m_triMirror.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
@@ -124,7 +125,14 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             continue;
         if (Contains(n, "_BODY_"))
             body = &s;
+        const size_t before = m_model.size();
         AddFiltered(s, m_model, m_triTex);
+        if (Contains(n, "SIDE_MI")) {
+            // The mirror solid has a 9-triangle glass in slot 0 and the painted housing in slot 1.
+            m_triMirror.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triMirror[i] = (m_model[i].tex == 1) ? 1 : 0;
+        }
     }
     if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))
         printf("[Wheel] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) textures %zu\n", frontWheel->name.c_str(),
@@ -233,6 +241,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     }
     m_triRim.resize(m_model.size(), 0);
     m_triCaliper.resize(m_model.size(), 0);
+    m_triMirror.resize(m_model.size(), 0);
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }
