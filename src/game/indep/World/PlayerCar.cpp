@@ -104,6 +104,14 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triMirror.clear();
     m_triSpoiler.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
+    // Dev aid: NFSU2_SOLID_DUMP=1 lists every named solid with its header transform and bounds,
+    // for finding parts the port has not mounted yet (ISSUES #178).
+    if (getenv("NFSU2_SOLID_DUMP")) {
+        for (const SolidMesh::NamedSolid &s : solids)
+            printf("[Solid] %-30s tris %4zu tex %zu bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) mount (%.2f %.2f %.2f)\n",
+                   s.name.c_str(), s.tris.size(), s.textures.size(), s.bboxMin[0], s.bboxMin[1], s.bboxMin[2],
+                   s.bboxMax[0], s.bboxMax[1], s.bboxMax[2], s.transform[12], s.transform[13], s.transform[14]);
+    }
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
     const SolidMesh::NamedSolid *frontBrake = nullptr, *rearBrake = nullptr;
