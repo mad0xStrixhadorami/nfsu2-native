@@ -399,10 +399,13 @@ size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const s
                           SDL_Color paint, const std::vector<uint8_t> *rims, SDL_Color rimPaint,
                           const std::vector<uint8_t> *calipers, SDL_Color caliperPaint,
                           const std::vector<uint8_t> *mirrors, SDL_Color mirrorPaint,
-                          const std::vector<uint8_t> *spoilers, SDL_Color spoilerPaint)
+                          const std::vector<uint8_t> *spoilers, SDL_Color spoilerPaint,
+                          const std::vector<uint8_t> *roofs, SDL_Color roofPaint,
+                          const std::vector<uint8_t> *engines, SDL_Color enginePaint,
+                          const std::vector<uint8_t> *exhausts, SDL_Color exhaustPaint)
 {
     Car car{model, textures, paint, rims, rimPaint, calipers, caliperPaint, mirrors, mirrorPaint,
-            spoilers, spoilerPaint, {}, {}, {}};
+            spoilers, spoilerPaint, roofs, roofPaint, engines, enginePaint, exhausts, exhaustPaint, {}, {}, {}};
     car.order.resize(model->size());
     for (size_t i = 0; i < car.order.size(); ++i)
         car.order[i] = i;
@@ -453,6 +456,9 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     const bool calipered = car.calipers && car.calipers->size() == car.model->size();
     const bool mirrored = car.mirrors && car.mirrors->size() == car.model->size();
     const bool spoilered = car.spoilers && car.spoilers->size() == car.model->size();
+    const bool roofed = car.roofs && car.roofs->size() == car.model->size();
+    const bool engined = car.engines && car.engines->size() == car.model->size();
+    const bool exhausted = car.exhausts && car.exhausts->size() == car.model->size();
     for (size_t i : car.order) {
         const SolidMesh::Triangle &t = (*car.model)[i];
         float rgb[3];
@@ -473,6 +479,17 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         } else if (calipered && (*car.calipers)[i]) {
             rgb[0] = car.caliperPaint.r / 255.0f, rgb[1] = car.caliperPaint.g / 255.0f,
             rgb[2] = car.caliperPaint.b / 255.0f;
+            tex = 0;
+        } else if (roofed && (*car.roofs)[i]) {
+            rgb[0] = car.roofPaint.r / 255.0f, rgb[1] = car.roofPaint.g / 255.0f, rgb[2] = car.roofPaint.b / 255.0f;
+            tex = 0;
+        } else if (engined && (*car.engines)[i]) {
+            rgb[0] = car.enginePaint.r / 255.0f, rgb[1] = car.enginePaint.g / 255.0f,
+            rgb[2] = car.enginePaint.b / 255.0f;
+            tex = 0;
+        } else if (exhausted && (*car.exhausts)[i]) {
+            rgb[0] = car.exhaustPaint.r / 255.0f, rgb[1] = car.exhaustPaint.g / 255.0f,
+            rgb[2] = car.exhaustPaint.b / 255.0f;
             tex = 0;
         }
         Tri w;

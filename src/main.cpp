@@ -676,8 +676,11 @@ int main(int argc, char **argv)
             const uint8_t *rec = fe.CarRecordData(fe.PreviewCarName());
             printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
         }
+        PlayerCar::InstalledParts installedParts = PlayerCar::InstalledPartsFromEnvironment(
+            [fs](const char *path) { return ReadGameFile(*fs, path); });
         if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
-                                        fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
+                                        fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr,
+                                        &installedParts)) {
             // The career/QR paint (OwnedCar::paintSet/paint) selects a GLOBALB color (#167/#168).
             world.AddCar(&car.Model(), &car.TriangleTextures(),
                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
@@ -695,7 +698,17 @@ int main(int argc, char **argv)
                          &car.TriangleSpoilers(),
                          fe.ColorForPaint(fe.PreviewSpoilerSet(), fe.PreviewSpoilerPaint(),
                                           fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                                           SDL_Color{40, 90, 200, 255})));
+                                                           SDL_Color{40, 90, 200, 255})),
+                         &car.TriangleRoofScoops(),
+                         fe.ColorForPaint(fe.PreviewRoofSet(), fe.PreviewRoofPaint(),
+                                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
+                                                           SDL_Color{40, 90, 200, 255})),
+                         &car.TriangleEngines(),
+                         fe.ColorForPaint(fe.PreviewEngineSet(), fe.PreviewEnginePaint(),
+                                          SDL_Color{128, 64, 48, 255}),
+                         &car.TriangleExhausts(),
+                         fe.ColorForPaint(fe.PreviewExhaustSet(), fe.PreviewExhaustPaint(),
+                                          SDL_Color{150, 150, 150, 255}));
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);

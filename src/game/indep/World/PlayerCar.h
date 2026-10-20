@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -49,9 +50,28 @@ public:
     // Straight-line run with this drivetrain at full throttle: 0-100 km/h time (s) and top speed (m/s).
     static void Simulate(const Performance &p, float wheelRadius, float &zeroTo100, float &topSpeed);
 
+    // Aftermarket parts installed on this car (ISSUES.md #178).  The shops install whole parts:
+    // roof scoops and exhaust tips come from the universal CARS\ROOF and CARS\EXHAUST geometry and
+    // are mounted at the body's position markers, while engine accents are car-specific solids that
+    // already live in car space.  Style 0 keeps the stock part (no extra solid).
+    struct InstalledParts {
+        int roof = 0;    // 1..17 -> ROOF_STYLE<NN>[_DUAL|_OFFSET][_CF], LOD _A
+        int exhaust = 0; // 1..10 -> EXHAUST_STYLE<NN>_LEVEL1_A
+        int engine = 0;  // 1..3  -> <CAR>_STYLE<NN>_ENGINE_A
+        bool roofDual = false, roofOffset = false, roofCarbon = false;
+        std::vector<uint8_t> roofGeometry;    // CARS\ROOF\GEOMETRY.BIN
+        std::vector<uint8_t> exhaustGeometry; // CARS\EXHAUST\GEOMETRY.BIN
+    };
+    // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n> and
+    // NFSU2_PART_ENGINE=<n>.  Loads the two universal part files through `read` (game path -> bytes).
+    static InstalledParts InstalledPartsFromEnvironment(
+        const std::function<std::vector<uint8_t>(const char *)> &read);
+
     // Assemble the stock body (KIT00 + BASE, highest LOD) from CARS\<name>\GEOMETRY.BIN.
     // wheels (optional): placement from the car database; otherwise estimated from the body.
-    bool LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels = nullptr);
+    // parts (optional): aftermarket parts to mount on top of the stock body (ISSUES.md #178).
+    bool LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels = nullptr,
+                   const InstalledParts *parts = nullptr);
     // Height of the car origin above the ground (wheel radius - centre height; 0 if unknown).
     float RideHeight() const { return m_rideHeight; }
     const std::vector<SolidMesh::Triangle> &Model() const { return m_model; }
@@ -65,6 +85,11 @@ public:
     const std::vector<uint8_t> &TriangleMirrors() const { return m_triMirror; }
     // 1 for the stock spoiler mesh, 0 otherwise (#175).  The solid's header transform mounts it.
     const std::vector<uint8_t> &TriangleSpoilers() const { return m_triSpoiler; }
+    // 1 for an installed aftermarket part (#178): roof scoop, engine accent and muffler tip.  The
+    // three paint cards edit these parts, not the stock geometry.
+    const std::vector<uint8_t> &TriangleRoofScoops() const { return m_triRoof; }
+    const std::vector<uint8_t> &TriangleEngines() const { return m_triEngine; }
+    const std::vector<uint8_t> &TriangleExhausts() const { return m_triExhaust; }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
 
@@ -90,7 +115,9 @@ public:
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
                                                  m_triCaliper = other.m_triCaliper, m_triMirror = other.m_triMirror,
-                                                 m_triSpoiler = other.m_triSpoiler, m_rideHeight = other.m_rideHeight,
+                                                 m_triSpoiler = other.m_triSpoiler, m_triRoof = other.m_triRoof,
+                                                 m_triEngine = other.m_triEngine, m_triExhaust = other.m_triExhaust,
+                                                 m_rideHeight = other.m_rideHeight,
                                                  m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
 
 private:
@@ -102,6 +129,9 @@ private:
     std::vector<uint8_t> m_triCaliper;
     std::vector<uint8_t> m_triMirror;
     std::vector<uint8_t> m_triSpoiler;
+    std::vector<uint8_t> m_triRoof;
+    std::vector<uint8_t> m_triEngine;
+    std::vector<uint8_t> m_triExhaust;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

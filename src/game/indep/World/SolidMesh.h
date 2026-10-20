@@ -39,6 +39,13 @@ extern unsigned long g_exactStrips, g_approxStrips;
 } // namespace SolidMesh
 
 namespace SolidMesh {
+// One 0x13401a position marker: a name hash and a row-vector 4x4 matrix in car space.  The game
+// keeps these on the body (ROOF_SCOOP, SPOILER) and on the bumpers (LEFT/RIGHT_EXHAUST) and uses
+// them to place parts and effects (ISSUES.md #178).
+struct PositionMarker {
+    uint32_t hash = 0;
+    float matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+};
 // One 0x80134010 solid: its (possibly truncated, 27-char) name from the 0x134011 header and its
 // triangles in solid space.
 struct NamedSolid {
@@ -48,10 +55,20 @@ struct NamedSolid {
     // 0x134011 header +0x40: column-major local-to-car matrix (translation in [12..14]).  Most
     // body solids are identity; detached parts such as the stock spoiler carry their mount here.
     float transform[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    std::vector<PositionMarker> markers; // 0x13401a records (0x50 bytes each)
     std::vector<Triangle> tris;
     std::vector<uint32_t> textures; // 0x134012 texture name hashes, indexed by Triangle::tex
+    const PositionMarker *FindMarker(uint32_t markerHash) const
+    {
+        for (const PositionMarker &m : markers)
+            if (m.hash == markerHash)
+                return &m;
+        return nullptr;
+    }
 };
-// Apply NamedSolid::transform to a solid-space point (row-vector convention, translation in [12..14]).
+// Apply a row-vector matrix (translation in [12..14]) to a point.
+Point TransformPoint(const float matrix[16], const Point &p);
+// Apply NamedSolid::transform to a solid-space point.
 Point TransformPoint(const NamedSolid &solid, const Point &p);
 std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size);
 } // namespace SolidMesh

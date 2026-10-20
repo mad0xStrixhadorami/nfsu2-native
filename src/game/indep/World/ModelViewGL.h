@@ -19,6 +19,13 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
                  const std::vector<uint8_t> *mirrorMask = nullptr,
                  SDL_Color mirrorPaint = {60, 110, 210, 255},
                  const std::vector<uint8_t> *spoilerMask = nullptr,
-                 SDL_Color spoilerPaint = {60, 110, 210, 255}); // triangles from wheelsFrom on: dark tyres,
+                 SDL_Color spoilerPaint = {60, 110, 210, 255},
+                 const std::vector<uint8_t> *roofMask = nullptr,
+                 SDL_Color roofPaint = {60, 110, 210, 255},
+                 const std::vector<uint8_t> *engineMask = nullptr,
+                 SDL_Color enginePaint = {128, 64, 48, 255},
+                 const std::vector<uint8_t> *exhaustMask = nullptr,
+                 SDL_Color exhaustPaint = {150, 150, 150, 255}); // triangles from wheelsFrom on: dark tyres,
                                                                 // rimMask in rimPaint, caliperMask in caliperPaint;
-                                                                // mirrorMask / spoilerMask anywhere in their paint
+                                                                // mirrorMask / spoilerMask / aftermarket part
+                                                                // masks anywhere in their paint

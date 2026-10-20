@@ -122,6 +122,30 @@ public:
     }
     uint32_t PreviewSpoilerPaint() const { return m_previewSpoiler; }
     uint32_t PreviewSpoilerSet() const { return m_previewSpoilerSet; }
+    // The paint on the installed aftermarket parts (Roof Scoop / Engine Accents / Muffler Tip
+    // cards, ISSUES.md #178).  index 0 keeps each part's stock colour; the sets are normally
+    // PaintCatalog::kGloss / kHoses / kMufflers.
+    void SetPreviewRoofPaint(uint32_t set, uint32_t index)
+    {
+        m_previewRoofSet = set ? set : PaintCatalog::kGloss;
+        m_previewRoof = index;
+    }
+    uint32_t PreviewRoofPaint() const { return m_previewRoof; }
+    uint32_t PreviewRoofSet() const { return m_previewRoofSet; }
+    void SetPreviewEnginePaint(uint32_t set, uint32_t index)
+    {
+        m_previewEngineSet = set ? set : PaintCatalog::kHoses;
+        m_previewEngine = index;
+    }
+    uint32_t PreviewEnginePaint() const { return m_previewEngine; }
+    uint32_t PreviewEngineSet() const { return m_previewEngineSet; }
+    void SetPreviewExhaustPaint(uint32_t set, uint32_t index)
+    {
+        m_previewExhaustSet = set ? set : PaintCatalog::kMufflers;
+        m_previewExhaust = index;
+    }
+    uint32_t PreviewExhaustPaint() const { return m_previewExhaust; }
+    uint32_t PreviewExhaustSet() const { return m_previewExhaustSet; }
     const PaintCatalog &Paint() const { return m_paint; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
@@ -346,6 +370,9 @@ private:
     std::vector<uint8_t> m_carPreviewCalipers;          // 1 = brake caliper (#173)
     std::vector<uint8_t> m_carPreviewMirrors;           // 1 = painted mirror housing (#174)
     std::vector<uint8_t> m_carPreviewSpoilers;          // 1 = stock spoiler mesh (#175)
+    std::vector<uint8_t> m_carPreviewRoofs;             // 1 = installed roof scoop (#178)
+    std::vector<uint8_t> m_carPreviewEngines;           // 1 = installed engine accent (#178)
+    std::vector<uint8_t> m_carPreviewExhausts;          // 1 = installed muffler tip (#178)
     size_t m_carPreviewWheels = SIZE_MAX;               // first wheel triangle
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
@@ -362,6 +389,12 @@ private:
     uint32_t m_previewMirrorSet = PaintCatalog::kGloss;
     uint32_t m_previewSpoiler = 0; // 0 = body colour; else 1..Count(spoiler set)
     uint32_t m_previewSpoilerSet = PaintCatalog::kGloss;
+    uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)
+    uint32_t m_previewRoofSet = PaintCatalog::kGloss;
+    uint32_t m_previewEngine = 0; // 0 = stock engine accent colour; else 1..Count(hoses set)
+    uint32_t m_previewEngineSet = PaintCatalog::kHoses;
+    uint32_t m_previewExhaust = 0; // 0 = stock steel; else 1..Count(mufflers set)
+    uint32_t m_previewExhaustSet = PaintCatalog::kMufflers;
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;

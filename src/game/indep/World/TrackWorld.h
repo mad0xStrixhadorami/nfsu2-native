@@ -59,7 +59,13 @@ public:
                   const std::vector<uint8_t> *mirrors = nullptr,
                   SDL_Color mirrorPaint = {60, 110, 210, 255},
                   const std::vector<uint8_t> *spoilers = nullptr,
-                  SDL_Color spoilerPaint = {60, 110, 210, 255});
+                  SDL_Color spoilerPaint = {60, 110, 210, 255},
+                  const std::vector<uint8_t> *roofs = nullptr,
+                  SDL_Color roofPaint = {60, 110, 210, 255},
+                  const std::vector<uint8_t> *engines = nullptr,
+                  SDL_Color enginePaint = {128, 64, 48, 255},
+                  const std::vector<uint8_t> *exhausts = nullptr,
+                  SDL_Color exhaustPaint = {150, 150, 150, 255});
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
@@ -168,6 +174,12 @@ private:
         SDL_Color mirrorPaint = {60, 110, 210, 255};
         const std::vector<uint8_t> *spoilers = nullptr; // 1 = stock spoiler (#175)
         SDL_Color spoilerPaint = {60, 110, 210, 255};
+        const std::vector<uint8_t> *roofs = nullptr; // 1 = installed roof scoop (#178)
+        SDL_Color roofPaint = {60, 110, 210, 255};
+        const std::vector<uint8_t> *engines = nullptr; // 1 = installed engine accent (#178)
+        SDL_Color enginePaint = {128, 64, 48, 255};
+        const std::vector<uint8_t> *exhausts = nullptr; // 1 = installed muffler tip (#178)
+        SDL_Color exhaustPaint = {150, 150, 150, 255};
         std::vector<size_t> order;  // model triangles grouped by texture
         std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
         std::vector<RTri> render;   // same, textured and lit, in `order`

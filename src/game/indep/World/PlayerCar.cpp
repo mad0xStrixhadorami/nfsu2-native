@@ -18,6 +18,50 @@ bool EndsWith(const std::string &s, const char *suffix)
 
 bool Contains(const std::string &s, const char *part) { return s.find(part) != std::string::npos; }
 
+// 0x13401a marker name hashes (bStringHash of the marker names): the base solid carries the roof
+// scoop mount and each rear bumper one exhaust-tip mount (ISSUES.md #178).
+constexpr uint32_t kRoofScoopMarker = 0x90c81258;    // ROOF_SCOOP
+constexpr uint32_t kLeftExhaustMount = 0x69fdf59d;  // bumper exhaust-tip mount, left (-2.16, +0.25, 0.10)
+constexpr uint32_t kRightExhaustMount = 0xe2527054; // bumper exhaust-tip mount, right (-2.16, -0.25, 0.10)
+
+// A solid from a universal part file (CARS\ROOF / CARS\EXHAUST) is modelled around its own origin;
+// its header translation is the shop display line-up, so the car's position marker is the mount.
+void AddMounted(const SolidMesh::NamedSolid &s, const SolidMesh::PositionMarker &marker,
+                std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
+{
+    for (const SolidMesh::Triangle &t : s.tris) {
+        SolidMesh::Triangle o = t;
+        for (int k = 0; k < 3; ++k)
+            o.v[k] = SolidMesh::TransformPoint(marker.matrix, t.v[k]);
+        out.push_back(o);
+        tex.push_back(t.tex >= 0 && size_t(t.tex) < s.textures.size() ? s.textures[t.tex] : 0);
+    }
+}
+
+// Exhaust tips are authored along +X with the rolled outlet lip at bbox min and the pipe end at bbox
+// max (the universal file is a shop line-up, so the header translations are not mounts).  The rear
+// bumper carries the tip mounts: 0x69fdf59d on the left and 0xe2527054 on the right, both with an
+// identity basis at (-2.16, +-0.25, 0.10).  The stock bumper has no cut-out, so the port seats the
+// lip just behind the bumper's rearmost face to keep the tip visible; the original's exact offset
+// comes from the car attribute data, which is not decoded (ISSUES.md #180).
+void AddExhaustTip(const SolidMesh::NamedSolid &s, const SolidMesh::PositionMarker &mount, float rearFace,
+                   std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
+{
+    const float lipX = rearFace - 0.06f;
+    for (const SolidMesh::Triangle &t : s.tris) {
+        SolidMesh::Triangle o = t;
+        for (int k = 0; k < 3; ++k) {
+            const SolidMesh::Point &p = t.v[k];
+            o.v[k] = p;
+            o.v[k].x = p.x - s.bboxMin[0] + lipX;
+            o.v[k].y = p.y + mount.matrix[13];
+            o.v[k].z = p.z + mount.matrix[14];
+        }
+        out.push_back(o);
+        tex.push_back(t.tex >= 0 && size_t(t.tex) < s.textures.size() ? s.textures[t.tex] : 0);
+    }
+}
+
 // Wheel solids are modelled around their own hub (the attachment points come from the unported
 // car attribute data), so they are placed at estimated axle positions from the body bounds.
 void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, bool mirror,
@@ -95,7 +139,41 @@ void AddTransformed(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Trian
 }
 } // namespace
 
-bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels)
+PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
+    const std::function<std::vector<uint8_t>(const char *)> &read)
+{
+    InstalledParts parts;
+    if (const char *roof = getenv("NFSU2_PART_ROOF")) {
+        parts.roof = atoi(roof);
+        parts.roofDual = strstr(roof, "DUAL") != nullptr;
+        parts.roofOffset = strstr(roof, "OFFSET") != nullptr;
+        parts.roofCarbon = strstr(roof, "CF") != nullptr;
+        if (parts.roof > 0 && read)
+            parts.roofGeometry = read("CARS\\ROOF\\GEOMETRY.BIN");
+        if (parts.roof > 0 && parts.roofGeometry.empty()) {
+            fprintf(stderr, "[Parts] roof scoop %d: CARS\\ROOF\\GEOMETRY.BIN is missing\n", parts.roof);
+            parts.roof = 0;
+        }
+    }
+    if (const char *exhaust = getenv("NFSU2_PART_EXHAUST")) {
+        parts.exhaust = atoi(exhaust);
+        if (parts.exhaust > 0 && read)
+            parts.exhaustGeometry = read("CARS\\EXHAUST\\GEOMETRY.BIN");
+        if (parts.exhaust > 0 && parts.exhaustGeometry.empty()) {
+            fprintf(stderr, "[Parts] exhaust tip %d: CARS\\EXHAUST\\GEOMETRY.BIN is missing\n", parts.exhaust);
+            parts.exhaust = 0;
+        }
+    }
+    if (const char *engine = getenv("NFSU2_PART_ENGINE"))
+        parts.engine = atoi(engine);
+    if (parts.roof || parts.exhaust || parts.engine)
+        printf("[Parts] installed roof %d%s%s%s exhaust %d engine %d\n", parts.roof,
+               parts.roofDual ? " dual" : "", parts.roofOffset ? " offset" : "", parts.roofCarbon ? " carbon" : "",
+               parts.exhaust, parts.engine);
+    return parts;
+}
+
+bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels, const InstalledParts *parts)
 {
     m_model.clear();
     m_triTex.clear();
@@ -103,18 +181,36 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triCaliper.clear();
     m_triMirror.clear();
     m_triSpoiler.clear();
+    m_triRoof.clear();
+    m_triEngine.clear();
+    m_triExhaust.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     // Dev aid: NFSU2_SOLID_DUMP=1 lists every named solid with its header transform and bounds,
     // for finding parts the port has not mounted yet (ISSUES #178).
     if (getenv("NFSU2_SOLID_DUMP")) {
-        for (const SolidMesh::NamedSolid &s : solids)
+        for (const SolidMesh::NamedSolid &s : solids) {
             printf("[Solid] %-30s tris %4zu tex %zu bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) mount (%.2f %.2f %.2f)\n",
                    s.name.c_str(), s.tris.size(), s.textures.size(), s.bboxMin[0], s.bboxMin[1], s.bboxMin[2],
                    s.bboxMax[0], s.bboxMax[1], s.bboxMax[2], s.transform[12], s.transform[13], s.transform[14]);
+            // 0x13401a part/effect markers (#178): the hashes the car code looks up by name.
+            for (const SolidMesh::PositionMarker &m : s.markers)
+                printf("[Solid]   marker 0x%08x at (%.2f %.2f %.2f) x (%.2f %.2f %.2f) y (%.2f %.2f %.2f) z (%.2f %.2f %.2f)\n",
+                       m.hash, m.matrix[12], m.matrix[13], m.matrix[14], m.matrix[0], m.matrix[1], m.matrix[2],
+                       m.matrix[4], m.matrix[5], m.matrix[6], m.matrix[8], m.matrix[9], m.matrix[10]);
+            // NFSU2_MARKER_MATRIX=1 adds each marker's 3x4 basis (row-vector, translation omitted):
+            // part mounts are identity, while the effect markers (exhaust plume) are rotated.
+            if (getenv("NFSU2_MARKER_MATRIX") && !s.markers.empty())
+                for (const SolidMesh::PositionMarker &m : s.markers)
+                    printf("[Solid]     %08x [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]\n",
+                           m.hash, m.matrix[0], m.matrix[1], m.matrix[2], m.matrix[3], m.matrix[4], m.matrix[5],
+                           m.matrix[6], m.matrix[7], m.matrix[8], m.matrix[9], m.matrix[10], m.matrix[11]);
+        }
     }
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
     const SolidMesh::NamedSolid *frontBrake = nullptr, *rearBrake = nullptr;
+    const SolidMesh::PositionMarker *roofMarker = nullptr, *exhaustMarker = nullptr;
+    float bumperRear = 0.0f; // rear bumper bbox min x (car space)
     // Service/traffic vehicles (TAXI, BUS, ...) have no tuning kits: their parts are <NAME>_BODY_A and
     // <NAME>_TIRE_FRONT_A (ISSUES #130), so accept those when there is no KIT00 part at all.
     bool traffic = true;
@@ -123,6 +219,22 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             traffic = false;
     for (const SolidMesh::NamedSolid &s : solids) {
         const std::string &n = s.name;
+        // Engine accents are car-specific solids in car space (<CAR>_STYLE<NN>_ENGINE_A), so the
+        // installed style is selected here rather than mounted from a universal file (#178).
+        if (parts && parts->engine > 0) {
+            char tag[32];
+            snprintf(tag, sizeof(tag), "_STYLE%02d_ENGINE", parts->engine);
+            if (Contains(n, tag) && EndsWith(n, "_A")) {
+                const size_t before = m_model.size();
+                AddFiltered(s, m_model, m_triTex);
+                m_triEngine.resize(m_model.size(), 0);
+                for (size_t i = before; i < m_model.size(); ++i)
+                    m_triEngine[i] = 1;
+                if (getenv("NFSU2_PART_DEBUG"))
+                    printf("[Parts] engine accent %s: %zu triangles\n", n.c_str(), m_model.size() - before);
+                continue;
+            }
+        }
         if (traffic) {
             if (!Contains(n, "_BODY_") && !Contains(n, "_TIRE_"))
                 continue;
@@ -154,10 +266,22 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         if (Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
             Contains(n, "ENGINE") || Contains(n, "AUDIO") || Contains(n, "UNLIT"))
             continue;
+        if (getenv("NFSU2_NO_HOOD") && Contains(n, "HOOD"))
+            continue; // dev aid: expose the engine-bay solids (engine accents, #178)
         if (Contains(n, "_BODY_"))
             body = &s;
         const size_t before = m_model.size();
         AddFiltered(s, m_model, m_triTex);
+        // Mount points for the installed aftermarket parts: the base solid carries ROOF_SCOOP and
+        // the rear bumper the exhaust-tip mounts (left, else right).  The bumper's rearmost face is
+        // the reference for seating the tip (ISSUES #180).
+        if (Contains(n, "_BASE_"))
+            roofMarker = s.FindMarker(kRoofScoopMarker);
+        if (Contains(n, "REAR_BUMPER")) {
+            exhaustMarker = s.FindMarker(kLeftExhaustMount) ? s.FindMarker(kLeftExhaustMount)
+                                                            : s.FindMarker(kRightExhaustMount);
+            bumperRear = s.bboxMin[0];
+        }
         if (Contains(n, "SIDE_MI")) {
             // The mirror solid has a 9-triangle glass in slot 0 and the painted housing in slot 1.
             m_triMirror.resize(m_model.size(), 0);
@@ -270,10 +394,58 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             AddBrake(*brake, w.x, brakeY, w.z, left, m_model, m_triTex, m_triRim, m_triCaliper);
         }
     }
+    // Installed aftermarket parts (#178).  Universal part files hold every style as a shop display
+    // line-up, so ignore their header translations and mount the chosen solid at the car marker.
+    if (parts && parts->roof > 0 && !parts->roofGeometry.empty()) {
+        char name[48];
+        snprintf(name, sizeof(name), "ROOF_STYLE%02d%s%s%s_A", parts->roof, parts->roofDual ? "_DUAL" : "",
+                 parts->roofOffset ? "_OFFSET" : "", parts->roofCarbon ? "_CF" : "");
+        std::vector<SolidMesh::NamedSolid> roof =
+            SolidMesh::DecodeNamedSolids(parts->roofGeometry.data(), parts->roofGeometry.size());
+        const auto it = std::find_if(roof.begin(), roof.end(), [name](const SolidMesh::NamedSolid &s) {
+            return s.name == name;
+        });
+        if (it != roof.end() && roofMarker) {
+            const size_t before = m_model.size();
+            AddMounted(*it, *roofMarker, m_model, m_triTex);
+            m_triRoof.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triRoof[i] = 1;
+            printf("[Parts] roof scoop %s: %zu triangles at (%.2f %.2f %.2f)\n", name, m_model.size() - before,
+                   roofMarker->matrix[12], roofMarker->matrix[13], roofMarker->matrix[14]);
+        } else {
+            fprintf(stderr, "[Parts] roof scoop %s: %s\n", name,
+                    it == roof.end() ? "solid not found" : "no ROOF_SCOOP marker on the body");
+        }
+    }
+    if (parts && parts->exhaust > 0 && !parts->exhaustGeometry.empty()) {
+        char name[48];
+        snprintf(name, sizeof(name), "EXHAUST_STYLE%02d_LEVEL1_A", parts->exhaust);
+        std::vector<SolidMesh::NamedSolid> exhaust =
+            SolidMesh::DecodeNamedSolids(parts->exhaustGeometry.data(), parts->exhaustGeometry.size());
+        const auto it = std::find_if(exhaust.begin(), exhaust.end(), [name](const SolidMesh::NamedSolid &s) {
+            return s.name == name;
+        });
+        if (it != exhaust.end() && exhaustMarker) {
+            const size_t before = m_model.size();
+            AddExhaustTip(*it, *exhaustMarker, bumperRear, m_model, m_triTex);
+            m_triExhaust.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triExhaust[i] = 1;
+            printf("[Parts] exhaust tip %s: %zu triangles at (%.2f %.2f %.2f)\n", name, m_model.size() - before,
+                   exhaustMarker->matrix[12], exhaustMarker->matrix[13], exhaustMarker->matrix[14]);
+        } else {
+            fprintf(stderr, "[Parts] exhaust tip %s: %s\n", name,
+                    it == exhaust.end() ? "solid not found" : "no LEFT/RIGHT_EXHAUST marker on the bumper");
+        }
+    }
     m_triRim.resize(m_model.size(), 0);
     m_triCaliper.resize(m_model.size(), 0);
     m_triMirror.resize(m_model.size(), 0);
     m_triSpoiler.resize(m_model.size(), 0);
+    m_triRoof.resize(m_model.size(), 0);
+    m_triEngine.resize(m_model.size(), 0);
+    m_triExhaust.resize(m_model.size(), 0);
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }

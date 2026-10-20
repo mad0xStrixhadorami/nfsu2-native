@@ -210,6 +210,24 @@ void FEStartupSequence::LoadBootProfile()
         if (index >= 0)
             m_fe->SetPreviewSpoilerPaint(PaintCatalog::kGloss, uint32_t(index));
     }
+    // Dev aid: NFSU2_ROOF_PAINT=<1..60> previews a GLOSS colour on the installed roof scoop.
+    if (const char *roof = getenv("NFSU2_ROOF_PAINT")) {
+        const int index = atoi(roof);
+        if (index >= 0)
+            m_fe->SetPreviewRoofPaint(PaintCatalog::kGloss, uint32_t(index));
+    }
+    // Dev aid: NFSU2_ENGINE_PAINT=<1..N> previews a HOSES colour on the installed engine accents.
+    if (const char *engine = getenv("NFSU2_ENGINE_PAINT")) {
+        const int index = atoi(engine);
+        if (index >= 0)
+            m_fe->SetPreviewEnginePaint(PaintCatalog::kHoses, uint32_t(index));
+    }
+    // Dev aid: NFSU2_EXHAUST_PAINT=<1..N> previews a MUFFLERS colour on the installed muffler tip.
+    if (const char *exhaust = getenv("NFSU2_EXHAUST_PAINT")) {
+        const int index = atoi(exhaust);
+        if (index >= 0)
+            m_fe->SetPreviewExhaustPaint(PaintCatalog::kMufflers, uint32_t(index));
+    }
     // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
@@ -1220,6 +1238,12 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewMirrorPaint(PaintCatalog::kGloss, 0);
         if (!getenv("NFSU2_SPOILER_PAINT"))
             m_fe->SetPreviewSpoilerPaint(PaintCatalog::kGloss, 0);
+        if (!getenv("NFSU2_ROOF_PAINT"))
+            m_fe->SetPreviewRoofPaint(PaintCatalog::kGloss, 0);
+        if (!getenv("NFSU2_ENGINE_PAINT"))
+            m_fe->SetPreviewEnginePaint(PaintCatalog::kHoses, 0);
+        if (!getenv("NFSU2_EXHAUST_PAINT"))
+            m_fe->SetPreviewExhaustPaint(PaintCatalog::kMufflers, 0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1936,6 +1960,12 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
         m_fe->SetPreviewMirrorPaint(set, index); // Mirrors tint the housings (#174)
     else if (part == 1)
         m_fe->SetPreviewSpoilerPaint(set, index); // Spoiler tints the stock wing (#175)
+    else if (part == 2)
+        m_fe->SetPreviewRoofPaint(set, index); // Roof Scoop tints the installed scoop (#178)
+    else if (part == 7)
+        m_fe->SetPreviewEnginePaint(set, index); // Engine Accents tint the installed accents (#178)
+    else if (part == 8)
+        m_fe->SetPreviewExhaustPaint(set, index); // Muffler Tip tints the installed tip (#178)
 
     if (m_careerExists && m_profile.currentCar >= 0 &&
         m_profile.currentCar < int(m_profile.cars.size())) {
@@ -2384,6 +2414,12 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
                                 car.partPaint[2]);
     m_fe->SetPreviewSpoilerPaint(car.partPaintSet[0] ? car.partPaintSet[0] : PaintCatalog::kGloss,
                                  car.partPaint[0]);
+    m_fe->SetPreviewRoofPaint(car.partPaintSet[1] ? car.partPaintSet[1] : PaintCatalog::kGloss,
+                              car.partPaint[1]);
+    m_fe->SetPreviewEnginePaint(car.partPaintSet[6] ? car.partPaintSet[6] : PaintCatalog::kHoses,
+                                car.partPaint[6]);
+    m_fe->SetPreviewExhaustPaint(car.partPaintSet[7] ? car.partPaintSet[7] : PaintCatalog::kMufflers,
+                                 car.partPaint[7]);
 }
 
 void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)

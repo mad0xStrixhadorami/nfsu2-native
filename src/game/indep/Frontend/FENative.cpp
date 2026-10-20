@@ -142,13 +142,18 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     PlayerCar assembled;
     m_carPreviewModel.clear();
     PlayerCar::Wheel wheels[4];
-    if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr)) {
+    PlayerCar::InstalledParts installedParts = PlayerCar::InstalledPartsFromEnvironment(
+        [this](const char *path) { return m_readFile(path); });
+    if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
         m_carPreviewRims = assembled.TriangleRims();
         m_carPreviewCalipers = assembled.TriangleCalipers();
         m_carPreviewMirrors = assembled.TriangleMirrors();
         m_carPreviewSpoilers = assembled.TriangleSpoilers();
+        m_carPreviewRoofs = assembled.TriangleRoofScoops();
+        m_carPreviewEngines = assembled.TriangleEngines();
+        m_carPreviewExhausts = assembled.TriangleExhausts();
         m_carPreviewWheels = assembled.WheelTrianglesStart();
     }
     m_carPreviewTris.clear();
@@ -203,6 +208,9 @@ void FENativeInterface::RenderCarPreviewOverlay()
     const SDL_Color caliper = ColorForPaint(m_previewCaliperSet, m_previewCaliper, SDL_Color{128, 128, 128, 255});
     const SDL_Color mirror = ColorForPaint(m_previewMirrorSet, m_previewMirror, body);
     const SDL_Color spoiler = ColorForPaint(m_previewSpoilerSet, m_previewSpoiler, body);
+    const SDL_Color roof = ColorForPaint(m_previewRoofSet, m_previewRoof, body);
+    const SDL_Color engine = ColorForPaint(m_previewEngineSet, m_previewEngine, SDL_Color{128, 64, 48, 255});
+    const SDL_Color exhaust = ColorForPaint(m_previewExhaustSet, m_previewExhaust, SDL_Color{150, 150, 150, 255});
     if (!m_carPreviewModel.empty()) {
         int x0, y0, x1, y1;
         SDL_RenderLogicalToWindow(m_renderer, 150.0f, 180.0f, &x0, &y0);
@@ -213,11 +221,17 @@ void FENativeInterface::RenderCarPreviewOverlay()
         float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
         SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
         float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
+        // Dev aid: NFSU2_PREVIEW_YAW=<degrees> freezes the car-select rotation to inspect a part
+        // (e.g. the muffler tip under the rear bumper, ISSUES.md #178).
+        if (const char *previewYaw = getenv("NFSU2_PREVIEW_YAW"))
+            yaw = float(atof(previewYaw)) * 0.0174532925f;
         if (carSelect)
             UpdateStatBars(pkg);
         if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, body, &m_carPreviewSlots,
                         m_carPreviewWheels, &m_carPreviewRims, rim, &m_carPreviewCalipers, caliper,
-                        &m_carPreviewMirrors, mirror, &m_carPreviewSpoilers, spoiler)) {
+                        &m_carPreviewMirrors, mirror, &m_carPreviewSpoilers, spoiler,
+                        &m_carPreviewRoofs, roof, &m_carPreviewEngines, engine,
+                        &m_carPreviewExhausts, exhaust)) {
             if (carSelect)
                 DrawCarPreviewLabel(pkg);
             return;

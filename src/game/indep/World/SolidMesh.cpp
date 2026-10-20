@@ -336,6 +336,20 @@ void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t 
                 if (cid == 0x134012) // (texture name hash, 0) pairs
                     for (size_t k = 0; k + 8 <= clen; k += 8)
                         s.textures.push_back(ReadLE32(d + q + 8, k));
+                if (cid == 0x13401a) {
+                    // Position markers: 8-byte chunk header, then 0x11 fill up to a 16-byte aligned
+                    // record array of {u32 name hash, i32, f32, f32, fMatrix4}.  The game's solid
+                    // loader FUN_001bf3b8 computes the count as (len - padding) / 0x50.
+                    size_t rec = q + 8;
+                    while (rec < q + 8 + clen && rec % 16 != 0 && d[rec] == 0x11)
+                        ++rec;
+                    for (; rec + 0x50 <= q + 8 + clen; rec += 0x50) {
+                        PositionMarker m;
+                        m.hash = ReadLE32(d, rec);
+                        memcpy(m.matrix, d + rec + 0x10, sizeof(m.matrix));
+                        s.markers.push_back(m);
+                    }
+                }
                 q += 8 + clen;
             }
             DecodeChunks(d, dataSize, body, body + len, s.tris);
@@ -355,14 +369,16 @@ std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size)
     return out;
 }
 
-Point TransformPoint(const NamedSolid &solid, const Point &p)
+Point TransformPoint(const float matrix[16], const Point &p)
 {
-    const float *m = solid.transform;
+    const float *m = matrix;
     Point out = p;
     out.x = p.x * m[0] + p.y * m[4] + p.z * m[8] + m[12];
     out.y = p.x * m[1] + p.y * m[5] + p.z * m[9] + m[13];
     out.z = p.x * m[2] + p.y * m[6] + p.z * m[10] + m[14];
     return out;
 }
+
+Point TransformPoint(const NamedSolid &solid, const Point &p) { return TransformPoint(solid.transform, p); }
 
 } // namespace SolidMesh

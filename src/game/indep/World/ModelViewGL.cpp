@@ -11,7 +11,10 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
                  const std::vector<uint8_t> *rimMask, SDL_Color rimPaint,
                  const std::vector<uint8_t> *caliperMask, SDL_Color caliperPaint,
                  const std::vector<uint8_t> *mirrorMask, SDL_Color mirrorPaint,
-                 const std::vector<uint8_t> *spoilerMask, SDL_Color spoilerPaint)
+                 const std::vector<uint8_t> *spoilerMask, SDL_Color spoilerPaint,
+                 const std::vector<uint8_t> *roofMask, SDL_Color roofPaint,
+                 const std::vector<uint8_t> *engineMask, SDL_Color enginePaint,
+                 const std::vector<uint8_t> *exhaustMask, SDL_Color exhaustPaint)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -81,10 +84,19 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
         float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
         const bool spoiler = spoilerMask && spoilerMask->size() == model.size() && (*spoilerMask)[i];
         const bool mirror = mirrorMask && mirrorMask->size() == model.size() && (*mirrorMask)[i];
+        const bool roof = roofMask && roofMask->size() == model.size() && (*roofMask)[i];
+        const bool engine = engineMask && engineMask->size() == model.size() && (*engineMask)[i];
+        const bool exhaust = exhaustMask && exhaustMask->size() == model.size() && (*exhaustMask)[i];
         if (spoiler)
             rgb[0] = spoilerPaint.r / 255.0f, rgb[1] = spoilerPaint.g / 255.0f, rgb[2] = spoilerPaint.b / 255.0f;
         else if (mirror)
             rgb[0] = mirrorPaint.r / 255.0f, rgb[1] = mirrorPaint.g / 255.0f, rgb[2] = mirrorPaint.b / 255.0f;
+        else if (roof)
+            rgb[0] = roofPaint.r / 255.0f, rgb[1] = roofPaint.g / 255.0f, rgb[2] = roofPaint.b / 255.0f;
+        else if (engine)
+            rgb[0] = enginePaint.r / 255.0f, rgb[1] = enginePaint.g / 255.0f, rgb[2] = enginePaint.b / 255.0f;
+        else if (exhaust)
+            rgb[0] = exhaustPaint.r / 255.0f, rgb[1] = exhaustPaint.g / 255.0f, rgb[2] = exhaustPaint.b / 255.0f;
         else if (i >= wheelsFrom) {
             const bool rim = rimMask && rimMask->size() == model.size() && (*rimMask)[i];
             const bool caliper = caliperMask && caliperMask->size() == model.size() && (*caliperMask)[i];
