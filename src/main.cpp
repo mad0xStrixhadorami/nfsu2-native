@@ -485,10 +485,19 @@ int main(int argc, char **argv)
         char pathsPath[64];
         snprintf(pathsPath, sizeof(pathsPath), "TRACKS\\ROUTES%s\\PATHS%d.BIN", region.c_str(), raceNumber);
         route = RaceRoute();
+        // Track Direction (race settings +4, 0x0025c7b0): traverse the same route backwards. The
+        // original keeps the race number and only flips the direction global (0x0053e404), which
+        // selects the other start grid (+0xec tables) and the reverse route run.
+        const bool reverse = !freeRoam && (startup.RaceReverse() || getenv("NFSU2_REVERSE") != nullptr);
         if (freeRoam)
             raceNumber = 0;
-        else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath)))
+        else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath))) {
+            if (reverse) {
+                route.Reverse();
+                printf("[World] race %d: reverse direction\n", raceNumber);
+            }
             raceConfig.route = &route;
+        }
         worldRaceNumber = raceNumber;
         // Barriers the route runs through belong to other races' layouts; keep the rest (side
         // streets closed). Without a route every barrier stays. Free run opens the whole region.

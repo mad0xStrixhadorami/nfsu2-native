@@ -17,6 +17,9 @@ public:
     bool Valid() const { return m_points.size() >= 2; }
     bool Closed() const { return m_closed; }
     float Length() const { return m_length; }
+    // Traverse the same geometry the other way (race settings +4 Reverse, 0x0025c7b0): the route
+    // points and cumulative distances are reversed, so progress/AI/lap logic need no direction flag.
+    void Reverse();
 
     // Distance along the route of the nearest route point to (x, y). With hint >= 0 only the
     // stretch within `window` metres of the hint is searched (keeps progress continuous where

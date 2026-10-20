@@ -95,6 +95,16 @@ bool RaceRoute::Load(const std::vector<uint8_t> &paths)
     return true;
 }
 
+void RaceRoute::Reverse()
+{
+    if (m_points.size() < 2)
+        return;
+    std::reverse(m_points.begin(), m_points.end());
+    for (size_t i = 1; i < m_points.size(); ++i)
+        m_dist[i] = m_dist[i - 1] + Dist(m_points[i - 1].x, m_points[i - 1].y, m_points[i].x, m_points[i].y);
+    // m_length is direction independent (the closing edge on a loop is the same either way).
+}
+
 float RaceRoute::Delta(float a, float b) const
 {
     float d = b - a;

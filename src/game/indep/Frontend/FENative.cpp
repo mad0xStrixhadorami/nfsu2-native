@@ -736,6 +736,7 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 memcpy(&info.category, r + 0x7c, 4);
                 memcpy(&info.typeFlags, r + 0x94, 4);
                 info.special = r[0x88];
+                info.directionOption = r[0x86];
                 memcpy(&info.length, r + 0x98, 4);
                 memcpy(info.region, r + 0x40, sizeof(info.region));
                 info.region[sizeof(info.region) - 1] = 0;

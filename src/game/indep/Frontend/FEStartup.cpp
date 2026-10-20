@@ -837,7 +837,10 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     if (m_tracks.empty())
         return;
     const RaceInfo &r = m_tracks[m_scroller.Selected()];
-    char label[32];
+    // QR list items are built with direction 0 (0x001facc0 stores 0 at item +0x10), so the header
+    // always uses TRACK_NAME_%d here; REVERSE_TRACK_NAME_%d (0x00275640) belongs to reverse event
+    // entries in other lists. Track Direction is chosen on the options screen and applied at race start.
+    char label[40];
     snprintf(label, sizeof(label), "TRACK_NAME_%d", r.number);
     FENativeInterface::SetLanguageHash(pkg, 0xf601f2d4, bStringHash(label)); // 0x001faf90 header
     FENativeInterface::SetVisible(pkg, 0x53c956c4, false);                    // debug track number
@@ -899,6 +902,25 @@ void FEStartupSequence::HandleQRModeOptionsLoaded(FEPackage *pkg)
     RaceOptions &o = m_options[m_raceType & 15];
     auto onOff = [](bool v) { return v ? 0x0000063cu : 0x0000ccfau; }; // "On" / "Off"
     std::vector<FEWidgetMenu::Widget> w;
+    // Track Direction (0x0046f380, tracked at 0x00256b10): only races whose record byte +0x86 is set
+    // offer Reverse. 0x001f7a80 adds it before every other row. Values: 0x9e4c4648 "Forward" /
+    // 0x22f254af "Reverse"; the setting lives at race settings +4 (0x0025c7b0 copies it to 0x0053e404).
+    const RaceInfo *selected = nullptr;
+    for (const RaceInfo &r : m_fe->Races())
+        if (r.number == m_raceNumber) {
+            selected = &r;
+            break;
+        }
+    if (selected && selected->directionOption) {
+        w.push_back({0xa88ffeb4, // Track Direction
+                     [&o](uint32_t &l, std::string &) { l = o.reverse ? 0x22f254af : 0x9e4c4648; },
+                     [&o](int) {
+                         o.reverse = !o.reverse;
+                         printf("[Menu] track direction %s\n", o.reverse ? "Reverse" : "Forward");
+                     }});
+    }
+    printf("[Menu] race %d: track direction option %s\n", m_raceNumber,
+           selected && selected->directionOption ? "offered" : "not offered");
     const bool circuitLike = m_raceType == 0 || m_raceType == 4 || m_raceType == 10;
     if (circuitLike) {
         w.push_back({0x7fd73849, [&o, onOff](uint32_t &l, std::string &) { l = onOff(o.lapKO); }, // Lap KO
@@ -940,8 +962,8 @@ void FEStartupSequence::HandleQRModeOptionsMessage(uint32_t msg, FEPackage *pkg)
     }
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
         const RaceOptions &o = m_options[m_raceType & 15];
-        printf("[Menu] options: laps %d, opponents %d, difficulty %d, traffic %d, lap KO %d, catch up %d\n", o.laps,
-               o.opponents, o.difficulty, o.traffic, o.lapKO, o.catchUp);
+        printf("[Menu] options: laps %d, opponents %d, difficulty %d, traffic %d, lap KO %d, catch up %d, reverse %d\n",
+               o.laps, o.opponents, o.difficulty, o.traffic, o.lapKO, o.catchUp, o.reverse);
         SwitchFlow(pkg->GetName(), QuickRaceNext(pkg->GetName()));
         return;
     }

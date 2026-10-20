@@ -24,6 +24,7 @@ struct RaceInfo {
     int32_t category;   // +0x7c track category (icon)
     uint32_t typeFlags; // +0x94 race types this track supports (bit per type, see TrackSelect)
     uint8_t special;    // +0x88 non-zero: not offered in quick race
+    uint8_t directionOption; // +0x86: the race supports the Track Direction option (0x001f7a80)
     int32_t length;     // +0x98 length in metres
     char region[8];     // +0x40 world region bundle, e.g. "L4RA" (TRACKS\STREAM%s.BUN)
 };

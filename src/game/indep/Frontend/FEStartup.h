@@ -62,6 +62,8 @@ public:
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
     int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
+    // 0x004f13b0 settings +4: 0 = Forward, 1 = Reverse (0x00256b10 / 0x0025c7b0).
+    bool RaceReverse() const { return m_options[m_raceType & 15].reverse; }
 
     // The front end asked for the career crib (career entry; the world map will ask for the return
     // from a career event the same way). main.cpp takes it once when the world session starts and
@@ -281,6 +283,7 @@ private:
     struct RaceOptions {
         int laps = 2, opponents = 3, difficulty = 1, traffic = 1;
         bool lapKO = false, catchUp = true;
+        bool reverse = false; // settings +4 (0x0025c7b0): 0 Forward / 1 Reverse
     };
     RaceOptions m_options[16];
     FEWidgetMenu m_widgets;
