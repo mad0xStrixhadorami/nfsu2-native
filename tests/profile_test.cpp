@@ -104,6 +104,7 @@ int main()
     Career::Profile p;
     p.name = "TEST";
     p.cars.push_back({"SKYLINE", 0});
+    p.cars[0].paint = 17; // GLOBALB GLOSS colour index (ISSUES #167)
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
@@ -133,6 +134,8 @@ int main()
         return Fail("unknown score direction must not alias");
     if (q.signedSponsors[2] != 0x167a374f || q.signedSponsors[5] != 0x5e96e1be || q.SignedSponsorCount() != 2)
         return Fail("signed sponsors must round-trip (v4)");
+    if (q.cars.size() != 1 || q.cars[0].paint != 17)
+        return Fail("body paint index must round-trip");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {

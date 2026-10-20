@@ -13,6 +13,7 @@
 #include "Speed/Indep/Src/FEng/FEGameInterface.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
 #include "game/indep/Frontend/FEText.h"
+#include "game/indep/Frontend/PaintCatalog.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -74,6 +75,20 @@ public:
     // Load a specific car as the car-select/race preview (career mode restores the saved car).
     bool SetPreviewCar(const std::string &model);
     const std::string &PreviewCarName() const { return m_previewCarName; } // car folder, e.g. SKYLINE
+    // Body paint: the index selects PaintCatalog::At(index - 1); 0 is the car's stock paint.  The
+    // index is what OwnedCar::paint stores, so it survives through the memory-card save.
+    void SetPreviewPaint(uint32_t index) { m_previewPaint = index; }
+    uint32_t PreviewPaint() const { return m_previewPaint; }
+    const PaintCatalog &Paint() const { return m_paint; }
+    // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
+    SDL_Color ColorForPaint(uint32_t index, SDL_Color stock) const
+    {
+        if (index >= 1 && index <= m_paint.Count()) {
+            const PaintColor &c = m_paint.At(index - 1);
+            return SDL_Color{c.r, c.g, c.b, 255};
+        }
+        return stock;
+    }
     // Wheel placement for a car folder from the database (false if unknown).
     bool CarWheels(const std::string &folder, PlayerCar::Wheel out[4]) const
     {
@@ -276,6 +291,7 @@ private:
     std::vector<RaceInfo> m_races;  // names set by screens (PS2: string at obj+0x24)
     std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
+    PaintCatalog m_paint;                          // GLOBALB chunk 0x80034602 GLOSS set (#167)
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
     std::vector<uint32_t> m_carPreviewSlots;            // its material slot hashes
@@ -285,6 +301,7 @@ private:
     bool m_carPreviewLoadAttempted = false;
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
+    uint32_t m_previewPaint = 0; // 0 = stock; else 1..PaintCatalog::Count()
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;

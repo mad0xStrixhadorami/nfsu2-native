@@ -169,6 +169,13 @@ void FEStartupSequence::LoadBootProfile()
 {
     if (!m_profile.valid)
         LoadCareerProfile();
+    // Dev aid: NFSU2_PAINT=<1..60> selects a GLOBALB GLOSS body colour without the paint screen
+    // (0 = the port's stock blue).  ISSUES.md #167.
+    if (const char *paint = getenv("NFSU2_PAINT")) {
+        const int index = atoi(paint);
+        if (index >= 0)
+            m_fe->SetPreviewPaint(uint32_t(index));
+    }
     // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
@@ -296,6 +303,14 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleQRCarSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChooseCustomizeCategory.fng") == 0) {
+        HandleCustomizeCategoryLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_Paint.fng") == 0) {
+        HandlePaintLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_StartCareer.fng") == 0) {
         HandleStartCareerLoaded(pkg);
         return;
@@ -417,6 +432,19 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         HandleOptionsMainMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChooseCustomizeCategory.fng") == 0) {
+        // Pad messages are taken from the pad in Tick(); keep FEng's copies out of the scroller.
+        if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleCustomizeCategoryMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_Paint.fng") == 0) {
+        // The swatch grid reads the pad in Tick(); Back/Accept arrive there too.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandlePaintMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_StartCareer.fng") == 0 && msg != kMsgPadBack) {
         HandleStartCareerMessage(msg, pkg);
         return;
@@ -516,6 +544,19 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         // Accept (0x001f32f8, quick race mode 2: PAD_ACCEPT -> StartRace 0x0025d4d8). Mode 0 is a
         // car select pushed directly with NFSU2_PACKAGE. Mode 8 is career car select (buy the
         // starter car into the profile before the race starts).
+        else if ((pressed & FENativeInterface::kPadAccept) && m_raceMode == 0x20) {
+            // Main-menu Customize: 0x002593c8 sets DAT_00506b50 = 0x20 and pushes the car select;
+            // its Accept calls FUN_002a1ac0(3,...) to open the car shop's category picker
+            // (UI_ChooseCustomizeCategory.fng, 0x002a48f8).  ISSUES #167.  The port starts on
+            // Change Paint / Vinyls because the other four categories are not implemented yet.
+            // The original's mode-0x20 car select stands on the profile's car (0x001f44f0 loads
+            // 0x4f1744); our roster browsing is only a picker stand-in, so snap the preview back
+            // before customizing.
+            m_customizeCategorySel = 2;
+            if (const Career::OwnedCar *car = m_profile.CurrentCar())
+                ApplyOwnedCarPreview(*car);
+            NavigateTo(active->GetName(), "UI_ChooseCustomizeCategory.fng");
+        }
         else if ((pressed & FENativeInterface::kPadAccept) &&
                  (m_raceMode == 2 || m_raceMode == 0 || m_raceMode == 8 || m_raceMode == 1)) {
             if (m_raceMode == 8) {
@@ -534,6 +575,31 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             else
                 SwitchFlow(active->GetName(), QuickRaceBack(active->GetName()));
         }
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_ChooseCustomizeCategory.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleCustomizeCategoryMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleCustomizeCategoryMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleCustomizeCategoryMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_Paint.fng") == 0) {
+        static const struct { uint32_t bit, msg; } kPaintMap[] = {
+            {FENativeInterface::kPadUp, kMsgPadUp},         {FENativeInterface::kPadDown, kMsgPadDown},
+            {FENativeInterface::kPadLeft, kMsgPadLeft},     {FENativeInterface::kPadRight, kMsgPadRight},
+            {FENativeInterface::kPadAccept, kMsgPadAccept}, {FENativeInterface::kPadBack, kMsgPadBack}};
+        for (auto &m : kPaintMap)
+            if (pressed & m.bit) {
+                HandlePaintMessage(m.msg, active);
+                break;
+            }
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -1067,10 +1133,16 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
     uint32_t title = 0x5ac1fb59; // Quick Race Car Select
     if (m_raceMode == 4)
         title = 0xf221d7ed; // Split-Screen Car Select
-    else if (m_raceMode == 8 || m_raceMode == 1)
+    else if (m_raceMode == 8 || m_raceMode == 1 || m_raceMode == 0x20)
         title = 0x61032ce5; // Customize Car Select
     FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, title);
     FENativeInterface::SetVisible(pkg, 0xf5a9d520, true);
+    // Quick Race / split-screen / starter-pick cars wear their stock paint.  The preview paint is
+    // shared with the career, whose save loads its body colour at boot (ISSUES #167), so clear it
+    // here unless the NFSU2_PAINT dev aid is deliberately overriding every car.
+    if (!getenv("NFSU2_PAINT") &&
+        (m_raceMode == 0 || m_raceMode == 2 || m_raceMode == 4 || m_raceMode == 8))
+        m_fe->SetPreviewPaint(0);
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
     UpdateQRCarSelect(pkg);
@@ -1144,6 +1216,248 @@ void FEStartupSequence::CycleCarFilter(int direction, FEPackage *pkg)
     m_carFilterState = kCycle[(cur + (direction < 0 ? -1 : 1) + n) % n];
     printf("[CarSelect] filter state %d\n", m_carFilterState);
     ApplyCarFilterLabel(pkg);
+}
+
+// UI_ChooseCustomizeCategory.fng (factory 0x002a48f8, AddOptions 0x002a4dc0): the car shop's
+// category picker.  The five PAL cards are Change Body Parts, Change Performance Parts, Change
+// Paint / Vinyls, Change Interiors / Car Specialties and Performance Tuning / Dyno.  The port only
+// implements the Paint / Vinyls path for now (ISSUES #167), so the other four cards are greyed out.
+// Selecting Paint / Vinyls sets DAT_0051456c = 2 in the original and opens
+// UI_ChoosePaintCategory.fng; the port goes straight to UI_Paint.fng because the paint/vinyl
+// submenu only chooses between Paint, Vinyls and Decals and none of the latter two exist yet.
+void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t tex, label;
+    } kOptions[] = {
+        {0xb802f10e, 0xa92b4ae8}, // Change Body Parts
+        {0xc56d3032, 0xeca6b0cc}, // Change Performance Parts
+        {0xdc99aafe, 0xc6089ca7}, // Change Paint / Vinyls
+        {0x3f40e75f, 0xc10d7979}, // Change Interiors / Car Specialties
+        {0x7a9b397a, 0x8513f2c0}, // Performance Tuning / Dyno
+    };
+    std::vector<FEIconScroller::Def> defs;
+    for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
+        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 2});
+    printf("[Customize] category picker: %zu options (paint only)\n", defs.size());
+    m_scroller.Setup(pkg, defs, m_customizeCategorySel);
+}
+
+void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_scroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_scroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        m_customizeCategorySel = m_scroller.Selected();
+        if (m_customizeCategorySel != 2) {
+            printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
+            return;
+        }
+        NavigateTo(pkg->GetName(), "UI_Paint.fng");
+    }
+}
+
+// UI_Paint.fng (ctor 0x002bc1e0, AddOptions 0x002bcff8, fill 0x002bd868): the color grid for a
+// colorable part.  The package's 9 part cards (4b4e3888..4b4e3890) select Base Paint, Spoiler, Roof
+// Scoop, Mirrors, Rims, Spinners, Brakes, Engine Accents and Muffler Tip; only the body's Base Paint
+// is ported, so the cards are hidden and the 60-swatch GLOSS grid is driven directly.  The grid is
+// 3 rows of 20 (group eefb2050 under db285767), and row 1 runs right-to-left in the package.
+namespace {
+constexpr uint32_t kPaintGridGroup = 0xdb285767;
+constexpr uint32_t kPaintSwatchGroup = 0xeefb2050;
+constexpr uint32_t kPaintInfoGroup = 0x9ff84a88;
+constexpr uint32_t kPaintHighlight = 0x23a43844;
+constexpr uint32_t kPaintColorName = 0xef653aff; // bottom-left selected-colour name (group 031a9c0a)
+
+int PaintGridCol(size_t index)
+{
+    const int col = int(index % 20);
+    return int(index / 20) == 1 ? 19 - col : col; // row 1 is laid out right-to-left
+}
+size_t PaintGridIndex(int row, int col)
+{
+    return size_t(row * 20 + (row == 1 ? 19 - col : col));
+}
+} // namespace
+
+void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
+{
+    // Start on the swatch the body currently wears (0 is the port's stock blue, which has no swatch).
+    // The category handler also seeds these, but doing it here keeps a direct NFSU2_PACKAGE=UI_Paint.fng
+    // launch consistent with the car in the preview.
+    m_paintOriginal = m_fe->PreviewPaint();
+    m_paintSel = m_paintOriginal > 0 && m_paintOriginal <= m_fe->Paint().Count() ? m_paintOriginal - 1 : 0;
+
+    // Hide the part cards and their carousel/scrollbar (the same OPTION_MASTER at (0,-150) the
+    // scroller would otherwise use).  The header stays "Graphics Shop" (the package's 42adb44c
+    // label 46c41a7c), which is the paint/vinyl shop title.
+    FENativeInterface::SetString(pkg, 0x5e7b09c9, "Base Paint"); // ICON_TITLE (part name)
+    for (uint32_t h = 0x4b4e3888; h <= 0x4b4e3890; ++h)
+        FENativeInterface::SetVisible(pkg, h, false);
+    FENativeInterface::SetVisible(pkg, bStringHash("LOCK_MASTER"), false);
+    FENativeInterface::SetVisible(pkg, bStringHash("BUTTON_MASTER"), false);
+    FENativeInterface::SetVisible(pkg, 0x444969fd, false); // scrollbar arrows
+    FENativeInterface::SetVisible(pkg, 0x444969fe, false);
+    FENativeInterface::SetVisible(pkg, 0x688a1551, false); // scrollbar backing/handle
+    FENativeInterface::SetVisible(pkg, 0x3fbb7a4e, false);
+
+    // 0x002bcff8 creates the Base Paint card (part 0x3f, label ef5b4a75) with icon texture
+    // 0xa3b76154.  OPTION_MASTER is the top-centre selected-part display; the scroller would set
+    // it from the selected option, so set it directly here (the nine option cards stay hidden).
+    FENativeInterface::SetTextureHash(pkg, 0xb04669e3, 0xa3b76154);
+    if (FEObject *master = pkg->FindObjectByHash(0xb04669e3)) {
+        FENativeInterface::SetObjectVisible(master, true);
+        if (FEObjData *d = master->GetObjData()) {
+            d->Col.r = d->Col.g = d->Col.b = 255;
+            d->Col.a = 255;
+        }
+    }
+
+    // 0x002bcc68 / 0x002bd868: reveal the grid and the colour info strip.
+    if (FEObject *grid = pkg->FindObjectByHash(kPaintGridGroup)) {
+        FENativeInterface::SetObjectVisible(grid, true);
+        FENativeInterface::SetAlpha(pkg, kPaintGridGroup, 255);
+    }
+    if (FEObject *info = pkg->FindObjectByHash(kPaintInfoGroup)) {
+        FENativeInterface::SetObjectVisible(info, true);
+        FENativeInterface::SetAlpha(pkg, kPaintInfoGroup, 255);
+    }
+    if (m_fe->Paint().Empty())
+        printf("[Paint] no GLOBALB GLOSS colours; the grid stays empty\n");
+    RefreshPaintSwatches(pkg);
+}
+
+void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
+{
+    FEObject *grid = pkg->FindObjectByHash(kPaintSwatchGroup);
+    if (!grid || grid->Type != FE_Group)
+        return;
+    const size_t count = m_fe->Paint().Count();
+    size_t i = 0;
+    for (FEObject *swatch = static_cast<FEGroup *>(grid)->GetFirstChild(); swatch && i < count;
+         swatch = swatch->GetNext(), ++i) {
+        const PaintColor &c = m_fe->Paint().At(i);
+        FEObjData *d = swatch->GetObjData();
+        if (!d)
+            continue;
+        d->Col.b = c.b;
+        d->Col.g = c.g;
+        d->Col.r = c.r;
+        d->Col.a = 255;
+        swatch->Flags |= 0x400000u; // FF_DirtyCode
+        FENativeInterface::SetObjectVisible(swatch, true);
+    }
+    PositionPaintHighlight(pkg);
+    RefreshPaintLabel(pkg);
+}
+
+void FEStartupSequence::PositionPaintHighlight(FEPackage *pkg)
+{
+    FEObject *grid = pkg->FindObjectByHash(kPaintSwatchGroup);
+    FEObject *highlight = pkg->FindObjectByHash(kPaintHighlight);
+    if (!grid || !highlight || grid->Type != FE_Group)
+        return;
+    size_t i = 0;
+    FEObject *swatch = static_cast<FEGroup *>(grid)->GetFirstChild();
+    for (; swatch && i < m_paintSel; swatch = swatch->GetNext(), ++i) {
+    }
+    if (!swatch)
+        return;
+    float gx, gy, sx, sy;
+    FENativeInterface::GetCenter(grid, gx, gy); // eefb2050's origin inside db285767
+    FENativeInterface::GetCenter(swatch, sx, sy);
+    FENativeInterface::SetCenter(highlight, gx + sx, gy + sy);
+    if (highlight->GetObjData())
+        highlight->GetObjData()->Col.a = 255; // the package ships the frame transparent
+    FENativeInterface::SetObjectVisible(highlight, true);
+}
+
+void FEStartupSequence::RefreshPaintLabel(FEPackage *pkg)
+{
+    // 031a9c0a's ef653aff is the selected colour's name in the bottom bar.  The original shows the
+    // paint's friendly name from the paint manager; the port has only the GLOBALB record names
+    // (GLOSS_L1_COLOR01, ...), which overflow the bar, so use the swatch number.
+    char text[48];
+    snprintf(text, sizeof(text), "Color %02u", unsigned(m_paintSel + 1));
+    FENativeInterface::SetString(pkg, kPaintColorName, text);
+}
+
+void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgScreenTick || msg == kMsgInitComplete)
+        return;
+    if (msg == kMsgPadBack && !m_navPending) {
+        m_fe->SetPreviewPaint(m_paintOriginal); // Back keeps the colour the screen opened with
+        PopScreen();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        const int row = int(m_paintSel / 20);
+        int col = PaintGridCol(m_paintSel);
+        col = (col + (msg == kMsgPadLeft ? -1 : 1) + 20) % 20;
+        m_paintSel = uint32_t(PaintGridIndex(row, col));
+    } else if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        const int col = PaintGridCol(m_paintSel);
+        int row = int(m_paintSel / 20);
+        row = (row + (msg == kMsgPadUp ? -1 : 1) + 3) % 3;
+        m_paintSel = uint32_t(PaintGridIndex(row, col));
+    } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        ApplyPaint(m_paintSel + 1);
+        PopScreen();
+        return;
+    } else {
+        return;
+    }
+    // The original previews the body colour while the swatch moves (0x002bc2f0 -> 0x002bdf10).
+    m_fe->SetPreviewPaint(m_paintSel + 1);
+    PositionPaintHighlight(pkg);
+    RefreshPaintLabel(pkg);
+}
+
+void FEStartupSequence::ApplyPaint(uint32_t index)
+{
+    m_fe->SetPreviewPaint(index);
+    if (m_careerExists && m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size())) {
+        Career::OwnedCar &car = m_profile.cars[size_t(m_profile.currentCar)];
+        if (car.model == m_fe->PreviewCarName()) {
+            car.paint = index;
+            if (Career::SaveCareer(m_profile))
+                printf("[Paint] %u saved on %s\n", index, car.model.c_str());
+            else
+                printf("[Paint] %u applied, save failed\n", index);
+            return;
+        }
+    }
+    printf("[Paint] %u applied for this session\n", index);
+}
+
+bool FEStartupSequence::PopScreen()
+{
+    if (m_backStack.empty())
+        return false;
+    std::string prev = m_backStack.back();
+    m_backStack.pop_back();
+    printf("[Menu] back to %s\n", prev.c_str());
+    m_navPending = true;
+    m_engine->QueuePackageSwitch(prev.c_str(), 0xff);
+    return true;
 }
 
 // UI_StartCareer (0x001e7168 / ctor 0x001e71f0): Career Mode starting screen.
@@ -1536,16 +1850,24 @@ void FEStartupSequence::RefreshCareerCarSelect(FEPackage *pkg)
     FENativeInterface::SetVisible(pkg, 0x26f1f64b, m_csSel > 0);
     FENativeInterface::SetVisible(pkg, 0x26f1f64c, m_csSel + 1 < m_profile.cars.size());
     if (have) {
-        m_fe->SetPreviewCar(m_profile.cars[m_csSel].model);
+        ApplyOwnedCarPreview(m_profile.cars[m_csSel]);
         m_fe->UpdateStatBars(pkg, true);
     }
+}
+
+// The car-select preview shows the same body colour the race will use.  The paint index is part of
+// the career save (OwnedCar::paint, #167), so a saved paint comes back with the car.
+void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
+{
+    m_fe->SetPreviewCar(car.model);
+    m_fe->SetPreviewPaint(car.paint);
 }
 
 void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)
 {
     if (msg == kMsgPadBack) {
         if (const Career::OwnedCar *car = m_profile.CurrentCar())
-            m_fe->SetPreviewCar(car->model); // leaving without a choice keeps the current car
+            ApplyOwnedCarPreview(*car); // leaving without a choice keeps the current car
         printf("[Career] car select: back to the crib\n");
         m_careerMenuSwitch = "UI_CareerCrib.fng";
         return;
@@ -1857,7 +2179,7 @@ void FEStartupSequence::ChooseMemcardFile()
     if (m_memcardNext != "UI_QRCarSelect.fng" && Career::LoadCareer(m_profile, m_memcardPick)) {
         m_careerExists = true;
         if (const Career::OwnedCar *car = m_profile.CurrentCar())
-            m_fe->SetPreviewCar(car->model);
+            ApplyOwnedCarPreview(*car);
     }
     m_navPending = true;
     CloseMemcardScreens();
@@ -1957,7 +2279,7 @@ void FEStartupSequence::ResumeCareer()
     }
     m_navPending = true; // leaving the front end for the world (one accept press only)
     if (const Career::OwnedCar *car = m_profile.CurrentCar())
-        m_fe->SetPreviewCar(car->model);
+        ApplyOwnedCarPreview(*car);
     m_raceMode = 1;  // DAT_00506b50: career
     m_raceType = 9;  // free roam (the crib/city); race number 0 -> no route
     m_raceNumber = 0;
@@ -1973,6 +2295,8 @@ bool FEStartupSequence::LoadCareerProfile()
     if (Career::LoadCareer(m_profile)) {
         m_careerExists = true;
         m_records.MergeFrom(m_profile);
+        if (const Career::OwnedCar *car = m_profile.CurrentCar())
+            m_fe->SetPreviewPaint(car->paint); // the career race car uses this colour (#167)
         // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
         if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {
             std::string list = extra;

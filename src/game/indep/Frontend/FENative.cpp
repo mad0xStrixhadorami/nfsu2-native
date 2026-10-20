@@ -169,7 +169,13 @@ void FENativeInterface::RenderCarPreviewOverlay()
     if (m_engine) {
         for (FEPackage *candidate = m_engine->GetPackageList()->GetFirstPackage(); candidate;
              candidate = candidate->GetNext()) {
-            if (candidate->GetName() && strcasecmp(candidate->GetName(), "UI_QRCarSelect.fng") == 0) {
+            if (!candidate->GetName())
+                continue;
+            // The 3D car shows through the car-select screen and the two paint-shop screens
+            // (ISSUES #167: UI_ChooseCustomizeCategory.fng / UI_Paint.fng).
+            if (strcasecmp(candidate->GetName(), "UI_QRCarSelect.fng") == 0 ||
+                strcasecmp(candidate->GetName(), "UI_ChooseCustomizeCategory.fng") == 0 ||
+                strcasecmp(candidate->GetName(), "UI_Paint.fng") == 0) {
                 pkg = candidate;
                 break;
             }
@@ -187,6 +193,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
 
     // GL path: the assembled car, slowly turning, in the screen's preview area (FEng 160..480 x
     // 190..390, mapped to window pixels).
+    const bool carSelect = strcasecmp(pkg->GetName(), "UI_QRCarSelect.fng") == 0;
+    const SDL_Color body = ColorForPaint(m_previewPaint, SDL_Color{60, 110, 210, 255});
     if (!m_carPreviewModel.empty()) {
         int x0, y0, x1, y1;
         SDL_RenderLogicalToWindow(m_renderer, 150.0f, 180.0f, &x0, &y0);
@@ -197,10 +205,12 @@ void FENativeInterface::RenderCarPreviewOverlay()
         float sx = winW ? float(outW) / winW : 1.0f, sy = winH ? float(outH) / winH : 1.0f;
         SDL_Rect area{int(x0 * sx), int(y0 * sy), int((x1 - x0) * sx), int((y1 - y0) * sy)};
         float yaw = 0.6f + SDL_GetTicks() * 0.0004f;
-        UpdateStatBars(pkg);
-        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, SDL_Color{60, 110, 210, 255}, &m_carPreviewSlots,
+        if (carSelect)
+            UpdateStatBars(pkg);
+        if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, body, &m_carPreviewSlots,
                         m_carPreviewWheels)) {
-            DrawCarPreviewLabel(pkg);
+            if (carSelect)
+                DrawCarPreviewLabel(pkg);
             return;
         }
     }
@@ -252,10 +262,11 @@ void FENativeInterface::RenderCarPreviewOverlay()
             m_carPreviewSplats.clear();
             m_carPreviewSplats.reserve(proj.size() * 6);
             auto emit = [&](float x, float y, int shade) {
+                float f = float(shade) / 210.0f;
                 m_carPreviewSplats.push_back(
                     {{x, y},
-                     {static_cast<Uint8>(shade), static_cast<Uint8>(std::min(shade + 40, 255)),
-                      static_cast<Uint8>(std::min(shade + 70, 255)), 255},
+                     {static_cast<Uint8>(body.r * f), static_cast<Uint8>(body.g * f),
+                      static_cast<Uint8>(body.b * f), 255},
                      {0.0f, 0.0f}});
             };
             for (const Projected &p : proj) {
@@ -272,7 +283,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
     SDL_RenderGeometry(m_renderer, nullptr, m_carPreviewSplats.data(),
                        static_cast<int>(m_carPreviewSplats.size()), nullptr, 0);
 
-    DrawCarPreviewLabel(pkg);
+    if (carSelect)
+        DrawCarPreviewLabel(pkg);
 }
 
 // Car-select stat bars (UI_QRCarSelect: "accel_*", "top_speed_*", "handling_*" slider widgets set
@@ -422,6 +434,7 @@ void FENativeInterface::CycleCarPreview(int direction)
         }
         if (LoadCarPreview(model)) {
             m_previewCarIndex = cur;
+            m_previewPaint = 0; // a browsed car starts on its stock paint (ISSUES #167)
             return;
         }
     }
@@ -744,6 +757,14 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 m_carTable[key] = rec;
                 m_carRoster.push_back(key);
             }
+        } else if (c->id == 0x80034602) { // repacked car part database: the paint/color catalog
+            m_paint.Parse(c->Data(), c->size);
+            const size_t colors = m_paint.Count();
+            if (colors)
+                printf("[Paint] %zu base paint colors (0x2daab07 GLOSS set), first %s=%u,%u,%u last %s=%u,%u,%u\n",
+                       colors, m_paint.At(0).name.c_str(), m_paint.At(0).r, m_paint.At(0).g, m_paint.At(0).b,
+                       m_paint.At(colors - 1).name.c_str(), m_paint.At(colors - 1).r,
+                       m_paint.At(colors - 1).g, m_paint.At(colors - 1).b);
         } else if (c->id == 0x00034201) { // race database
             for (uint32_t off = 0; off + 0x128 <= c->size; off += 0x128) {
                 const uint8_t *r = c->Data() + off;

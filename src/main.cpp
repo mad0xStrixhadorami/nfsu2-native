@@ -643,7 +643,9 @@ int main(int argc, char **argv)
         }
         if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr)) {
-            world.AddCar(&car.Model(), &car.TriangleTextures(), SDL_Color{40, 90, 200, 255});
+            // The career/QR paint index (OwnedCar::paint) selects a GLOBALB GLOSS color (#167).
+            world.AddCar(&car.Model(), &car.TriangleTextures(),
+                         fe.ColorForPaint(fe.PreviewPaint(), SDL_Color{40, 90, 200, 255}));
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);

@@ -43,6 +43,13 @@ add_executable(profile_test tests/profile_test.cpp src/game/indep/Career/Profile
 target_include_directories(profile_test PRIVATE src)
 add_test(NAME profile COMMAND profile_test)
 
+# Paint catalogue parser: a synthetic GLOBALB part pack (chunk 0x80034602), so the GLOSS set can be
+# checked without the disc.
+add_executable(paint_test tests/paint_test.cpp src/game/indep/Frontend/PaintCatalog.cpp src/platform/linux/bFunkStub.cpp src/platform/linux/PlatformSystem.cpp)
+target_include_directories(paint_test PRIVATE src)
+target_link_libraries(paint_test PRIVATE bware)
+add_test(NAME paint COMMAND paint_test)
+
 # EA FEng front-end engine, reused from nfsmw. UG2 packages are the same format (version 0x20000).
 file(GLOB FENG_SOURCES ${NFSMW}/src/Speed/Indep/Src/FEng/*.cpp)
 add_library(feng STATIC ${FENG_SOURCES})

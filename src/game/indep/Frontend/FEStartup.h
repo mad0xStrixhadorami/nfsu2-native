@@ -153,6 +153,21 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
+    // Car shop paint flow (ISSUES #167): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.  Only the
+    // body's Base Paint (the 60-record GLOBALB GLOSS set) is implemented; the other categories and
+    // the eight other colorable parts are greyed/hidden for now.
+    void HandleCustomizeCategoryLoaded(FEPackage *pkg);
+    void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
+    void HandlePaintLoaded(FEPackage *pkg);
+    void HandlePaintMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshPaintSwatches(FEPackage *pkg);
+    void PositionPaintHighlight(FEPackage *pkg);
+    void RefreshPaintLabel(FEPackage *pkg);
+    void ApplyPaint(uint32_t index);
+    bool PopScreen(); // back to the package saved by NavigateTo
+    size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
+    uint32_t m_paintSel = 0;           // 0-based swatch index in the 60-colour GLOSS grid
+    uint32_t m_paintOriginal = 0;      // paint when the screen opened (Back restores it)
     bool m_careerExists = false; // DAT_004f0e70: a saved career is present
     bool m_cribRequested = false; // the next world session opens in UI_CareerCrib.fng
     void HandleStartCareerLoaded(FEPackage *pkg);
@@ -176,6 +191,9 @@ private:
     void HandleCareerCarSelectLoaded(FEPackage *pkg);
     void HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg);
     void RefreshCareerCarSelect(FEPackage *pkg);
+    // Preview model + body paint of an owned car (ISSUES #167: OwnedCar::paint selects a
+    // GLOBALB GLOSS color; 0 keeps the stock paint).
+    void ApplyOwnedCarPreview(const Career::OwnedCar &car);
     size_t m_csSel = 0;
     // UI_RewardsSponsor.fng: the signed sponsors, one scroller option per area with a sponsor (#165).
     void HandleSponsorViewLoaded(FEPackage *pkg);
