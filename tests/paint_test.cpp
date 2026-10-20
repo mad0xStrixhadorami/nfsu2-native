@@ -158,6 +158,17 @@ int main()
         PaintCatalog::SetForPart(0x99) != 0)
         return Fail("SetForPart mapping mismatch");
 
+    // 0x002bcd00 labels the finish with bStringHash("_PAINT", set); these are the ENGLISH.BIN
+    // strings for the five finish hashes (ISSUES #171).
+    if (std::strcmp(PaintCatalog::SetName(PaintCatalog::kGloss), "Gloss") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kMetal), "Metallic") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kPearl), "Pearlescent") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kHoses), "Powder Coat") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kRims), "Powder Coat") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kMufflers), "High Heat") != 0 ||
+        std::strcmp(PaintCatalog::SetName(PaintCatalog::kBrakes), "High Heat") != 0)
+        return Fail("finish label mismatch");
+
     std::printf("paint_test: passed (%zu GLOSS colours)\n", cat.Count(PaintCatalog::kGloss));
     return 0;
 }

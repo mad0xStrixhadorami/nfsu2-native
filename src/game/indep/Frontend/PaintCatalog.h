@@ -39,7 +39,7 @@ public:
     // 0x002bedd8: color set for a paint-shop part id (0 = the part is not colorable).
     static uint32_t SetForPart(uint32_t partId);
     static bool IsPaintSet(uint32_t set);
-    static const char *SetName(uint32_t set); // "Gloss", "Metal", "Pearl", ...
+    static const char *SetName(uint32_t set); // finish label, e.g. "Gloss", "Metallic", "Powder Coat"
 
     // Parse every known paint set out of a loaded GLOBALB bundle.  Returns false when the pack or
     // all sets are absent; the catalog then stays empty and the port keeps its stock paint.

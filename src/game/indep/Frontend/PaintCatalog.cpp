@@ -98,15 +98,19 @@ bool PaintCatalog::IsPaintSet(uint32_t set)
 
 const char *PaintCatalog::SetName(uint32_t set)
 {
+    // 0x002bcd00 labels the paint screen with bStringHash("_PAINT", set) (0x00156db8), and
+    // ENGLISH.BIN resolves those hashes to the finish names below:
+    //   0x632d35e2 Gloss, 0xf605116d Metallic, 0x913df10e Pearlescent,
+    //   0xcc3401e9 Powder Coat (hoses and rims), 0x459ee68b High Heat (mufflers and brakes).
     switch (set) {
     case kGloss: return "Gloss";
-    case kMetal: return "Metal";
-    case kPearl: return "Pearl";
-    case kHoses: return "Hoses";
-    case kMufflers: return "Mufflers";
+    case kMetal: return "Metallic";
+    case kPearl: return "Pearlescent";
+    case kHoses: return "Powder Coat";
+    case kMufflers: return "High Heat";
     case kVinyl: return "Vinyl";
-    case kRims: return "Rims";
-    case kBrakes: return "Calipers";
+    case kRims: return "Powder Coat";
+    case kBrakes: return "High Heat";
     default: return "Color";
     }
 }
