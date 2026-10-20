@@ -676,8 +676,8 @@ int main(int argc, char **argv)
             const uint8_t *rec = fe.CarRecordData(fe.PreviewCarName());
             printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
         }
-        PlayerCar::InstalledParts installedParts = PlayerCar::InstalledPartsFromEnvironment(
-            [fs](const char *path) { return ReadGameFile(*fs, path); });
+        // The Body Shop preview selection (#188), falling back to the dev environment.
+        PlayerCar::InstalledParts installedParts = fe.InstalledPartsForPreview();
         if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr,
                                         &installedParts)) {

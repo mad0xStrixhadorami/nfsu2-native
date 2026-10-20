@@ -162,6 +162,14 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         installedParts.exhaust = m_previewPartExhaust;
         installedParts.exhaustGeometry = m_readFile("CARS\\EXHAUST\\GEOMETRY.BIN");
     }
+    if (m_previewPartHood > 0) {
+        installedParts.hood = m_previewPartHood;
+        installedParts.hoodCarbon = m_previewPartHoodCarbon;
+    }
+    if (m_previewPartHeadlight > 0)
+        installedParts.headlight = m_previewPartHeadlight;
+    if (m_previewPartTaillight > 0)
+        installedParts.taillight = m_previewPartTaillight;
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
@@ -537,6 +545,74 @@ void FENativeInterface::SetPreviewExhaustPart(int style)
     m_previewPartExhaust = style;
     if (!m_carPreviewTris.empty())
         SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewHoodPart(int style, bool carbon)
+{
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartHood && carbon == m_previewPartHoodCarbon)
+        return;
+    m_previewPartHood = style;
+    m_previewPartHoodCarbon = carbon;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewHeadlightPart(int style)
+{
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartHeadlight)
+        return;
+    m_previewPartHeadlight = style;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewTaillightPart(int style)
+{
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartTaillight)
+        return;
+    m_previewPartTaillight = style;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+// The parts the previewed car is assembled with, for the race loader (#188).  The Body Shop
+// previews a part before it is bought, so reading the setters (not just the environment) keeps
+// the race car identical to the car on the car-select screen.
+PlayerCar::InstalledParts FENativeInterface::InstalledPartsForPreview() const
+{
+    PlayerCar::InstalledParts parts = PlayerCar::InstalledPartsFromEnvironment(
+        [this](const char *path) { return m_readFile(path); });
+    if (m_previewPartSpoiler > 0) {
+        parts.spoiler = m_previewPartSpoiler;
+        parts.spoilerCarbon = m_previewPartSpoilerCarbon;
+        if (parts.spoilerGeometry.empty())
+            parts.spoilerGeometry = m_readFile("CARS\\SPOILER\\GEOMETRY.BIN");
+    }
+    if (m_previewPartRoof > 0) {
+        parts.roof = m_previewPartRoof;
+        parts.roofDual = m_previewPartRoofDual;
+        parts.roofOffset = m_previewPartRoofOffset;
+        parts.roofCarbon = m_previewPartRoofCarbon;
+        if (parts.roofGeometry.empty())
+            parts.roofGeometry = m_readFile("CARS\\ROOF\\GEOMETRY.BIN");
+    }
+    if (m_previewPartExhaust > 0) {
+        parts.exhaust = m_previewPartExhaust;
+        if (parts.exhaustGeometry.empty())
+            parts.exhaustGeometry = m_readFile("CARS\\EXHAUST\\GEOMETRY.BIN");
+    }
+    if (m_previewPartHood > 0) {
+        parts.hood = m_previewPartHood;
+        parts.hoodCarbon = m_previewPartHoodCarbon;
+    }
+    if (m_previewPartHeadlight > 0)
+        parts.headlight = m_previewPartHeadlight;
+    if (m_previewPartTaillight > 0)
+        parts.taillight = m_previewPartTaillight;
+    return parts;
 }
 
 FENativeInterface::~FENativeInterface()

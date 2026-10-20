@@ -10,17 +10,22 @@
 // (SPOILER, ROOF, EXHAUST, PAINT, ...), the part id is the slot's shop id (12 = spoiler), and the
 // record's group/level byte carries the price tier (level) that 0x0026b0c8 feeds to the price table.
 //
-// Order matters: the shop lists a car type's records in pack order, and the universal geometry
-// files name their solids SPOILER_STYLE01..40 in that same order (#181/#182), with the carbon
-// variant of every style collected after the 40 painted ones (CARBONFIBRE attribute = 1).
+// The shop lists a car type's records in pack order, but that order is not the geometry order:
+// the model table (chunk 0x3460a, see CarPart::style) names each record's solid, so the style
+// number comes from there.  Only records without a "_STYLE<NN>" model name fall back to their
+// pack position (#188).  Universal parts are type SPOILER/ROOF/EXHAUST; hoods, headlights and
+// taillights are records of the car model's own type (e.g. "SKYLINE"), filtered by part id.
 struct CarPart {
     std::string name;    // the shop label, e.g. "JORGEN", "MYSTIC", "ROCKER 5"
-    uint8_t partId = 0;  // shop slot id (12 = spoiler, 7 = brakes, 9 = roof scoop, ...)
+    uint8_t partId = 0;  // shop slot id (7 roof scoop, 9 hood, 0xc spoiler, 0xe headlights, ...)
     uint8_t group = 0;   // record byte +5, low 5 bits
     uint8_t level = 0;   // record byte +5, high 3 bits: the price tier (0..4)
-    bool carbon = false; // has the CARBONFIBRE attribute (0xef9931bb) set
+    bool carbon = false; // has the CARBONFIBRE attribute (0x721aff7c) set
     uint8_t variant = 0; // roof scoop body: 0 base, 1 OFFSET, 2 DUAL (from the record's name suffix)
-    uint16_t style = 0;  // 1-based position among the same type, finish and variant: _STYLE%02d
+    // The style number the geometry uses (_STYLE%02d).  The model table (0x3460a) names the model
+    // for every record; its middle string is "_STYLE<NN>", which is authoritative (#188).  Records
+    // without one fall back to the 1-based position among the same type, finish and variant.
+    uint16_t style = 0;
 };
 
 class PartCatalog {

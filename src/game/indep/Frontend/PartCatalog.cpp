@@ -13,12 +13,14 @@ constexpr uint32_t kPackHeader = 0x34603;     // version + record counts
 constexpr uint32_t kPackParts = 0x34604;      // 14-byte part records
 constexpr uint32_t kPackAttrs = 0x34605;      // 8-byte {name hash, value} attribute records
 constexpr uint32_t kPackStrings = 0x34606;    // names, each at 4 * u16 offset
+constexpr uint32_t kPackModels = 0x3460a;     // model name tables (36 bytes each)
 constexpr uint32_t kPackTypes = 0x3460b;      // car type hashes
 constexpr uint32_t kPackTables = 0x3460c;     // per-part attribute tables (i16 count + i16 offsets)
 constexpr uint32_t kPriceRoot = 0x80034a10;   // GLOBALB: car-shop price bundle
 constexpr uint32_t kPriceTable = 0x34a1c;     // 40-byte price entries (0x0026fdb0)
 constexpr size_t kPriceEntry = 40;
 constexpr size_t kPartRecord = 14;
+constexpr size_t kModelEntry = 36;
 constexpr uint32_t kCarbonAttr = 0x721aff7c; // bStringHash("CARBONFIBRE")
 
 // 0x00270888's group -> category switch for the part ids 0x3f..0x43 (FUN_00270228's tiers index
@@ -38,6 +40,34 @@ uint16_t ReadU16(const uint8_t *p)
     uint16_t v;
     memcpy(&v, p, 2);
     return v;
+}
+
+// 0x3460a: CarPartModelTable, 36 bytes per entry.  CarPart::GetModelNameHash chains the car's base
+// name, this table's middle string and one of its 8 model-name strings into the solid name; only
+// the middle string carries the style number ("_STYLE<NN>", #188).
+uint16_t ModelStyle(uint16_t modelTable, const uint8_t *models, size_t modelsSize, const uint8_t *strs,
+                    size_t strsSize)
+{
+    if (modelTable == 0xffff || !models || size_t(modelTable) * kModelEntry + 4 > modelsSize)
+        return 0;
+    const uint8_t *m = models + size_t(modelTable) * kModelEntry;
+    // +0: TemplatedNameHashes.  When clear the model name is a plain hash, not a _STYLE string.
+    if (m[0] == 0)
+        return 0;
+    const uint16_t middle = ReadU16(m + 2);
+    if (middle == 0xffff || size_t(middle) * 4 >= strsSize)
+        return 0;
+    const char *name = reinterpret_cast<const char *>(strs + size_t(middle) * 4);
+    const size_t room = strsSize - size_t(middle) * 4;
+    if (room < 7 || strncmp(name, "_STYLE", 6) != 0)
+        return 0;
+    unsigned value = 0;
+    for (size_t i = 6; i < room && name[i] >= '0' && name[i] <= '9'; ++i) {
+        value = value * 10 + unsigned(name[i] - '0');
+        if (value > 0xffff)
+            return 0;
+    }
+    return uint16_t(value);
 }
 
 struct Chunk {
@@ -98,13 +128,14 @@ bool PartCatalog::Parse(const uint8_t *bundle, size_t size)
     }
 
     const uint8_t *parts = nullptr, *attrs = nullptr, *strs = nullptr;
-    const uint8_t *types = nullptr, *tables = nullptr;
-    size_t partsSize = 0, attrsSize = 0, strsSize = 0, typesSize = 0, tablesSize = 0;
+    const uint8_t *models = nullptr, *types = nullptr, *tables = nullptr;
+    size_t partsSize = 0, attrsSize = 0, strsSize = 0, modelsSize = 0, typesSize = 0, tablesSize = 0;
     ForEachChunk(pack, packSize, [&](const Chunk &c) {
         switch (c.id) {
         case kPackParts: parts = c.data; partsSize = c.size; break;
         case kPackAttrs: attrs = c.data; attrsSize = c.size; break;
         case kPackStrings: strs = c.data; strsSize = c.size; break;
+        case kPackModels: models = c.data; modelsSize = c.size; break;
         case kPackTypes: types = c.data; typesSize = c.size; break;
         case kPackTables: tables = c.data; tablesSize = c.size; break;
         default: break;
@@ -163,7 +194,12 @@ bool PartCatalog::Parse(const uint8_t *bundle, size_t size)
         const uint32_t typeHash = ReadU32(types + size_t(typeIndex) * 4);
         // Level 0 is the stock/no-part record ("NO ROOF SCOOP"); it is not a purchasable style and
         // must not shift the geometry numbering that follows it.
-        part.style = part.level == 0 ? 0 : ++styles[{typeHash, part.carbon, part.variant}];
+        const uint16_t ordinal = part.level == 0 ? 0 : ++styles[{typeHash, part.carbon, part.variant}];
+        // Prefer the model table's own _STYLE number: the shop lists records in pack order, which
+        // is not the geometry order (a car's hood styles, and the universal roof/exhaust/spoiler
+        // styles, are shuffled).  #188.
+        const uint16_t tableStyle = ModelStyle(ReadU16(r + 12), models, modelsSize, strs, strsSize);
+        part.style = part.level == 0 ? 0 : (tableStyle ? tableStyle : ordinal);
         m_parts[typeHash].push_back(std::move(part));
     }
     return !m_parts.empty();

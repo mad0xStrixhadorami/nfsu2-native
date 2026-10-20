@@ -223,7 +223,7 @@ private:
     // Body Shop state (#185): the selected part-slot card and the item selection inside it.
     FEIconScroller m_partsCategoryScroller; // CATEGORY_MASTER / CATEGORY_ICON
     FEIconScroller m_partsScroller;         // MINI_MASTER / PARTS_ICON
-    size_t m_partsCategorySel = 0;          // 0 Spoilers, 1 Carbon Fiber, 2 Roof Scoops, 3 Exhaust Tips
+    size_t m_partsCategorySel = 0;          // 0 Spoilers, 1 Carbon, 2 Roof, 3 Exhaust, 4 Hoods, 5 Headlights, 6 Taillights
     size_t m_partsSel = 0;                  // selected item in m_partsShopItems
     std::vector<PartsShopItem> m_partsShopItems; // records of the current card in PartCatalog
     FEIconScroller m_paintCategoryScroller; // the four 4b4e3888..8b Graphics Shop cards

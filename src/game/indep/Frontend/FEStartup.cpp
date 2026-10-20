@@ -1304,6 +1304,20 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewEnginePaint(PaintCatalog::kHoses, 0);
         if (!getenv("NFSU2_EXHAUST_PAINT"))
             m_fe->SetPreviewExhaustPaint(PaintCatalog::kMufflers, 0);
+        // Fitted body parts are career-only too (#185/#186/#188): a quick-race or starter car is
+        // stock, and the career path re-applies the saved set when its own car select loads.
+        if (!getenv("NFSU2_PART_SPOILER"))
+            m_fe->SetPreviewSpoilerPart(0, false);
+        if (!getenv("NFSU2_PART_ROOF"))
+            m_fe->SetPreviewRoofPart(0, false, false, false);
+        if (!getenv("NFSU2_PART_EXHAUST"))
+            m_fe->SetPreviewExhaustPart(0);
+        if (!getenv("NFSU2_PART_HOOD"))
+            m_fe->SetPreviewHoodPart(0, false);
+        if (!getenv("NFSU2_PART_HEADLIGHT"))
+            m_fe->SetPreviewHeadlightPart(0);
+        if (!getenv("NFSU2_PART_TAILLIGHT"))
+            m_fe->SetPreviewTaillightPart(0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1513,6 +1527,12 @@ void RememberFittedParts(Career::Profile &profile, const Career::OwnedCar &car)
                                           car.roofDual ? 2 : car.roofOffset ? 1 : 0));
     if (car.exhaust)
         AddOwnedPart(profile, MakePartKey(0x10, car.exhaust, false, 0));
+    if (car.hood)
+        AddOwnedPart(profile, MakePartKey(9, car.hood, car.hoodCarbon, 0));
+    if (car.headlight)
+        AddOwnedPart(profile, MakePartKey(0xe, car.headlight, false, 0));
+    if (car.taillight)
+        AddOwnedPart(profile, MakePartKey(0xf, car.taillight, false, 0));
 }
 
 // Show or hide one control of GenericDialog_SMALL.fng.  The shipped labels start fully transparent;
@@ -1546,10 +1566,13 @@ void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
         uint32_t icon, label;
         const char *debug;
     } kCards[] = {
-        {0xbb034ea6, 0xbb034ea6, "Spoilers"},     // 0xc in 0x002a7e70
-        {0x24911e04, 0x24911e04, "Carbon Fiber"}, // 0x002a7938
-        {0x79165861, 0x79165861, "Roof Scoops"},  // 7 in 0x002a7e70
-        {0xa434a006, 0x2aced725, "Exhaust Tips"}, // 0x10 in 0x002a7e70
+        {0xbb034ea6, 0xbb034ea6, "Spoilers"},      // 0xc in 0x002a7e70
+        {0x24911e04, 0x24911e04, "Carbon Fiber"},  // 0x002a7938
+        {0x79165861, 0x79165861, "Roof Scoops"},   // 7 in 0x002a7e70
+        {0xa434a006, 0x2aced725, "Exhaust Tips"},  // 0x10 in 0x002a7e70
+        {0x28f7092, 0x28f7092, "Hoods"},           // 9 in 0x002a7e70
+        {0xf69ac384, 0x3dc6a111, "Headlights"},    // 0xe in 0x002a7e70
+        {0x2cbb2d1c, 0x663437a9, "Taillights"},    // 0xf in 0x002a7e70
     };
     constexpr size_t kCardCount = sizeof(kCards) / sizeof(kCards[0]);
     m_partsCategorySel = std::min(m_partsCategorySel, kCardCount - 1);
@@ -1577,14 +1600,20 @@ void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
 
 // Rebuild PARTS_ICON for the selected slot card.  The cards are the Body Shop's part slots; the
 // Carbon Fiber card is the original's cross-type filter (0x5e), so it collects the carbon records
-// of every body part the port can mount.  The style number restarts per finish and roof body
-// (PartCatalog, #186), matching SPOILER_STYLE01..40 and ROOF_STYLE01..17.
+// of every body part the port can mount.  Styles come from the part's model entry (#188), which is
+// authoritative for the universal and per-car parts alike.
 void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
 {
-    static const uint32_t kCardIcons[4] = {0xbb034ea6, 0x24911e04, 0x79165861, 0xa434a006};
+    static const uint32_t kCardIcons[7] = {0xbb034ea6, 0x24911e04, 0x79165861, 0xa434a006,
+                                           0x28f7092, 0xf69ac384, 0x2cbb2d1c};
     static const uint32_t kCarbonTypes[] = {bStringHash("SPOILER"), bStringHash("ROOF"),
                                             bStringHash("EXHAUST")};
-    const uint32_t kTypes[] = {bStringHash("SPOILER"), 0, bStringHash("ROOF"), bStringHash("EXHAUST")};
+    // The hood / headlights / taillights are per-car records: their type is the car model's hash
+    // (the GLOBALB car database folder name, e.g. "SKYLINE"), unlike the universal spoiler/roof/
+    // exhaust packs.  The previewed car is the one whose panels are shown, so prefer its name.
+    const std::string carModel =
+        !m_fe->PreviewCarName().empty() ? m_fe->PreviewCarName() : (ShopCar() ? ShopCar()->model : "");
+    const uint32_t carType = carModel.empty() ? 0 : bStringHash(carModel.c_str());
 
     m_partsShopItems.clear();
     if (m_partsCategorySel == 1) {
@@ -1594,11 +1623,27 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
                 if (parts[i].carbon && parts[i].level > 0)
                     m_partsShopItems.push_back({type, uint16_t(i), 0x24911e04});
         }
+        // Carbon hoods live under the car's own type (#188); the card collects them too.
+        if (carType) {
+            const std::vector<CarPart> &parts = m_fe->Parts().Parts(carType);
+            for (size_t i = 0; i < parts.size(); ++i)
+                if (parts[i].carbon && parts[i].level > 0 && parts[i].partId == 9)
+                    m_partsShopItems.push_back({carType, uint16_t(i), 0x24911e04});
+        }
     } else {
-        const uint32_t type = kTypes[m_partsCategorySel];
+        uint32_t type = 0;
+        uint8_t partId = 0;
+        switch (m_partsCategorySel) {
+        case 0: type = bStringHash("SPOILER"); break;
+        case 2: type = bStringHash("ROOF"); break;
+        case 3: type = bStringHash("EXHAUST"); break;
+        case 4: type = carType; partId = 9; break;   // hood
+        case 5: type = carType; partId = 0xe; break; // headlights
+        case 6: type = carType; partId = 0xf; break; // taillights
+        }
         const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
         for (size_t i = 0; i < parts.size(); ++i)
-            if (!parts[i].carbon && parts[i].level > 0)
+            if (!parts[i].carbon && parts[i].level > 0 && (!partId || parts[i].partId == partId))
                 m_partsShopItems.push_back({type, uint16_t(i), kCardIcons[m_partsCategorySel]});
     }
 
@@ -1628,9 +1673,10 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
     const char *first = "-";
     if (!m_partsShopItems.empty())
         first = m_fe->Parts().Parts(m_partsShopItems.front().type)[m_partsShopItems.front().index].name.c_str();
+    static const char *kCardDebug[7] = {"painted", "carbon", "roof", "exhaust",
+                                        "hoods", "headlights", "taillights"};
     printf("[PartsShop] %s: %zu records, first %s, selected %zu\n",
-           m_partsCategorySel == 1 ? "carbon" : m_partsCategorySel == 2 ? "roof" : m_partsCategorySel == 3 ? "exhaust" : "painted",
-           m_partsShopItems.size(), first, m_partsSel);
+           kCardDebug[m_partsCategorySel], m_partsShopItems.size(), first, m_partsSel);
     PreviewOwnedParts(ShopCar());
     RefreshPartsBrowserInfo(pkg);
 }
@@ -1653,6 +1699,12 @@ bool FEStartupSequence::OwnedCarHasPart(const Career::OwnedCar &car, const CarPa
                car.roofDual == (part.variant == 2) && car.roofOffset == (part.variant == 1);
     case 0x10: // exhaust tip
         return car.exhaust == part.style;
+    case 9: // hood
+        return car.hood == part.style && car.hoodCarbon == part.carbon;
+    case 0xe: // headlights
+        return car.headlight == part.style;
+    case 0xf: // taillights
+        return car.taillight == part.style;
     default:
         return false;
     }
@@ -1670,6 +1722,15 @@ void FEStartupSequence::PreviewPartsBrowserPart(const CarPart &part)
     case 0x10:
         m_fe->SetPreviewExhaustPart(part.style);
         break;
+    case 9:
+        m_fe->SetPreviewHoodPart(part.style, part.carbon);
+        break;
+    case 0xe:
+        m_fe->SetPreviewHeadlightPart(part.style);
+        break;
+    case 0xf:
+        m_fe->SetPreviewTaillightPart(part.style);
+        break;
     default:
         break;
     }
@@ -1681,11 +1742,15 @@ void FEStartupSequence::PreviewOwnedParts(const Career::OwnedCar *car)
     m_fe->SetPreviewRoofPart(car ? car->roof : 0, car && car->roofDual, car && car->roofOffset,
                              car && car->roofCarbon);
     m_fe->SetPreviewExhaustPart(car ? car->exhaust : 0);
+    m_fe->SetPreviewHoodPart(car ? car->hood : 0, car && car->hoodCarbon);
+    m_fe->SetPreviewHeadlightPart(car ? car->headlight : 0);
+    m_fe->SetPreviewTaillightPart(car ? car->taillight : 0);
 }
 
 void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
 {
-    static const uint32_t kCategoryLabel[4] = {0xbb034ea6, 0x24911e04, 0x79165861, 0x2aced725};
+    static const uint32_t kCategoryLabel[7] = {0xbb034ea6, 0x24911e04, 0x79165861, 0x2aced725,
+                                               0x28f7092, 0x3dc6a111, 0x663437a9};
     FENativeInterface::SetLanguageHash(pkg, 0x6c9e933e, kCategoryLabel[m_partsCategorySel]);
     const CarPart *part = SelectedPartsShopPart();
     if (!part) {
@@ -1823,6 +1888,19 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
         case 0x10:
             car->exhaust = uint8_t(part.style);
             what = "exhaust tip";
+            break;
+        case 9:
+            car->hood = uint8_t(part.style);
+            car->hoodCarbon = part.carbon;
+            what = "hood";
+            break;
+        case 0xe:
+            car->headlight = uint8_t(part.style);
+            what = "headlights";
+            break;
+        case 0xf:
+            car->taillight = uint8_t(part.style);
+            what = "taillights";
             break;
         default:
             break;
@@ -2945,10 +3023,13 @@ void FEStartupSequence::RefreshCareerCarSelect(FEPackage *pkg)
 void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
 {
     // Set the fitted parts before the car so their geometry is assembled in the same load
-    // (#185/#186).
+    // (#185/#186/#188).
     m_fe->SetPreviewSpoilerPart(car.spoiler, car.spoilerCarbon);
     m_fe->SetPreviewRoofPart(car.roof, car.roofDual, car.roofOffset, car.roofCarbon);
     m_fe->SetPreviewExhaustPart(car.exhaust);
+    m_fe->SetPreviewHoodPart(car.hood, car.hoodCarbon);
+    m_fe->SetPreviewHeadlightPart(car.headlight);
+    m_fe->SetPreviewTaillightPart(car.taillight);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use

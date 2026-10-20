@@ -134,6 +134,20 @@ public:
     int PreviewRoofPart() const { return m_previewPartRoof; }
     void SetPreviewExhaustPart(int style);
     int PreviewExhaustPart() const { return m_previewPartExhaust; }
+    // Hood / headlights / taillights fitted by the Body Shop (#188).  These are solids in the car's
+    // own GEOMETRY.BIN; style 0 keeps the stock panel.  The carbon hood reuses the painted solid
+    // (the files ship no _CF hood), so only the purchase/price flag differs.
+    void SetPreviewHoodPart(int style, bool carbon);
+    int PreviewHoodPart() const { return m_previewPartHood; }
+    bool PreviewHoodPartCarbon() const { return m_previewPartHoodCarbon; }
+    void SetPreviewHeadlightPart(int style);
+    int PreviewHeadlightPart() const { return m_previewPartHeadlight; }
+    void SetPreviewTaillightPart(int style);
+    int PreviewTaillightPart() const { return m_previewPartTaillight; }
+    // The dev environment's NFSU2_PART_* selection overridden by the preview setters, i.e. the
+    // parts the currently previewed car should be assembled with.  Both the frontend preview and
+    // the race car loader use this so a bought panel shows in the race (#188).
+    PlayerCar::InstalledParts InstalledPartsForPreview() const;
     // The paint on the installed aftermarket parts (Roof Scoop / Engine Accents / Muffler Tip
     // cards, ISSUES.md #178).  index 0 keeps each part's stock colour; the sets are normally
     // PaintCatalog::kGloss / kHoses / kMufflers.
@@ -409,6 +423,10 @@ private:
     int m_previewPartRoof = 0;          // fitted roof scoop 1..17 (#186)
     bool m_previewPartRoofDual = false, m_previewPartRoofOffset = false, m_previewPartRoofCarbon = false;
     int m_previewPartExhaust = 0;       // fitted exhaust tip 1..10 (#186)
+    int m_previewPartHood = 0;          // fitted hood 1..28 (#188)
+    bool m_previewPartHoodCarbon = false;
+    int m_previewPartHeadlight = 0;     // fitted headlights 1..14 (#188)
+    int m_previewPartTaillight = 0;     // fitted taillights 1..14 (#188)
     uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)
     uint32_t m_previewRoofSet = PaintCatalog::kGloss;
     uint32_t m_previewEngine = 0; // 0 = stock engine accent colour; else 1..Count(hoses set)

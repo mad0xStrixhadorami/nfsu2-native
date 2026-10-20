@@ -13,8 +13,9 @@ constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // v2 adds the best-time direction key, v3 the drift scores, v4 the signed sponsors, v5 the paint
 // finish set of each owned car (GLOSS/METAL/PEARL, ISSUES #168), v6 the other eight UI_Paint parts
 // (Spoiler .. Muffler Tip, ISSUES #169), v7 the fitted spoiler (Body Shop, ISSUES #185), v8 the
-// fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187).
-constexpr uint32_t kVersion = 9;
+// fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187), v10 the fitted
+// hood, headlights and taillights (#188).
+constexpr uint32_t kVersion = 10;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -127,6 +128,14 @@ std::vector<uint8_t> Serialize(const Profile &p)
     PutU32(payload, uint32_t(p.ownedParts.size()));
     for (uint32_t key : p.ownedParts)
         PutU32(payload, key);
+    // v10: the fitted hood, headlights and taillights (#188).
+    PutU32(payload, uint32_t(p.cars.size()));
+    for (const OwnedCar &c : p.cars) {
+        PutU32(payload, c.hood);
+        PutU32(payload, c.hoodCarbon ? 1 : 0);
+        PutU32(payload, c.headlight);
+        PutU32(payload, c.taillight);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -148,7 +157,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 9) || o + size > data.size())
+    if ((version < 1 || version > 10) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -271,6 +280,21 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             if (!GetU32(payload, q, key))
                 return false;
             p.ownedParts.push_back(key);
+        }
+    }
+    if (version >= 10 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n != p.cars.size())
+            return false;
+        for (OwnedCar &c : p.cars) {
+            uint32_t hood = 0, carbon = 0, headlight = 0, taillight = 0;
+            if (!GetU32(payload, q, hood) || !GetU32(payload, q, carbon) ||
+                !GetU32(payload, q, headlight) || !GetU32(payload, q, taillight))
+                return false;
+            c.hood = uint8_t(hood);
+            c.hoodCarbon = carbon != 0;
+            c.headlight = uint8_t(headlight);
+            c.taillight = uint8_t(taillight);
         }
     }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))

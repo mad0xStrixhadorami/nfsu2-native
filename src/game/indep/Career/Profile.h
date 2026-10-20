@@ -27,6 +27,13 @@ struct OwnedCar {
     uint8_t roof = 0;
     bool roofDual = false, roofOffset = false, roofCarbon = false;
     uint8_t exhaust = 0;
+    // Hood / headlights / taillights fitted by the Body Shop (ISSUES #188): hood 1..28, lights
+    // 1..14, 0 = stock.  The carbon hood ships no separate solid, so hoodCarbon only picks the
+    // price band and the record key.
+    uint8_t hood = 0;
+    bool hoodCarbon = false;
+    uint8_t headlight = 0;
+    uint8_t taillight = 0;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

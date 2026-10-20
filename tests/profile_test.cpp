@@ -148,6 +148,10 @@ int main()
     p.cars[0].roofDual = true;
     p.cars[0].roofCarbon = true;
     p.cars[0].exhaust = 7;
+    p.cars[0].hood = 21;                  // Body Shop hood / headlights / taillights (ISSUES #188)
+    p.cars[0].hoodCarbon = true;
+    p.cars[0].headlight = 7;
+    p.cars[0].taillight = 12;
     p.ownedParts = {0x00000c01u, 0x02000701u, 0x00001004u}; // spoiler / roof OFFSET / exhaust (#187)
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
@@ -190,6 +194,9 @@ int main()
     if (q.ownedParts.size() != 3 || q.ownedParts[0] != 0x00000c01u || q.ownedParts[1] != 0x02000701u ||
         q.ownedParts[2] != 0x00001004u)
         return Fail("owned Body Shop parts must round-trip (v9)");
+    if (q.cars[0].hood != 21 || !q.cars[0].hoodCarbon || q.cars[0].headlight != 7 ||
+        q.cars[0].taillight != 12)
+        return Fail("fitted hood, headlights and taillights must round-trip (v10)");
 
     // Version 5: the previous layout still loads; the new per-part block stays zero.
     {
@@ -211,6 +218,8 @@ int main()
         return Fail("v5 save must have the stock roof scoop and exhaust tip");
     if (!v5.ownedParts.empty())
         return Fail("v5 save must have an empty Body Shop item pool");
+    if (v5.cars[0].hood || v5.cars[0].hoodCarbon || v5.cars[0].headlight || v5.cars[0].taillight)
+        return Fail("v5 save must have the stock hood, headlights and taillights");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {

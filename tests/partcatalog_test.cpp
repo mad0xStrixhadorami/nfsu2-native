@@ -134,6 +134,73 @@ std::vector<uint8_t> MakePack()
     return pack;
 }
 
+// Per-car body pack (#188): three hood records whose model table names the geometry style.  The
+// shop order is BEAST/DOUBLE-V/TRI-SLOT but the table says styles 9, (none) and 7, proving the
+// table wins and a table-less record still falls back to the pack-order style.
+std::vector<uint8_t> MakeModelPack()
+{
+    std::vector<uint8_t> header(0x40, 0);
+    Set32(header, 0x28, 1); // numTypes
+    Set32(header, 0x38, 3); // numParts
+
+    std::vector<uint8_t> types;
+    Put32(types, bStringHash("SKYLINE"));
+
+    std::vector<uint8_t> strings;
+    auto name = [&](const char *text) {
+        const uint16_t at = uint16_t(strings.size() / 4);
+        PutName(strings, text);
+        return at;
+    };
+    const uint16_t nameFirst = name("BEAST");
+    const uint16_t nameSecond = name("DOUBLE-V");
+    const uint16_t nameThird = name("TRI-SLOT");
+    const uint16_t styleNine = name("_STYLE09");
+    const uint16_t styleSeven = name("_STYLE07");
+
+    std::vector<uint8_t> models(3 * 36, 0);
+    models[0] = 1;                // TemplatedNameHashes: the middle string is a _STYLE name
+    Set16(models, 2, styleNine);
+    models[36] = 0;               // plain model hash: no style number
+    models[72] = 1;
+    Set16(models, 72 + 2, styleSeven);
+
+    std::vector<uint8_t> parts;
+    auto part = [&](uint16_t nameOff, uint16_t model) {
+        std::vector<uint8_t> p(14, 0);
+        p[4] = 9;                 // hood
+        p[5] = uint8_t(1 << 5);   // group 0, level 1
+        p[7] = 0;                 // type 0
+        Set16(p, 8, nameOff);
+        Set16(p, 10, 0xffff);     // no attributes
+        Set16(p, 12, model);
+        return p;
+    };
+    for (uint16_t model : {uint16_t(0), uint16_t(1), uint16_t(2)}) {
+        const uint16_t n = model == 0 ? nameFirst : model == 1 ? nameSecond : nameThird;
+        std::vector<uint8_t> p = part(n, model);
+        parts.insert(parts.end(), p.begin(), p.end());
+    }
+
+    std::vector<uint8_t> tables(2, 0);
+    std::vector<uint8_t> attrs;
+    Put32(attrs, 0x12345678);
+    Put32(attrs, 1);
+
+    std::vector<uint8_t> payload;
+    Chunk(payload, 0x34603, header);
+    Chunk(payload, 0x34604, parts);
+    Chunk(payload, 0x34605, attrs);
+    Chunk(payload, 0x34606, strings);
+    Chunk(payload, 0x3460a, models);
+    Chunk(payload, 0x3460b, types);
+    Chunk(payload, 0x3460c, tables);
+
+    std::vector<uint8_t> pack;
+    Chunk(pack, 0x80034602, payload);
+    return pack;
+}
+
 // Price bundle with category 0x0c (painted spoiler) at 400/800/1000 and 0x4a (carbon spoiler) at
 // 1000/1250/1500 - the two categories 0x00270888 picks for part id 12.
 std::vector<uint8_t> MakePrices()
@@ -256,7 +323,22 @@ int main()
     if (priced.Price(exhausts[0]) != 1100 || priced.Price(exhausts[1]) != 1200)
         return Fail("exhaust tip prices per tier");
 
-    std::printf("partcatalog_test: ok (%zu spoilers, styles 1..%u; %zu roofs, %zu exhausts)\n",
+    // Per-car body parts (#188): the model table's _STYLE name is the geometry style, not the pack
+    // position; a record whose model entry has no template falls back to the ordinal.
+    const std::vector<uint8_t> modelPack = MakeModelPack();
+    PartCatalog cars;
+    if (!cars.Parse(modelPack.data(), modelPack.size()))
+        return Fail("Parse rejected the per-car pack");
+    const std::vector<CarPart> &hoods = cars.Parts(bStringHash("SKYLINE"));
+    if (hoods.size() != 3)
+        return Fail("per-car hood count");
+    if (hoods[0].style != 9 || hoods[1].style != 2 || hoods[2].style != 7)
+        return Fail("model-table style must override the pack order");
+    if (PartCatalog::PriceCategory(hoods[0]) != 0xb)
+        return Fail("hood price category");
+
+    std::printf("partcatalog_test: ok (%zu spoilers, styles 1..%u; %zu roofs, %zu exhausts; "
+                "hood styles 9/2/7)\n",
                 parts.size(), unsigned(parts.back().style), roofs.size(), exhausts.size());
     return 0;
 }
