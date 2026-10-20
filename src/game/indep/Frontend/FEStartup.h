@@ -117,12 +117,14 @@ public:
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
     // its purse/respect, marking it complete on a win. Called from the results screen.
-    void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f);
+    void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f, int score = 0);
 
     // Quick Race / non-career best lap for the shared 0x4fb4ac table (0x00272e18). The track select
     // always reads the forward key (item +0x10 is 0), but reverse QR runs are stored under direction
     // 1, as the original table does.
     void RecordQuickRaceTime(int raceNumber, bool reverse, float seconds);
+    // Drift result for the same table, read back with 0x00272ee8 (largest score wins).
+    void RecordQuickRaceScore(int raceNumber, bool reverse, int score);
 
 private:
 

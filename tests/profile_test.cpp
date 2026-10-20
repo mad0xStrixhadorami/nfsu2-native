@@ -1,4 +1,4 @@
-// Career profile save format: direction key of the best-time table (0x4fb4ac) and v1 compatibility.
+// Career profile save format: direction-keyed best times/scores (0x4fb4ac) and v1/v2 compatibility.
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +51,38 @@ std::vector<uint8_t> MakeV1Save()
     return out;
 }
 
+// A version-2 save (direction-keyed best times, no score list). The v3 loader must still read it.
+std::vector<uint8_t> MakeV2Save()
+{
+    std::vector<uint8_t> payload;
+    PutStr(payload, "V2");
+    PutU32(payload, 500);
+    PutU32(payload, 50);
+    PutU32(payload, 0);
+    PutStr(payload, "L4RA");
+    PutU32(payload, 0); // currentCar
+    PutU32(payload, 0); // playTime
+    PutU32(payload, 0); // cars
+    PutU32(payload, 0); // completedEvents
+    PutU32(payload, 2); // bestTimes
+    PutU32(payload, 4012);
+    PutU32(payload, 0);
+    PutU32(payload, 91000);
+    PutU32(payload, 4012);
+    PutU32(payload, 1);
+    PutU32(payload, 92000);
+
+    uint32_t sum = 0;
+    for (uint8_t c : payload)
+        sum = sum * 31 + c;
+    std::vector<uint8_t> out = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
+    PutU32(out, 2);
+    PutU32(out, uint32_t(payload.size()));
+    PutU32(out, sum);
+    out.insert(out.end(), payload.begin(), payload.end());
+    return out;
+}
+
 int Fail(const char *what)
 {
     std::fprintf(stderr, "profile_test: %s\n", what);
@@ -67,8 +99,8 @@ int main()
     fs::create_directories(dir, ec);
     setenv("NFSU2_MEMCARD", dir.c_str(), 1);
 
-    // Version 2 round-trip: forward and reverse best times are separate keys, and the smaller time
-    // wins within a key.
+    // Version 3 round-trip: forward and reverse best times are separate keys, the smaller time wins
+    // within a key, and drift scores keep the larger value under the same direction key.
     Career::Profile p;
     p.name = "TEST";
     p.cars.push_back({"SKYLINE", 0});
@@ -76,18 +108,41 @@ int main()
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
     p.RecordTime(4012, 1, 95000);
+    p.RecordScore(4311, 0, 12345);
+    p.RecordScore(4311, 1, 15000);
+    p.RecordScore(4311, 1, 14000);
     if (!Career::SaveCareer(p))
-        return Fail("v2 save failed");
+        return Fail("v3 save failed");
 
     Career::Profile q;
     if (!Career::LoadCareer(q, "TEST"))
-        return Fail("v2 load failed");
+        return Fail("v3 load failed");
     if (q.BestTimeFor(4012, 0) != 90000)
         return Fail("forward key mismatch");
     if (q.BestTimeFor(4012, 1) != 89000)
         return Fail("reverse key must keep the smaller time");
     if (q.BestTimeFor(4012, 2) != 0)
         return Fail("unknown direction must not alias");
+    if (q.BestScoreFor(4311, 0) != 12345)
+        return Fail("forward score mismatch");
+    if (q.BestScoreFor(4311, 1) != 15000)
+        return Fail("reverse score must keep the larger value");
+    if (q.BestScoreFor(4311, 2) != 0)
+        return Fail("unknown score direction must not alias");
+
+    // Version 2: still loads its direction-keyed times and has no scores.
+    {
+        const std::vector<uint8_t> old = MakeV2Save();
+        std::ofstream out((dir / "V2.SAV").string(), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(old.data()), std::streamsize(old.size()));
+    }
+    Career::Profile v2;
+    if (!Career::LoadCareer(v2, "V2"))
+        return Fail("v2 load failed");
+    if (v2.BestTimeFor(4012, 0) != 91000 || v2.BestTimeFor(4012, 1) != 92000)
+        return Fail("v2 best times mismatch");
+    if (v2.BestScoreFor(4311, 0) != 0)
+        return Fail("v2 save must have no scores");
 
     // Version 1: the old save still loads; its best-time list is absent, so both keys are zero.
     {
@@ -102,6 +157,8 @@ int main()
         return Fail("v1 completion list mismatch");
     if (r.BestTimeFor(0xb01c890b, 0) != 0 || r.BestTimeFor(0xb01c890b, 1) != 0)
         return Fail("v1 save must have no best times");
+    if (r.BestScoreFor(0xb01c890b, 0) != 0)
+        return Fail("v1 save must have no best scores");
 
     fs::remove_all(dir, ec);
     std::printf("profile_test: passed\n");

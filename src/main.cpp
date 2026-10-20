@@ -1066,8 +1066,11 @@ int main(int argc, char **argv)
                     for (size_t i = 0; i < rows.size(); ++i)
                         if (rows[i].name == "YOU")
                             place = int(i) + 1;
-                    startup.AwardCareerResult(worldRaceNumber, place, race.BestLap());
-                    if (!race.IsDrift())
+                    const int driftScore = race.IsDrift() ? int(race.DriftTotal()) : 0;
+                    startup.AwardCareerResult(worldRaceNumber, place, race.BestLap(), driftScore);
+                    if (race.IsDrift())
+                        startup.RecordQuickRaceScore(worldRaceNumber, worldRaceReverse, driftScore);
+                    else
                         startup.RecordQuickRaceTime(worldRaceNumber, worldRaceReverse, race.BestLap());
                     race.HideHud(); // the results panel replaces the HUD (its leftovers showed through)
                     if (hud)

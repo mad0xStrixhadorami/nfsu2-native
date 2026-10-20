@@ -863,10 +863,22 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     // QR list items store 0 at +0x10 (0x001facc0), so the forward record is shown even when the
     // Track Direction setting is Reverse. 0x002ef778 formats the value as mm:ss:cc.
     const int best = m_profile.valid ? m_profile.BestTimeFor(r.number, 0) : 0;
-    if (best > 0)
+    // 0x001faf90 also sets the caption at 0x36227ee9: drift reads the score table (0x00272ee8)
+    // under "Best Lap" (0x3b7b9567), sprint/drag say "Best Time:", everything else "Best Lap:".
+    uint32_t bestLabel = 0x3b4a1ecb; // Best Lap:
+    if (m_raceType == 3)
+        bestLabel = 0x3b7b9567; // Best Lap (drift score)
+    else if (m_raceType == 1 || m_raceType == 2)
+        bestLabel = 0xdb0c5efd; // Best Time:
+    FENativeInterface::SetLanguageHash(pkg, 0x36227ee9, bestLabel);
+    if (m_raceType == 3) {
+        const int score = m_profile.valid ? m_profile.BestScoreFor(r.number, 0) : 0;
+        snprintf(text, sizeof(text), "%d", score);
+    } else if (best > 0) {
         snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
-    else
+    } else {
         snprintf(text, sizeof(text), "--:--:--");
+    }
     FENativeInterface::SetString(pkg, 0x0555eeca, text);
     printf("[Menu] track %d best %s\n", r.number, text);
 }
@@ -1270,10 +1282,10 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
 // 0x001eed48): the career event picker. Up/Down (0x001eea80) move through the area's events, Left/
 // Right (0x001eeb58) change the area, Accept confirms and starts the event (0x00267d40 selects it,
 // 0x0025eba8 starts it), Back returns to the crib (0x00292560 -> UI_CareerCrib.fng).
-// Stand-ins: the area list is not unlocked progressively (0x001ee570 tests the profile; all five
-// areas are offered), the Accept confirmation dialog (0x00260528) is skipped, the per-track map
-// image (TRACKS\TRACKMAP<n>.bin, 0x001fa010) is not available so the package's default map stays, and
-// "Previous Time" is not recorded.
+// Stand-ins: the Accept confirmation dialog (0x00260528) is skipped and the per-track map image
+// (TRACKS\TRACKMAP<n>.bin, 0x001fa010) is not available, so the package's default map stays. The
+// area/event lists follow the #152 stage gates; the fourth row is the best time (0x00272e18) or,
+// for drift events, the best score (0x00272ee8) from the profile's 0x4fb4ac table (#144/#162).
 static uint32_t RaceTypeLabel(int type)
 {
     switch (type) {
@@ -1365,17 +1377,33 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
         if (ri.number == ev.races[0])
             r = &ri;
     const bool done = m_profile.valid && m_profile.Completed(ev.id);
+    // 0x001edcb0 sets the four row captions too; the package ships "Race Status:" and
+    // "Previous Time:". Drift events (type 5) read the shared 0x4fb4ac table with 0x00272ee8 and
+    // caption it "Best Score:"; sprint and drag (types 1/4) call their time "Best Time:".
+    FENativeInterface::SetLanguageHash(pkg, 0x4d2f5c61, 0xed8ca191); // Event Status
+    FENativeInterface::SetLanguageHash(pkg, 0x4d2f5c62, 0x7f904ae8); // Race Type:
+    FENativeInterface::SetLanguageHash(pkg, 0x4d2f5c63, 0x7019add7); // Distance:
+    const uint32_t bestLabel = ev.stage == 5 ? 0x4e0a36a0u
+                               : (ev.stage == 1 || ev.stage == 4) ? 0xdb0c5efdu
+                                                                 : 0x3b4a1ecbu;
+    FENativeInterface::SetLanguageHash(pkg, 0x4d2f5c64, bestLabel);
     FENativeInterface::SetLanguageHash(pkg, 0x23eae8b9, done ? 0xb1ee4ca9 : 0xd11ecd79); // Completed / Not Completed
     if (r) {
         FENativeInterface::SetLanguageHash(pkg, 0x23eae8ba, RaceTypeLabel(CareerRaceType(ev, *r)));
         snprintf(text, sizeof(text), "%.1f Miles", r->length * 0.001f * 0.62137f);
         FENativeInterface::SetString(pkg, 0x23eae8bb, text);
     }
-    const int best = r ? m_profile.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
-    if (best > 0 && ev.stage != 5)
-        snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
-    else
-        snprintf(text, sizeof(text), "--:--:--");
+    if (ev.stage == 5) {
+        // 0x00272ee8: largest score for this race/direction; no entry reads as 0.
+        const int score = r ? m_profile.BestScoreFor(r->number, ev.DirectionFor(r->number)) : 0;
+        snprintf(text, sizeof(text), "%d", score);
+    } else {
+        const int best = r ? m_profile.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
+        if (best > 0)
+            snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
+        else
+            snprintf(text, sizeof(text), "--:--:--");
+    }
     FENativeInterface::SetString(pkg, 0x23eae8bc, text);
 }
 
@@ -1783,11 +1811,19 @@ bool FEStartupSequence::LoadCareerProfile()
                 if (e.region <= upTo)
                     m_profile.Complete(e.id);
         }
-        // Dev aid: NFSU2_BEST_TIME=<race>:<ms> records a best time and saves it (tests Previous Time).
+        // Dev aids: NFSU2_BEST_TIME=<race>:<ms> / NFSU2_BEST_SCORE=<race>:<points> seed the
+        // 0x4fb4ac table so the world map and QR track select can be checked without a race.
         if (const char *bt = getenv("NFSU2_BEST_TIME")) {
             int race = 0, ms = 0;
             if (sscanf(bt, "%d:%d", &race, &ms) == 2 && ms > 0) {
                 m_profile.RecordTime(race, 0, ms);
+                Career::SaveCareer(m_profile);
+            }
+        }
+        if (const char *bs = getenv("NFSU2_BEST_SCORE")) {
+            int race = 0, score = 0;
+            if (sscanf(bs, "%d:%d", &race, &score) == 2 && score > 0) {
+                m_profile.RecordScore(race, 0, score);
                 Career::SaveCareer(m_profile);
             }
         }
@@ -1802,18 +1838,26 @@ bool FEStartupSequence::LoadCareerProfile()
 // 0x00268bd8 test on the record's +0x08 id that the world map (0x001ee590) puts at item index 7.
 // UG2 pays the purse for winning; the port pays a podium share (2nd 1/2, 3rd 1/4) and only completes
 // the event on a win.
-void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds)
+void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds, int score)
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
         return;
     // The world map's Previous Time (0x00272e18 over the 0x4fb4ac table). The table's value is the
-    // best lap (RaceSession::BestLap), matching the QR "Best Lap" label; drift events are scored by
-    // points, not time (0x00272ee8), so they keep no time.
+    // best lap (RaceSession::BestLap), matching the QR "Best Lap" label; drift events use the same
+    // table through 0x00272ee8, which keeps the largest score instead of the smallest time.
     const Career::Event *timed = Career::EventTable::Get().FindByRace(raceNumber);
-    if (seconds > 0.0f && timed && timed->stage != 5) {
+    bool recorded = false;
+    if (timed && timed->stage == 5) {
+        if (score > 0) {
+            m_profile.RecordScore(raceNumber, timed->DirectionFor(raceNumber), score);
+            recorded = true;
+        }
+    } else if (seconds > 0.0f && timed) {
         m_profile.RecordTime(raceNumber, timed->DirectionFor(raceNumber), int(seconds * 1000.0f + 0.5f));
-        Career::SaveCareer(m_profile);
+        recorded = true;
     }
+    if (recorded)
+        Career::SaveCareer(m_profile);
     const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);
     if (!ev) {
         printf("[Career] race %d is not a career event\n", raceNumber);
@@ -1863,6 +1907,18 @@ void FEStartupSequence::RecordQuickRaceTime(int raceNumber, bool reverse, float 
     m_profile.RecordTime(raceNumber, reverse ? 1 : 0, ms);
     Career::SaveCareer(m_profile);
     printf("[Race] best %d %s %d ms\n", raceNumber, reverse ? "reverse" : "forward", ms);
+}
+
+// Drift Quick Race: the 0x4fb4ac entry holds points, not milliseconds (0x00272ee8).
+void FEStartupSequence::RecordQuickRaceScore(int raceNumber, bool reverse, int score)
+{
+    if (!m_profile.valid || IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
+        return;
+    if (raceNumber <= 0 || score <= 0)
+        return;
+    m_profile.RecordScore(raceNumber, reverse ? 1 : 0, score);
+    Career::SaveCareer(m_profile);
+    printf("[Race] best %d %s %d points\n", raceNumber, reverse ? "reverse" : "forward", score);
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel

@@ -10,7 +10,7 @@ namespace Career {
 namespace {
 
 constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
-constexpr uint32_t kVersion = 2; // v2 adds the best-time direction key; v1 still loads
+constexpr uint32_t kVersion = 3; // v2 adds the best-time direction key, v3 the drift scores
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -82,6 +82,13 @@ std::vector<uint8_t> Serialize(const Profile &p)
         PutI32(payload, b.direction);
         PutI32(payload, b.millis);
     }
+    // v3: drift best scores, appended so v2 saves still parse (they simply stop after the times).
+    PutU32(payload, uint32_t(p.bestScores.size()));
+    for (const Profile::BestScore &b : p.bestScores) {
+        PutI32(payload, b.race);
+        PutI32(payload, b.direction);
+        PutI32(payload, b.score);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -103,7 +110,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version != 1 && version != 2) || o + size > data.size())
+    if ((version != 1 && version != 2 && version != 3) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -152,6 +159,18 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             if (!GetI32(payload, q, millis))
                 return false;
             p.bestTimes.push_back({race, direction, millis});
+        }
+    }
+    if (version >= 3 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n > 4096)
+            return false;
+        for (uint32_t i = 0; i < n; ++i) {
+            int32_t race, direction, score;
+            if (!GetI32(payload, q, race) || !GetI32(payload, q, direction) ||
+                !GetI32(payload, q, score))
+                return false;
+            p.bestScores.push_back({race, direction, score});
         }
     }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))

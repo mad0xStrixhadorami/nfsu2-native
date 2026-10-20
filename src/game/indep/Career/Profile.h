@@ -46,6 +46,14 @@ struct Profile {
         int millis;
     };
     std::vector<BestTime> bestTimes;
+    // Drift events use the same 0x4fb4ac entries but score them with 0x00272ee8 (largest wins)
+    // instead of 0x00272e18 (smallest wins); the two kinds never share a race.
+    struct BestScore {
+        int race;
+        int direction;
+        int score;
+    };
+    std::vector<BestScore> bestScores;
     int BestTimeFor(int race, int direction = 0) const
     {
         for (const BestTime &b : bestTimes)
@@ -62,6 +70,23 @@ struct Profile {
                 return;
             }
         bestTimes.push_back({race, direction, millis});
+    }
+    int BestScoreFor(int race, int direction = 0) const
+    {
+        for (const BestScore &b : bestScores)
+            if (b.race == race && b.direction == direction)
+                return b.score;
+        return 0;
+    }
+    void RecordScore(int race, int direction, int score)
+    {
+        for (BestScore &b : bestScores)
+            if (b.race == race && b.direction == direction) {
+                if (score > b.score)
+                    b.score = score;
+                return;
+            }
+        bestScores.push_back({race, direction, score});
     }
 
     bool Completed(uint32_t id) const
