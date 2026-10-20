@@ -117,9 +117,65 @@ struct Profile {
     }
 };
 
+// The 0x4fb4ac table exists even without a career save (Quick Race), but a console only keeps it in
+// the player's save block. The port mirrors it to a sidecar on the same card (RECORDS.REC) so QR
+// best laps survive a restart; Career/Records.cpp owns that file. The in-memory table is also seeded
+// from the profile when one is loaded.
+struct BestTable {
+    std::vector<Profile::BestTime> times;
+    std::vector<Profile::BestScore> scores;
+
+    int BestTimeFor(int race, int direction = 0) const
+    {
+        for (const Profile::BestTime &b : times)
+            if (b.race == race && b.direction == direction)
+                return b.millis;
+        return 0;
+    }
+    void RecordTime(int race, int direction, int millis)
+    {
+        for (Profile::BestTime &b : times)
+            if (b.race == race && b.direction == direction) {
+                if (millis < b.millis)
+                    b.millis = millis;
+                return;
+            }
+        times.push_back({race, direction, millis});
+    }
+    int BestScoreFor(int race, int direction = 0) const
+    {
+        for (const Profile::BestScore &b : scores)
+            if (b.race == race && b.direction == direction)
+                return b.score;
+        return 0;
+    }
+    void RecordScore(int race, int direction, int score)
+    {
+        for (Profile::BestScore &b : scores)
+            if (b.race == race && b.direction == direction) {
+                if (score > b.score)
+                    b.score = score;
+                return;
+            }
+        scores.push_back({race, direction, score});
+    }
+    void MergeFrom(const Profile &p)
+    {
+        for (const Profile::BestTime &b : p.bestTimes)
+            RecordTime(b.race, b.direction, b.millis);
+        for (const Profile::BestScore &b : p.bestScores)
+            RecordScore(b.race, b.direction, b.score);
+    }
+};
+
 // The port's save format (stand-in, see above).
 std::vector<uint8_t> Serialize(const Profile &p);
 bool Deserialize(const std::vector<uint8_t> &data, Profile &out);
+
+// QR sidecar (RECORDS.REC in the memory-card slot directory). Both use the port's own format like
+// the career save; a missing/corrupt file just yields an empty table.
+bool SaveRecords(const BestTable &t);
+bool LoadRecords(BestTable &out);
 
 // ---- memory-card helpers (Career/Memcard.h) ------------------------------------------------
 // A career profile is one save file on the card, named "<profile name>.SAV" (UG2 keeps its career

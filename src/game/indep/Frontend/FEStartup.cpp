@@ -862,7 +862,7 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     // Best Lap (0x0555eeca): 0x001faf90 line 114 calls 0x00272e18(0x4fb4ac, race, item+0x10).
     // QR list items store 0 at +0x10 (0x001facc0), so the forward record is shown even when the
     // Track Direction setting is Reverse. 0x002ef778 formats the value as mm:ss:cc.
-    const int best = m_profile.valid ? m_profile.BestTimeFor(r.number, 0) : 0;
+    const int best = m_records.BestTimeFor(r.number, 0);
     // 0x001faf90 also sets the caption at 0x36227ee9: drift reads the score table (0x00272ee8)
     // under "Best Lap" (0x3b7b9567), sprint/drag say "Best Time:", everything else "Best Lap:".
     uint32_t bestLabel = 0x3b4a1ecb; // Best Lap:
@@ -872,7 +872,7 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
         bestLabel = 0xdb0c5efd; // Best Time:
     FENativeInterface::SetLanguageHash(pkg, 0x36227ee9, bestLabel);
     if (m_raceType == 3) {
-        const int score = m_profile.valid ? m_profile.BestScoreFor(r.number, 0) : 0;
+        const int score = m_records.BestScoreFor(r.number, 0);
         snprintf(text, sizeof(text), "%d", score);
     } else if (best > 0) {
         snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
@@ -1395,10 +1395,10 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
     }
     if (ev.stage == 5) {
         // 0x00272ee8: largest score for this race/direction; no entry reads as 0.
-        const int score = r ? m_profile.BestScoreFor(r->number, ev.DirectionFor(r->number)) : 0;
+        const int score = r ? m_records.BestScoreFor(r->number, ev.DirectionFor(r->number)) : 0;
         snprintf(text, sizeof(text), "%d", score);
     } else {
-        const int best = r ? m_profile.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
+        const int best = r ? m_records.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
         if (best > 0)
             snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
         else
@@ -1790,8 +1790,12 @@ void FEStartupSequence::ResumeCareer()
 
 bool FEStartupSequence::LoadCareerProfile()
 {
+    // The 0x4fb4ac table also exists for Quick Race without a career save; RECORDS.REC keeps it.
+    m_records = Career::BestTable{};
+    Career::LoadRecords(m_records);
     if (Career::LoadCareer(m_profile)) {
         m_careerExists = true;
+        m_records.MergeFrom(m_profile);
         // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
         if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {
             std::string list = extra;
@@ -1817,14 +1821,18 @@ bool FEStartupSequence::LoadCareerProfile()
             int race = 0, ms = 0;
             if (sscanf(bt, "%d:%d", &race, &ms) == 2 && ms > 0) {
                 m_profile.RecordTime(race, 0, ms);
+                m_records.RecordTime(race, 0, ms);
                 Career::SaveCareer(m_profile);
+                Career::SaveRecords(m_records);
             }
         }
         if (const char *bs = getenv("NFSU2_BEST_SCORE")) {
             int race = 0, score = 0;
             if (sscanf(bs, "%d:%d", &race, &score) == 2 && score > 0) {
                 m_profile.RecordScore(race, 0, score);
+                m_records.RecordScore(race, 0, score);
                 Career::SaveCareer(m_profile);
+                Career::SaveRecords(m_records);
             }
         }
         return true;
@@ -1847,17 +1855,23 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     // table through 0x00272ee8, which keeps the largest score instead of the smallest time.
     const Career::Event *timed = Career::EventTable::Get().FindByRace(raceNumber);
     bool recorded = false;
+    const int direction = timed ? timed->DirectionFor(raceNumber) : 0;
     if (timed && timed->stage == 5) {
         if (score > 0) {
-            m_profile.RecordScore(raceNumber, timed->DirectionFor(raceNumber), score);
+            m_profile.RecordScore(raceNumber, direction, score);
+            m_records.RecordScore(raceNumber, direction, score);
             recorded = true;
         }
     } else if (seconds > 0.0f && timed) {
-        m_profile.RecordTime(raceNumber, timed->DirectionFor(raceNumber), int(seconds * 1000.0f + 0.5f));
+        const int ms = int(seconds * 1000.0f + 0.5f);
+        m_profile.RecordTime(raceNumber, direction, ms);
+        m_records.RecordTime(raceNumber, direction, ms);
         recorded = true;
     }
-    if (recorded)
+    if (recorded) {
         Career::SaveCareer(m_profile);
+        Career::SaveRecords(m_records);
+    }
     const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);
     if (!ev) {
         printf("[Career] race %d is not a career event\n", raceNumber);
@@ -1897,27 +1911,38 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
 
 // Quick Race also feeds the shared 0x4fb4ac table. Only modes 2/4 (Quick Race / split screen) write:
 // career results go through AwardCareerResult, and standalone/direct runs are not a player session.
+// Without a career save the entry still goes to RECORDS.REC (the port's sidecar), so it survives.
 void FEStartupSequence::RecordQuickRaceTime(int raceNumber, bool reverse, float seconds)
 {
-    if (!m_profile.valid || IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
+    if (IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
         return;
     if (raceNumber <= 0 || seconds <= 0.0f)
         return;
     const int ms = int(seconds * 1000.0f + 0.5f);
-    m_profile.RecordTime(raceNumber, reverse ? 1 : 0, ms);
-    Career::SaveCareer(m_profile);
+    const int direction = reverse ? 1 : 0;
+    m_records.RecordTime(raceNumber, direction, ms);
+    Career::SaveRecords(m_records);
+    if (m_profile.valid) {
+        m_profile.RecordTime(raceNumber, direction, ms);
+        Career::SaveCareer(m_profile);
+    }
     printf("[Race] best %d %s %d ms\n", raceNumber, reverse ? "reverse" : "forward", ms);
 }
 
 // Drift Quick Race: the 0x4fb4ac entry holds points, not milliseconds (0x00272ee8).
 void FEStartupSequence::RecordQuickRaceScore(int raceNumber, bool reverse, int score)
 {
-    if (!m_profile.valid || IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
+    if (IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
         return;
     if (raceNumber <= 0 || score <= 0)
         return;
-    m_profile.RecordScore(raceNumber, reverse ? 1 : 0, score);
-    Career::SaveCareer(m_profile);
+    const int direction = reverse ? 1 : 0;
+    m_records.RecordScore(raceNumber, direction, score);
+    Career::SaveRecords(m_records);
+    if (m_profile.valid) {
+        m_profile.RecordScore(raceNumber, direction, score);
+        Career::SaveCareer(m_profile);
+    }
     printf("[Race] best %d %s %d points\n", raceNumber, reverse ? "reverse" : "forward", score);
 }
 

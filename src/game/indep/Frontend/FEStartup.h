@@ -200,6 +200,9 @@ private:
     void ResumeCareer();         // Resume Career: load the profile and enter the city
     bool LoadCareerProfile();    // load from the card into m_profile (keeps m_careerExists in sync)
     Career::Profile m_profile;   // 0x004f1744 (0xac54 bytes) - see Career/Profile.h
+    // The 0x4fb4ac table as the UI reads it. Seeded from m_profile and from RECORDS.REC, so QR times
+    // survive without a career save (see Career/Profile.h BestTable).
+    Career::BestTable m_records;
     std::string m_memcardNext;   // screen the memory-card step goes to when it finishes
     bool m_memcardCreate = false; // the step creates a profile (New Career) instead of loading one
     std::vector<Career::CardFile> m_memcardFiles; // the card's saves, as MC_List.fng shows them

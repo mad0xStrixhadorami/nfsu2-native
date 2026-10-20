@@ -160,6 +160,23 @@ int main()
     if (r.BestScoreFor(0xb01c890b, 0) != 0)
         return Fail("v1 save must have no best scores");
 
+    // RECORDS.REC: the QR-only sidecar round-trips both tables and is independent of a .SAV.
+    Career::BestTable rec;
+    rec.RecordTime(4011, 0, 123456);
+    rec.RecordTime(4011, 1, 120000);
+    rec.RecordScore(4311, 0, 9000);
+    if (!Career::SaveRecords(rec))
+        return Fail("records save failed");
+    Career::BestTable rec2;
+    if (!Career::LoadRecords(rec2))
+        return Fail("records load failed");
+    if (rec2.BestTimeFor(4011, 0) != 123456 || rec2.BestTimeFor(4011, 1) != 120000)
+        return Fail("records times mismatch");
+    if (rec2.BestScoreFor(4311, 0) != 9000)
+        return Fail("records score mismatch");
+    if (fs::file_size(dir / "RECORDS.REC", ec) == 0)
+        return Fail("records file missing");
+
     fs::remove_all(dir, ec);
     std::printf("profile_test: passed\n");
     return 0;
