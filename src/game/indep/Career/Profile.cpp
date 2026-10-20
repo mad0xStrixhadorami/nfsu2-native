@@ -12,8 +12,8 @@ namespace {
 constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // v2 adds the best-time direction key, v3 the drift scores, v4 the signed sponsors, v5 the paint
 // finish set of each owned car (GLOSS/METAL/PEARL, ISSUES #168), v6 the other eight UI_Paint parts
-// (Spoiler .. Muffler Tip, ISSUES #169).
-constexpr uint32_t kVersion = 6;
+// (Spoiler .. Muffler Tip, ISSUES #169), v7 the fitted spoiler (Body Shop, ISSUES #185).
+constexpr uint32_t kVersion = 7;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -107,6 +107,12 @@ std::vector<uint8_t> Serialize(const Profile &p)
             PutU32(payload, c.partPaint[i]);
             PutU32(payload, c.partPaintSet[i]);
         }
+    // v7: the fitted spoiler of each car (Body Shop, #185): style 1..40 (+carbon flag), 0 = stock.
+    PutU32(payload, uint32_t(p.cars.size()));
+    for (const OwnedCar &c : p.cars) {
+        PutU32(payload, c.spoiler);
+        PutU32(payload, c.spoilerCarbon ? 1 : 0);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -128,7 +134,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 6) || o + size > data.size())
+    if ((version < 1 || version > 7) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -212,6 +218,18 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
                 if (!GetU32(payload, q, c.partPaint[i]) ||
                     !GetU32(payload, q, c.partPaintSet[i]))
                     return false;
+    }
+    if (version >= 7 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n != p.cars.size())
+            return false;
+        for (OwnedCar &c : p.cars) {
+            uint32_t spoiler = 0, carbon = 0;
+            if (!GetU32(payload, q, spoiler) || !GetU32(payload, q, carbon))
+                return false;
+            c.spoiler = uint8_t(spoiler);
+            c.spoilerCarbon = carbon != 0;
+        }
     }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;

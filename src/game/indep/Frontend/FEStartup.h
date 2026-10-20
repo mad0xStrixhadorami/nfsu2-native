@@ -165,6 +165,17 @@ private:
     // per car (#169), but the port's single-mesh car has no model for them to tint.
     void HandleCustomizeCategoryLoaded(FEPackage *pkg);
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
+    // UI_GenericParts_Browser.fng (factory 0x002a50c0, ctor 0x002a50f8, refresh 0x002a6be0): the
+    // Body Shop.  CATEGORY_MASTER/CATEGORY_ICON is the part-slot carousel (0x002a76e8 in
+    // 0x002a7e70), MINI_MASTER/PARTS_ICON the item carousel; the selected item's name and price go
+    // into the package's own PART_NAME (0xd28b9316) and PRICE (0x380b632) strings.  The port wires
+    // up the Spoilers and Carbon Fiber slots only (ISSUES #185).
+    void HandlePartsBrowserLoaded(FEPackage *pkg);
+    void HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshPartsBrowserList(FEPackage *pkg);
+    void RefreshPartsBrowserInfo(FEPackage *pkg);
+    void BuyPartsBrowserPart(FEPackage *pkg);
+    Career::OwnedCar *ShopCar();
     // UI_ChoosePaintCategory.fng (ctor 0x002ba798, AddOptions 0x002bb0f0): Graphics Shop's
     // Paint / Vinyls / Decals / Install Setup carousel.  The port implements the Paint branch;
     // the other three are kept visible as disabled options until their screens are ported.
@@ -189,6 +200,12 @@ private:
     bool PopScreen(); // back to the package saved by NavigateTo
     static constexpr size_t kPaintPartCount = 9; // 0x002bcff8 card order
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
+    // Body Shop state (#185): the selected part-slot card and the item selection inside it.
+    FEIconScroller m_partsCategoryScroller; // CATEGORY_MASTER / CATEGORY_ICON
+    FEIconScroller m_partsScroller;         // MINI_MASTER / PARTS_ICON
+    size_t m_partsCategorySel = 0;          // 0 Spoilers, 1 Carbon Fiber
+    size_t m_partsSel = 0;                  // selected item in m_partsShopIndex
+    std::vector<uint16_t> m_partsShopIndex; // record indices of the current card in PartCatalog
     FEIconScroller m_paintCategoryScroller; // the four 4b4e3888..8b Graphics Shop cards
     size_t m_paintCategorySel = 0;          // 0 Paint, 1 Vinyls, 2 Decals, 3 Install Setup
     FEIconScroller m_paintScroller;    // the nine 4b4e3888..90 part cards

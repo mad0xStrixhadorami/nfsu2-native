@@ -23,7 +23,8 @@ public:
     // masterName/optionPrefix: object names of the template and the options; IconScroller
     // menus use OPTION_MASTER / OPTION_n, the track list uses ICON_MASTER / TRACK_ICON_n.
     void Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
-               const char *masterName = "OPTION_MASTER", const char *optionPrefix = "OPTION_");
+               const char *masterName = "OPTION_MASTER", const char *optionPrefix = "OPTION_",
+               float spacing = 40.0f);
     // Bind options to existing objects (UI_Paint.fng's 4b4e3888..4b4e3890 cards, which are created
     // by 0x002bcff8 rather than named OPTION_n).  The cards ship invisible with alpha 0, so this
     // gives each one its icon/name and makes it render when Position() brings it on screen.
@@ -49,7 +50,7 @@ private:
     };
     void Bind(FEPackage *pkg, const std::vector<Def> &defs, const std::vector<FEObject *> &slots,
               size_t defaultSelection, const char *masterName, bool focusMaster,
-              bool forceVisibleAlpha);
+              bool forceVisibleAlpha, float spacing = 40.0f);
     void UpdateSelection();
     void Position();
 

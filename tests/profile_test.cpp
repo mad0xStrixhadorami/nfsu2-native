@@ -142,6 +142,8 @@ int main()
     p.cars[0].paintSet = 0x3437a52;       // METAL (ISSUES #168)
     p.cars[0].partPaint[4] = 23;          // Spinners, card 5 -> array 4 (ISSUES #169)
     p.cars[0].partPaintSet[4] = 0xda27;   // RIMS
+    p.cars[0].spoiler = 17;               // Body Shop spoiler style (ISSUES #185)
+    p.cars[0].spoilerCarbon = true;
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
@@ -175,6 +177,8 @@ int main()
         return Fail("body paint index and finish set must round-trip (v5)");
     if (q.cars[0].partPaint[4] != 23 || q.cars[0].partPaintSet[4] != 0xda27)
         return Fail("per-part paint must round-trip (v6)");
+    if (q.cars[0].spoiler != 17 || !q.cars[0].spoilerCarbon)
+        return Fail("fitted spoiler must round-trip (v7)");
 
     // Version 5: the previous layout still loads; the new per-part block stays zero.
     {
@@ -189,6 +193,8 @@ int main()
         return Fail("v5 body paint mismatch");
     if (v5.cars[0].partPaint[0] != 0 || v5.cars[0].partPaintSet[0] != 0)
         return Fail("v5 save must have no per-part colours");
+    if (v5.cars[0].spoiler != 0 || v5.cars[0].spoilerCarbon)
+        return Fail("v5 save must have the stock spoiler");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {

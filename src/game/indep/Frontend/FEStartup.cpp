@@ -367,6 +367,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandlePaintLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_GenericParts_Browser.fng") == 0) {
+        HandlePartsBrowserLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_StartCareer.fng") == 0) {
         HandleStartCareerLoaded(pkg);
         return;
@@ -507,6 +511,13 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
             HandlePaintMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_GenericParts_Browser.fng") == 0) {
+        // Pad messages are taken from the pad in Tick(); keep FEng's copies out.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandlePartsBrowserMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_StartCareer.fng") == 0 && msg != kMsgPadBack) {
         HandleStartCareerMessage(msg, pkg);
         return;
@@ -609,12 +620,11 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         else if ((pressed & FENativeInterface::kPadAccept) && m_raceMode == 0x20) {
             // Main-menu Customize: 0x002593c8 sets DAT_00506b50 = 0x20 and pushes the car select;
             // its Accept calls FUN_002a1ac0(3,...) to open the car shop's category picker
-            // (UI_ChooseCustomizeCategory.fng, 0x002a48f8).  ISSUES #167.  The port starts on
-            // Change Paint / Vinyls because the other four categories are not implemented yet.
+            // (UI_ChooseCustomizeCategory.fng, 0x002a48f8).  ISSUES #167/#185.  The picker keeps
+            // the last chosen card; the first one (Change Body Parts) is the original's default.
             // The original's mode-0x20 car select stands on the profile's car (0x001f44f0 loads
             // 0x4f1744); our roster browsing is only a picker stand-in, so snap the preview back
             // before customizing.
-            m_customizeCategorySel = 2;
             if (const Career::OwnedCar *car = m_profile.CurrentCar())
                 ApplyOwnedCarPreview(*car);
             NavigateTo(active->GetName(), "UI_ChooseCustomizeCategory.fng");
@@ -661,6 +671,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandlePaintCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandlePaintCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_GenericParts_Browser.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandlePartsBrowserMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandlePartsBrowserMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadUp)
+            HandlePartsBrowserMessage(kMsgPadUp, active);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandlePartsBrowserMessage(kMsgPadDown, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandlePartsBrowserMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandlePartsBrowserMessage(kMsgPadBack, active);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -1322,11 +1348,13 @@ void FEStartupSequence::CycleCarFilter(int direction, FEPackage *pkg)
 
 // UI_ChooseCustomizeCategory.fng (factory 0x002a48f8, AddOptions 0x002a4dc0): the car shop's
 // category picker.  The five PAL cards are Change Body Parts, Change Performance Parts, Change
-// Paint / Vinyls, Change Interiors / Car Specialties and Performance Tuning / Dyno.  The port only
-// implements the Paint / Vinyls path for now (ISSUES #167), so the other four cards are greyed out.
-// Selecting Paint / Vinyls sets DAT_0051456c = 2 in the original and opens
-// UI_ChoosePaintCategory.fng; the port goes straight to UI_Paint.fng because the paint/vinyl
+// Paint / Vinyls, Change Interiors / Car Specialties and Performance Tuning / Dyno.  The port
+// implements Change Body Parts (the Body Shop, ISSUES #185) and Change Paint / Vinyls (#167); the
+// other three are greyed out.  Selecting Paint / Vinyls sets DAT_0051456c = 2 in the original and
+// opens UI_ChoosePaintCategory.fng; the port goes straight to UI_Paint.fng because the paint/vinyl
 // submenu only chooses between Paint, Vinyls and Decals and none of the latter two exist yet.
+// Change Body Parts is the Body Shop (DAT_0051456c = 0, title 0x796dc449) and opens the shared
+// UI_GenericParts_Browser.fng.
 void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
 {
     static const struct {
@@ -1340,8 +1368,8 @@ void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
     };
     std::vector<FEIconScroller::Def> defs;
     for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
-        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 2});
-    printf("[Customize] category picker: %zu options (paint only)\n", defs.size());
+        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 2});
+    printf("[Customize] category picker: %zu options (body parts, paint)\n", defs.size());
     m_scroller.Setup(pkg, defs, m_customizeCategorySel);
 }
 
@@ -1368,11 +1396,236 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
     }
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
         m_customizeCategorySel = m_scroller.Selected();
-        if (m_customizeCategorySel != 2) {
-            printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
+        if (m_customizeCategorySel == 2) {
+            NavigateTo(pkg->GetName(), "UI_ChoosePaintCategory.fng");
             return;
         }
-        NavigateTo(pkg->GetName(), "UI_ChoosePaintCategory.fng");
+        if (m_customizeCategorySel == 0) {
+            NavigateTo(pkg->GetName(), "UI_GenericParts_Browser.fng");
+            return;
+        }
+        printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
+    }
+}
+
+// UI_GenericParts_Browser.fng (factory 0x002a50c0, ctor 0x002a50f8, refresh 0x002a6be0): the
+// shared parts browser behind the car shop's "Change ... Parts" cards.  0x002a8870 dispatches on
+// DAT_0051456c: 0 fills the Body Shop's slot carousel (0x002a7e70), 2 the Graphics Shop's vinyl
+// categories (0x002a8430).  The Body Shop order in 0x002a7e70 is Front Bumpers (1), Rear Bumpers
+// (2), Side Skirts (0xb), Spoilers (0xc), Hoods (9), Roof Scoops (7), Headlights (0xe), Taillights
+// (0xf), Side Mirrors (0x20), Exhaust Tips (0x10) and Wide Body Kits (6), plus Rims (0x002a7938)
+// and a Carbon Fiber card.  Only Spoilers and Carbon Fiber are wired up here: they are the parts
+// whose geometry (#182) and prices (#184) are decoded; each card lists the catalogue's records of
+// its finish (ISSUES #185).
+//
+// The two carousels are IconScroller instances built by 0x0029af60 with the templates
+// CATEGORY_MASTER/CATEGORY_ICON and MINI_MASTER/PARTS_ICON.  The selected item's name and price
+// are the package's own PART_NAME (0xd28b9316, shipped as "Wolf") and PRICE (0x380b632, "$3000")
+// strings, which 0x002a6be0 rewrites through 0x00292d00 with the "%$d" format at 0x5678f8.
+// 0x002a6fd0 also calls 0x002b2518 (the car manager) on every list step, i.e. previews the part.
+void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t icon, label;
+        const char *debug;
+    } kCards[] = {
+        {0xbb034ea6, 0xbb034ea6, "Spoilers"},     // 0xc in 0x002a7e70
+        {0x24911e04, 0x24911e04, "Carbon Fiber"}, // 0x002a7938
+    };
+    m_partsCategorySel = std::min<size_t>(m_partsCategorySel, 1);
+    std::vector<FEIconScroller::Def> defs;
+    for (const auto &card : kCards)
+        defs.push_back({card.icon, card.label, false});
+    m_partsCategoryScroller.Setup(pkg, defs, m_partsCategorySel, "CATEGORY_MASTER", "CATEGORY_ICON");
+    // Screen title (0x42adb44c): 0x002a6be0 writes 0x796dc449 ("Body Shop") for DAT_0051456c == 0.
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0x796dc449);
+    printf("[PartsShop] body shop: %s card\n", kCards[m_partsCategorySel].debug);
+    // The item-info group (0x4a1316e9, the parent of PART_NAME and PRICE) ships hidden: the
+    // screen's own 0x002a8870 shows it once the item list has a selection (the 0x00259c90 /
+    // 0x00259c80 pair on the two scrollbar groups).  The port shows it when the list is populated.
+    if (FEObject *info = pkg->FindObjectByHash(0x4a1316e9u)) {
+        FENativeInterface::SetObjectVisible(info, true);
+        if (FEObjData *data = info->GetObjData())
+            data->Col.a = 255;
+    }
+    RefreshPartsBrowserList(pkg);
+}
+
+// Rebuild PARTS_ICON for the selected card.  The card switches finish, not part type: the pack
+// collects the 40 painted spoilers first and the 40 carbon ones after them (#184), and the Carbon
+// Fiber card is the original's separate slot for the same styles' carbon variants.
+void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
+{
+    const bool carbon = m_partsCategorySel == 1;
+    const std::vector<CarPart> &parts = m_fe->Parts().Parts(bStringHash("SPOILER"));
+    m_partsShopIndex.clear();
+    for (size_t i = 0; i < parts.size(); ++i)
+        if (parts[i].carbon == carbon)
+            m_partsShopIndex.push_back(uint16_t(i));
+
+    // The original selects the fitted part when the window opens (0x002a8870 -> 0x0029b850);
+    // afterwards the player's position is kept.
+    m_partsSel = 0;
+    if (const Career::OwnedCar *car = ShopCar())
+        for (size_t i = 0; i < m_partsShopIndex.size(); ++i) {
+            const CarPart &part = parts[m_partsShopIndex[i]];
+            if (part.style == car->spoiler && part.carbon == car->spoilerCarbon) {
+                m_partsSel = i;
+                break;
+            }
+        }
+
+    // The package ships 132 texture-less PARTS_ICON slots: the original fills them with thumbnails
+    // it renders offscreen, which the port does not do yet.  Give every slot its slot carousel's
+    // icon so the list stays visible (ISSUES #185).
+    std::vector<FEIconScroller::Def> defs;
+    for (size_t i = 0; i < m_partsShopIndex.size(); ++i)
+        defs.push_back({0xbb034ea6, 0, false});
+    // The item list is the horizontal MINI_MASTER/PARTS_ICON row above the bottom bar, like the
+    // other carousels; 0x002a50f8 gives it 20 units of spacing (the slot cards use 40).
+    m_partsScroller.Setup(pkg, defs, m_partsSel, "MINI_MASTER", "PARTS_ICON", 20.0f);
+    printf("[PartsShop] %s: %zu records, first %s, selected %zu (%s)\n", carbon ? "carbon" : "painted",
+           m_partsShopIndex.size(),
+           m_partsShopIndex.empty() ? "-" : parts[m_partsShopIndex.front()].name.c_str(), m_partsSel,
+           m_partsShopIndex.empty() ? "-" : parts[m_partsShopIndex[m_partsSel]].name.c_str());
+    RefreshPartsBrowserInfo(pkg);
+}
+
+void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
+{
+    static const uint32_t kCategoryLabel[2] = {0xbb034ea6, 0x24911e04}; // "Spoilers" / "Carbon Fiber"
+    FENativeInterface::SetLanguageHash(pkg, 0x6c9e933e, kCategoryLabel[m_partsCategorySel]);
+    const std::vector<CarPart> &parts = m_fe->Parts().Parts(bStringHash("SPOILER"));
+    if (m_partsShopIndex.empty()) {
+        FENativeInterface::SetString(pkg, 0xd28b9316, "-");
+        FENativeInterface::SetString(pkg, 0x380b632, "$0");
+        FENativeInterface::SetString(pkg, 0x2f5e7da3, "00000");
+        return;
+    }
+    m_partsSel = std::min(m_partsSel, m_partsShopIndex.size() - 1);
+    const CarPart &part = parts[m_partsShopIndex[m_partsSel]];
+    // 0x002a7638 builds the label from the record name and its level ("JORGEN L1"); see the
+    // [Parts] boot summary for the same rendering.
+    char name[96];
+    snprintf(name, sizeof name, "%s L%u", part.name.c_str(), unsigned(part.level));
+    const uint32_t price = m_fe->Parts().Price(part);
+    char priceText[32];
+    snprintf(priceText, sizeof priceText, "$%u", unsigned(price));
+    FENativeInterface::SetString(pkg, 0xd28b9316, name);
+    FENativeInterface::SetString(pkg, 0x380b632, priceText);
+    // The bottom bar's "Total Cost" value (0x2f5e7da3) is written as five digits by 0x002bb0a0;
+    // with no basket the highlighted part's price stands in, as in the paint shop (#176/#185).
+    char total[16];
+    snprintf(total, sizeof total, "%05u", unsigned(price));
+    FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    m_fe->SetPreviewSpoilerPart(part.style, part.carbon);
+}
+
+Career::OwnedCar *FEStartupSequence::ShopCar()
+{
+    if (!m_profile.valid)
+        return nullptr;
+    // The shop stands on the previewed car (0x001f44f0 loads the profile's current car); fall back
+    // to the profile's current slot when the preview is showing a roster stand-in.
+    for (Career::OwnedCar &car : m_profile.cars)
+        if (car.model == m_fe->PreviewCarName())
+            return &car;
+    if (m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size()))
+        return &m_profile.cars[m_profile.currentCar];
+    return nullptr;
+}
+
+void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
+{
+    (void)pkg;
+    const std::vector<CarPart> &parts = m_fe->Parts().Parts(bStringHash("SPOILER"));
+    if (m_partsShopIndex.empty())
+        return;
+    m_partsSel = std::min(m_partsSel, m_partsShopIndex.size() - 1);
+    const CarPart &part = parts[m_partsShopIndex[m_partsSel]];
+    Career::OwnedCar *car = ShopCar();
+    // 0x002b5b00 tests the career item pool for the part before selling it; the port only records
+    // the fitted set, so "same style and finish" is what "already owned" means here.
+    if (car && car->spoiler == part.style && car->spoilerCarbon == part.carbon) {
+        printf("[PartsShop] %s L%u is already fitted\n", part.name.c_str(), unsigned(part.level));
+        return;
+    }
+    const uint32_t price = m_fe->Parts().Price(part);
+    // 0x002a7278 compares the career balance (0x0026bbc0) with the price (0x0026b0c8) and, when
+    // it is short, opens GenericDialog_SMALL.fng (0x9f00f07).  That dialog is not ported, so the
+    // port refuses the purchase and says so in the log instead.
+    if (m_profile.valid) {
+        if (m_profile.money < int(price)) {
+            printf("[PartsShop] %s L%u costs $%u, career has $%d\n", part.name.c_str(),
+                   unsigned(part.level), price, m_profile.money);
+            return;
+        }
+        m_profile.money -= int(price);
+    }
+    if (car) {
+        car->spoiler = uint8_t(part.style);
+        car->spoilerCarbon = part.carbon;
+        if (m_profile.valid && !Career::SaveCareer(m_profile))
+            printf("[PartsShop] fitted %s L%u but the save failed\n", part.name.c_str(),
+                   unsigned(part.level));
+        else
+            printf("[PartsShop] fitted spoiler style %u%s (%s L%u, $%u), career $%d\n",
+                   unsigned(part.style), part.carbon ? " carbon" : "", part.name.c_str(),
+                   unsigned(part.level), price, m_profile.money);
+    } else {
+        printf("[PartsShop] no career car; previewing %s L%u only\n", part.name.c_str(),
+               unsigned(part.level));
+    }
+    m_fe->SetPreviewSpoilerPart(part.style, part.carbon);
+}
+
+void FEStartupSequence::HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_partsCategoryScroller.Empty() || m_partsCategoryScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_partsCategoryScroller.HandleMessage(msg, TickSeconds());
+        m_partsScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_partsCategoryScroller.HandleMessage(msg, 0.0f);
+        m_partsScroller.HandleMessage(msg, 0.0f);
+        m_partsCategoryScroller.AllowFade();
+        m_partsScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_partsCategoryScroller.HandleMessage(msg, 0.0f);
+        if (m_partsCategoryScroller.Selected() != m_partsCategorySel) {
+            m_partsCategorySel = m_partsCategoryScroller.Selected();
+            RefreshPartsBrowserList(pkg);
+        }
+        return;
+    }
+    // 0x002a6fd0 moves the item list; the pad's Up/Down drive it (Left/Right are the slot cards).
+    // The scroller only knows Left/Right, so translate before handing the message over.
+    if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        m_partsScroller.HandleMessage(msg == kMsgPadUp ? kMsgPadLeft : kMsgPadRight, 0.0f);
+        if (!m_partsShopIndex.empty() && m_partsScroller.Selected() != m_partsSel) {
+            m_partsSel = m_partsScroller.Selected();
+            RefreshPartsBrowserInfo(pkg);
+        }
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        // Leaving the shop puts the fitted wing back on the preview; the highlighted one was only
+        // a preview until Accept bought it.
+        if (const Career::OwnedCar *car = ShopCar())
+            m_fe->SetPreviewSpoilerPart(car->spoiler, car->spoilerCarbon);
+        else
+            m_fe->SetPreviewSpoilerPart(0, false);
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        BuyPartsBrowserPart(pkg);
+        return;
     }
 }
 
@@ -2426,6 +2679,8 @@ void FEStartupSequence::RefreshCareerCarSelect(FEPackage *pkg)
 // the career save (OwnedCar::paint, #167), so a saved paint comes back with the car.
 void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
 {
+    // Set the fitted spoiler before the car so its geometry is assembled in the same load (#185).
+    m_fe->SetPreviewSpoilerPart(car.spoiler, car.spoilerCarbon);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use

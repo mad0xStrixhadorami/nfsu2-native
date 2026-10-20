@@ -11,7 +11,7 @@
 #include "game/indep/Frontend/FEStartup.h"
 
 void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
-                           const char *masterName, const char *optionPrefix)
+                           const char *masterName, const char *optionPrefix, float spacing)
 {
     // Option objects: "OPTION_1".."OPTION_n" (prefix ends in '_'), or, for scrollers built by
     // 0x0029af60, every top-level object named exactly optionPrefix, in package order (0x0029b440).
@@ -33,7 +33,7 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
     // 0x00291ad8 -> SetCurrentButton), so its BUTTON_PRESSED response receives Accept.
     size_t len = strlen(optionPrefix);
     Bind(pkg, defs, slots, defaultSelection, masterName, len && optionPrefix[len - 1] != '_',
-         false);
+         false, spacing);
 }
 
 void FEIconScroller::SetupObjects(FEPackage *pkg, const std::vector<Def> &defs,
@@ -47,7 +47,8 @@ void FEIconScroller::SetupObjects(FEPackage *pkg, const std::vector<Def> &defs,
 
 void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
                           const std::vector<FEObject *> &slots, size_t defaultSelection,
-                          const char *masterName, bool focusMaster, bool forceVisibleAlpha)
+                          const char *masterName, bool focusMaster, bool forceVisibleAlpha,
+                          float spacing)
 {
     m_pkg = pkg;
     m_options.clear();
@@ -70,7 +71,8 @@ void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
         FENativeInterface::SetObjectVisible(btnMaster, false);
 
     float addPos = 0.0f;
-    constexpr float kIconSpacing = 40.0f; // 0x42200000 at 0x0029c9c8
+    // 0x0029af60 stores each scroller's spacing at +0x6c; the constructor at 0x002a50f8 sets 40
+    // (0x42200000) for CATEGORY_MASTER and 20 (0x41a00000) for MINI_MASTER.
     for (size_t i = 0; i < defs.size() && i < slots.size(); ++i) {
         FEObject *obj = slots[i];
         if (!obj)
@@ -96,7 +98,7 @@ void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
                 obj->Flags |= 0x400000u;
             }
         }
-        addPos += opt.origW + kIconSpacing;
+        addPos += opt.origW + spacing;
         m_options.push_back(opt);
     }
     // Hide option objects beyond the options added.
@@ -194,10 +196,12 @@ void FEIconScroller::Position()
         FENativeInterface::SetSize(obj, opt.origW * scale, opt.origH * scale);
         FENativeInterface::SetCenter(obj, x, m_yCenter);
         if (m_allowFade && obj->GetObjData()) {
+            if (x < left || x > right) {
+                obj->GetObjData()->Col.a = 0;
+                continue;
+            }
             float band = opt.origW * kUnselectedScale, f = 1.0f;
-            if (x < left || x > right)
-                f = 0.0f;
-            else if (band > 0 && x < left + band)
+            if (band > 0 && x < left + band)
                 f = (x - left) / band;
             else if (band > 0 && x > right - band)
                 f = (right - x) / band;

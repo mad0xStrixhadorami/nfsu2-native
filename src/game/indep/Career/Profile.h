@@ -17,6 +17,11 @@ struct OwnedCar {
     static constexpr int kPaintParts = 8;
     uint32_t partPaint[kPaintParts] = {};
     uint32_t partPaintSet[kPaintParts] = {};
+    // The fitted spoiler (Body Shop, ISSUES #185): 1..40 = SPOILER_STYLE<NN>[_CF]_A, 0 = the stock
+    // wing.  The original keeps every installed body part in the career item pool (0x002b5b00
+    // tests ownership); the port only mounts spoilers so far, so one record per car covers it.
+    uint8_t spoiler = 0;
+    bool spoilerCarbon = false;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

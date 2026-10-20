@@ -144,6 +144,13 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     PlayerCar::Wheel wheels[4];
     PlayerCar::InstalledParts installedParts = PlayerCar::InstalledPartsFromEnvironment(
         [this](const char *path) { return m_readFile(path); });
+    // The Body Shop's current selection (#185) overrides the dev environment: the shop previews
+    // the highlighted wing before it is bought.
+    if (m_previewPartSpoiler > 0) {
+        installedParts.spoiler = m_previewPartSpoiler;
+        installedParts.spoilerCarbon = m_previewPartSpoilerCarbon;
+        installedParts.spoilerGeometry = m_readFile("CARS\\SPOILER\\GEOMETRY.BIN");
+    }
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
@@ -180,11 +187,13 @@ void FENativeInterface::RenderCarPreviewOverlay()
              candidate = candidate->GetNext()) {
             if (!candidate->GetName())
                 continue;
-            // The 3D car shows through the car-select screen and the two paint-shop screens
-            // (ISSUES #167: UI_ChooseCustomizeCategory.fng / UI_Paint.fng).
+            // The 3D car shows through the car-select screen and the paint-shop screens
+            // (ISSUES #167: UI_ChooseCustomizeCategory.fng / UI_Paint.fng), and the Body Shop's
+            // parts browser (#185).
             if (strcasecmp(candidate->GetName(), "UI_QRCarSelect.fng") == 0 ||
                 strcasecmp(candidate->GetName(), "UI_ChooseCustomizeCategory.fng") == 0 ||
-                strcasecmp(candidate->GetName(), "UI_Paint.fng") == 0) {
+                strcasecmp(candidate->GetName(), "UI_Paint.fng") == 0 ||
+                strcasecmp(candidate->GetName(), "UI_GenericParts_Browser.fng") == 0) {
                 pkg = candidate;
                 break;
             }
@@ -200,9 +209,15 @@ void FENativeInterface::RenderCarPreviewOverlay()
     if (m_carPreviewTris.empty())
         return;
 
-    // GL path: the assembled car, slowly turning, in the screen's preview area (FEng 160..480 x
-    // 190..390, mapped to window pixels).
+    // GL path: the assembled car, slowly turning, in the screen's preview area (FEng coordinates,
+    // mapped to window pixels).  The Body Shop needs a shallower band than the paint shops so the
+    // car clears the slot cards above and the part row at y ~ 576 (#185).
     const bool carSelect = strcasecmp(pkg->GetName(), "UI_QRCarSelect.fng") == 0;
+    const bool bodyShop = strcasecmp(pkg->GetName(), "UI_GenericParts_Browser.fng") == 0;
+    const float areaLeft = bodyShop ? 160.0f : 150.0f;
+    const float areaTop = bodyShop ? 120.0f : 180.0f;
+    const float areaRight = bodyShop ? 480.0f : 490.0f;
+    const float areaBottom = bodyShop ? 255.0f : 395.0f;
     const SDL_Color body = ColorForPaint(m_previewPaint, SDL_Color{60, 110, 210, 255});
     const SDL_Color rim = ColorForPaint(m_previewRimSet, m_previewRim, SDL_Color{38, 38, 38, 255});
     const SDL_Color caliper = ColorForPaint(m_previewCaliperSet, m_previewCaliper, SDL_Color{128, 128, 128, 255});
@@ -213,8 +228,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
     const SDL_Color exhaust = ColorForPaint(m_previewExhaustSet, m_previewExhaust, SDL_Color{150, 150, 150, 255});
     if (!m_carPreviewModel.empty()) {
         int x0, y0, x1, y1;
-        SDL_RenderLogicalToWindow(m_renderer, 150.0f, 180.0f, &x0, &y0);
-        SDL_RenderLogicalToWindow(m_renderer, 490.0f, 395.0f, &x1, &y1);
+        SDL_RenderLogicalToWindow(m_renderer, areaLeft, areaTop, &x0, &y0);
+        SDL_RenderLogicalToWindow(m_renderer, areaRight, areaBottom, &x1, &y1);
         int winW, winH, outW, outH;
         SDL_GetWindowSize(SDL_RenderGetWindow(m_renderer), &winW, &winH);
         SDL_GetRendererOutputSize(m_renderer, &outW, &outH);
@@ -474,6 +489,16 @@ bool FENativeInterface::SetPreviewCar(const std::string &model)
             break;
         }
     return true;
+}
+
+void FENativeInterface::SetPreviewSpoilerPart(int style, bool carbon)
+{
+    m_previewPartSpoiler = style > 0 ? style : 0;
+    m_previewPartSpoilerCarbon = carbon;
+    // Rebuild so the wing changes on screen.  Before the first preview load there is nothing to
+    // rebuild: the next LoadCarPreview picks the style up (ApplyOwnedCarPreview order).
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
 }
 
 FENativeInterface::~FENativeInterface()
