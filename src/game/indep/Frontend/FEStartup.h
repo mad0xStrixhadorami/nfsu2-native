@@ -115,6 +115,9 @@ public:
 
     bool IsFinished() const { return m_finished; }
     const char *CurrentPackage() const;
+    // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
+    // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
+    bool IsMessageDialogOpen() const { return m_dialogPackage != nullptr; }
 
     // A world session started from a career screen (m_raceMode 1 = Resume, 8 = new career's car
     // select); quick race uses 2/4 and never pays career money.
@@ -187,6 +190,12 @@ private:
     void PreviewPartsBrowserPart(const CarPart &part);
     void PreviewOwnedParts(const Career::OwnedCar *car);
     static bool OwnedCarHasPart(const Career::OwnedCar &car, const CarPart &part);
+    // GenericDialog_SMALL.fng (0x0025fc70/0x00260958): the shop's "not enough bank" prompt, which
+    // 0x002a7278 opens when the career balance is below the part's price (ISSUES #189).
+    void ShowMessageDialog(uint32_t messageLabel);
+    void HandleDialogLoaded(FEPackage *pkg);
+    bool CloseMessageDialog();
+    FEPackage *m_dialogPackage = nullptr;   // pushed over the shop while the prompt is up
     // UI_ChoosePaintCategory.fng (ctor 0x002ba798, AddOptions 0x002bb0f0): Graphics Shop's
     // Paint / Vinyls / Decals / Install Setup carousel.  The port implements the Paint branch;
     // the other three are kept visible as disabled options until their screens are ported.

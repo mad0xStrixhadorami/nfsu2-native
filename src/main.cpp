@@ -1339,7 +1339,10 @@ int main(int argc, char **argv)
             SDL_RenderClear(ren);
             startup.PreRender(); // after the FEng script update, before the frame is drawn
             engine->Render();
-            fe.RenderCarPreviewOverlay();
+            // The dialog is a package on top of the shop; the preview overlay is drawn outside the
+            // package stack, so it would cover the prompt (ISSUES #189).
+            if (!startup.IsMessageDialogOpen())
+                fe.RenderCarPreviewOverlay();
             std::string region;
             if (startup.TakeRaceRequest(region))
                 enterWorld(region);

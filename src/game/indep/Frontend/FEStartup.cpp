@@ -422,6 +422,25 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     if (getenv("NFSU2_MSGDEBUG") && msg != kMsgScreenTick)
         fprintf(stderr, "[msg] %s %08x\n", name, msg);
 
+    // A message prompt sits over the screen that opened it: the covered screen must not see the
+    // pad while the prompt is up (Tick already consumed the press).  Without this, FEng forwards
+    // the same Accept as kMsgButtonPressed and the shop sells twice (#189).
+    if (m_dialogPackage && pkg != m_dialogPackage) {
+        switch (msg) {
+        case kMsgPadUp:
+        case kMsgPadDown:
+        case kMsgPadLeft:
+        case kMsgPadRight:
+        case kMsgPadAccept:
+        case kMsgPadBack:
+        case kMsgPadStart:
+        case kMsgButtonPressed:
+            return;
+        default:
+            break;
+        }
+    }
+
     // Stand-ins for screens whose subsystems (language select / memory card) are skipped for now:
     if (strcasecmp(name, "LS_LangSelect.fng") == 0) {
         if (msg == kMsgScreenTick) {
@@ -512,10 +531,17 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         return;
     }
     if (strcasecmp(name, "UI_GenericParts_Browser.fng") == 0) {
-        // Pad messages are taken from the pad in Tick(); keep FEng's copies out.
+        // Pad messages are taken from the pad in Tick(); keep FEng's copies out (they would sell
+        // the highlighted part a second time, #189).
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
-            msg != kMsgPadAccept && msg != kMsgPadBack)
+            msg != kMsgPadAccept && msg != kMsgPadBack && msg != kMsgButtonPressed)
             HandlePartsBrowserMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "genericdialog_small.fng") == 0) {
+        // The prompt reads the pad in Tick(); only the load notification is needed here.
+        if (msg == kMsgInitComplete)
+            HandleDialogLoaded(pkg);
         return;
     }
     if (strcasecmp(name, "UI_StartCareer.fng") == 0 && msg != kMsgPadBack) {
@@ -594,6 +620,14 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     m_lastPad = pad;
     FEPackage *active = m_engine->GetPackageList()->GetFirstPackage();
     FEPackage *top = TopScreen(m_engine);
+    // A message prompt sits over the screen that opened it: while it is up, the pad only closes
+    // it (#189).  The covered screen stays loaded underneath and keeps its selection.
+    if (m_dialogPackage && pressed) {
+        if (pressed & (FENativeInterface::kPadAccept | FENativeInterface::kPadBack |
+                       FENativeInterface::kPadStart))
+            CloseMessageDialog();
+        return;
+    }
     if (getenv("NFSU2_MSGDEBUG") && pressed && top && top->GetName() &&
         (strcasecmp(top->GetName(), "MC_Main.fng") == 0 || strcasecmp(top->GetName(), "MC_List.fng") == 0)) {
         fprintf(stderr, "[mc-pad] top=%s input=%d pressed=%02x\n", top->GetName(),
@@ -1425,6 +1459,22 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
 // strings, which 0x002a6be0 rewrites through 0x00292d00 with the "%$d" format at 0x5678f8.
 // 0x002a6fd0 also calls 0x002b2518 (the car manager) on every list step, i.e. previews the part.
 //
+// GenericDialog_SMALL.fng object hashes (NFSU2_FETREE dump): the centred message string and the
+// three button labels the dialog manager picks between (the Yes/No pair and the single centred
+// Yes).  Each label's backing 9-slice is a separate group (the constants below the pair).
+constexpr uint32_t kDialogMessage = 0x1e2640fa;
+constexpr uint32_t kDialogYesLeft = 0xb8a7c6cc;
+constexpr uint32_t kDialogYesCentre = 0xb8a7c6ce;
+constexpr uint32_t kDialogNo = 0xb8a7c6cd;
+// The labels sit on separate 9-slice button groups: b1000cc6 under the left Yes, b1000cc8 under
+// the centred Yes and b1000cc7 under the No.  Hiding only the labels leaves their bars behind.
+constexpr uint32_t kDialogYesLeftBar = 0xb1000cc6;
+constexpr uint32_t kDialogYesCentreBar = 0xb1000cc8;
+constexpr uint32_t kDialogNoBar = 0xb1000cc7;
+// ENGLISH.BIN 0xd1ac60be: "You do not have enough bank to purchase this item." - the label
+// 0x002a7278 passes to the dialog through 0x0025fc70.
+constexpr uint32_t kLabelNotEnoughBank = 0xd1ac60be;
+
 // The career item pool helpers (#187).
 namespace {
 // A key packs the shop slot id, the style and the finish/body flags;
@@ -1463,6 +1513,28 @@ void RememberFittedParts(Career::Profile &profile, const Career::OwnedCar &car)
                                           car.roofDual ? 2 : car.roofOffset ? 1 : 0));
     if (car.exhaust)
         AddOwnedPart(profile, MakePartKey(0x10, car.exhaust, false, 0));
+}
+
+// Show or hide one control of GenericDialog_SMALL.fng.  The shipped labels start fully transparent;
+// the dialog manager fades in the button form it picks, so a shown label also gets its alpha back.
+// The focused button's label uses the package's highlight green (the colour its two-button No ships
+// with); the one-button prompt's centred Yes is the only button, hence focused.
+void ShowDialogControl(FEPackage *pkg, uint32_t hash, bool visible, bool focused = false)
+{
+    FEObject *obj = pkg ? pkg->FindObjectByHash(hash) : nullptr;
+    if (!obj)
+        return;
+    if (visible) {
+        if (FEObjData *data = obj->GetObjData()) {
+            data->Col.a = 255;
+            if (focused) {
+                data->Col.r = 204;
+                data->Col.g = 244;
+                data->Col.b = 138;
+            }
+        }
+    }
+    FENativeInterface::SetObjectVisible(obj, visible);
 }
 } // namespace
 
@@ -1653,6 +1725,53 @@ Career::OwnedCar *FEStartupSequence::ShopCar()
     return nullptr;
 }
 
+void FEStartupSequence::ShowMessageDialog(uint32_t messageLabel)
+{
+    if (m_dialogPackage)
+        return;
+    FEPackage *pkg = m_engine->PushPackage("genericdialog_small.fng", 0, 0xff);
+    if (!pkg) {
+        printf("[Dialog] could not push genericdialog_small.fng\n");
+        return;
+    }
+    m_dialogPackage = pkg;
+    const std::string text = m_fe->LanguageText(messageLabel);
+    // The package ships the memory-card prompt; the caller's label replaces it.  0x00292888 sets
+    // the same centred text object from the label 0x00260b40 stored.
+    FENativeInterface::SetString(pkg, kDialogMessage, text.c_str());
+    // 0x00260170 selects the one-button form: the manager shows the centred "Yes" and drops the
+    // Yes/No pair the two-button form uses.  Hide the pair together with its backing bars.
+    ShowDialogControl(pkg, kDialogYesLeft, false);
+    ShowDialogControl(pkg, kDialogYesLeftBar, false);
+    ShowDialogControl(pkg, kDialogNo, false);
+    ShowDialogControl(pkg, kDialogNoBar, false);
+    ShowDialogControl(pkg, kDialogYesCentre, true, true);
+    ShowDialogControl(pkg, kDialogYesCentreBar, true);
+    printf("[Dialog] %s\n", text.c_str());
+}
+
+void FEStartupSequence::HandleDialogLoaded(FEPackage *pkg)
+{
+    // The package's intro fade re-shows its default objects; keep the one-button form on top of it.
+    ShowDialogControl(pkg, kDialogYesLeft, false);
+    ShowDialogControl(pkg, kDialogYesLeftBar, false);
+    ShowDialogControl(pkg, kDialogNo, false);
+    ShowDialogControl(pkg, kDialogNoBar, false);
+    ShowDialogControl(pkg, kDialogYesCentre, true, true);
+    ShowDialogControl(pkg, kDialogYesCentreBar, true);
+}
+
+bool FEStartupSequence::CloseMessageDialog()
+{
+    if (!m_dialogPackage)
+        return false;
+    FEPackage *pkg = m_dialogPackage;
+    m_dialogPackage = nullptr;
+    printf("[Dialog] dismissed\n");
+    m_engine->UnloadPackage(pkg);
+    return true;
+}
+
 void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
 {
     (void)pkg;
@@ -1671,12 +1790,15 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
     const bool owned = HasOwnedPart(m_profile, key);
     const uint32_t price = m_fe->Parts().Price(part);
     // 0x002a7278 compares the career balance (0x0026bbc0) with the price (0x0026b0c8) and, when
-    // it is short, opens GenericDialog_SMALL.fng (0x9f00f07).  That dialog is not ported, so the
-    // port refuses the purchase and says so in the log instead.
+    // it is short, opens GenericDialog_SMALL.fng (0x9f00f07) with the "not enough bank" label and
+    // refuses the sale (ISSUES #189).
     if (!owned && car) {
         if (m_profile.money < int(price)) {
+            // 0x002a7278: the balance (0x0026bbc0) is below the part's price, so the original
+            // opens GenericDialog_SMALL.fng instead of selling.
             printf("[PartsShop] %s L%u costs $%u, career has $%d\n", part.name.c_str(),
                    unsigned(part.level), price, m_profile.money);
+            ShowMessageDialog(kLabelNotEnoughBank);
             return;
         }
         m_profile.money -= int(price);
