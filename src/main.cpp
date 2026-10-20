@@ -573,8 +573,17 @@ int main(int argc, char **argv)
             raceConfig.dirY = std::sin(camera.yaw);
             raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY);
             if (route.Valid()) {
-                raceConfig.lineS = route.Project(raceConfig.hasLine ? raceConfig.lineX : grid[0].x,
-                                                 raceConfig.hasLine ? raceConfig.lineY : grid[0].y);
+                // Anchor the line to the front grid slot: on a multi-lap Paths file the line marker's
+                // nearest copy and the player's back slot can be one lap apart, while the front slot
+                // is on the grid's lap (ISSUES #166).
+                const float gridS = route.Project(grid[0].x, grid[0].y);
+                raceConfig.lineS = route.Project(raceConfig.hasLine ? raceConfig.lineX : camera.x,
+                                                 raceConfig.hasLine ? raceConfig.lineY : camera.y,
+                                                 raceConfig.hasLine ? gridS : -1.0f);
+                // The grid is on the same lap as the line; resolve the player's slot against lineS
+                // instead of projecting freely (which jumps to the next lap and starts the race at
+                // the finish).
+                raceConfig.startS = route.Project(camera.x, camera.y, raceConfig.lineS);
                 if (getenv("NFSU2_WORLD_DEBUG"))
                     printf("[World] line %s %.1f,%.1f lineS %.1f grid0 %.1f,%.1f s %.1f\n",
                            raceConfig.hasLine ? "marker" : "grid", raceConfig.lineX, raceConfig.lineY,
@@ -586,6 +595,7 @@ int main(int argc, char **argv)
         world.ClearCars();
         opponentCars.clear();
         ai.clear();
+        playerAi = AiDriver(); // a new world: forget the previous route's progress (autodrive aid)
         aiStartS.clear();
         aiOut.clear();
         // Car textures: the shared pack and the player's (opponents add theirs below).
@@ -682,16 +692,19 @@ int main(int argc, char **argv)
                 world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5]);
                 world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + name + "\\TEXTURES.BIN").c_str()));
                 // Lane: keep each car on its own side of the route line; faster cars at the front.
+                // Resolve against lineS so a multi-lap Paths file does not place the grid on the
+                // next lap's copy of the same tarmac (ISSUES #166).
+                const float slotS = route.Project(slot.x, slot.y, raceConfig.lineS);
                 float x, y, dx, dy;
-                route.Sample(route.Project(slot.x, slot.y), x, y, dx, dy);
+                route.Sample(slotS, x, y, dx, dy);
                 float lane = std::clamp(-(slot.x - x) * dy + (slot.y - y) * dx, -4.5f, 4.5f);
                 // NFSU2_AI_SKILL scales the opponents' pace (test aid: set the field slower so an
                 // automated player can lead, e.g. to exercise the URL knockout).
                 float skill = 0.86f + 0.04f * float(opponents - i) / opponents;
                 if (const char *s = getenv("NFSU2_AI_SKILL"))
                     skill *= std::clamp(float(atof(s)), 0.1f, 2.0f);
-                ai[i].Init(&opponentCars[i], &route, lane, skill);
-                aiStartS.push_back(route.Project(slot.x, slot.y));
+                ai[i].Init(&opponentCars[i], &route, lane, skill, slotS);
+                aiStartS.push_back(slotS);
                 printf("[World] opponent %d: %s\n", i + 1, name.c_str());
                 oppNames.push_back(name);
                 aiFinish.push_back(0.0f);
@@ -1126,7 +1139,7 @@ int main(int argc, char **argv)
                 if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.
                     if (playerAi.Car() != &car)
-                        playerAi.Init(&car, &route, 0.0f, 1.0f);
+                        playerAi.Init(&car, &route, 0.0f, 1.0f, raceConfig.startS);
                     playerAi.SetPower(power);
                     playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
                 } else if (physTest && go) {

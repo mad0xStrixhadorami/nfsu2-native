@@ -9,7 +9,8 @@ class TrackWorld;
 // and picks a speed from the bend ahead.
 class AiDriver {
 public:
-    void Init(PlayerCar *car, const RaceRoute *route, float lane, float skill);
+    // startS: route distance of the grid slot (same lap as the start line); <0 projects freely.
+    void Init(PlayerCar *car, const RaceRoute *route, float lane, float skill, float startS = -1.0f);
     // go: the race is running. Returns the driver's unwrapped progress along the route (m).
     float Update(const TrackWorld &world, float dt, bool go);
     float Progress() const { return m_progress; }

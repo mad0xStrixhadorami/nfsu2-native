@@ -7,13 +7,13 @@
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
 
-void AiDriver::Init(PlayerCar *car, const RaceRoute *route, float lane, float skill)
+void AiDriver::Init(PlayerCar *car, const RaceRoute *route, float lane, float skill, float startS)
 {
     m_car = car;
     m_route = route;
     m_lane = lane;
     m_skill = skill;
-    m_s = route->Project(car->X(), car->Y());
+    m_s = startS >= 0 ? startS : route->Project(car->X(), car->Y());
     m_progress = 0;
     m_steer = 0;
     m_stuck = 0;

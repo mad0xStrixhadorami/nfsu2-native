@@ -346,7 +346,11 @@ void RaceSession::UpdateRoute(const PlayerCar &car, const std::vector<float> &op
 {
     const RaceRoute &route = *m_config.route;
     if (m_routeS < 0) {
-        m_routeS = m_startS = route.Project(car.X(), car.Y());
+        // The grid sits on the same lap as the line (the startS hint); free projection would jump to
+        // a later lap of the same tarmac on multi-lap Paths files (ISSUES #166).
+        m_routeS = m_startS = m_config.startS >= 0
+                                  ? m_config.startS
+                                  : route.Project(car.X(), car.Y(), m_config.hasLine ? m_config.lineS : -1.0f);
         m_progress = 0;
     }
     float s = route.Project(car.X(), car.Y(), m_routeS);

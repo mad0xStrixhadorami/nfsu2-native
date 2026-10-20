@@ -20,6 +20,10 @@ public:
         float dirX = 1, dirY = 0; // direction of travel across the line
         const RaceRoute *route = nullptr; // when valid: progress, laps and wrong way along it
         float lineS = 0;                  // route distance of the start/finish line
+        // Route distance of the player's grid slot, resolved against lineS. A race's Paths file can
+        // hold several laps of the circuit, so the same tarmac projects onto several s values; the
+        // free projection would pick the nearest lap, not the one the race starts on.
+        float startS = -1.0f;             // <0: project the car when the race begins
         int racers = 1;                   // player + opponents
     };
     enum Phase { kCountdown, kRacing, kFinished };
