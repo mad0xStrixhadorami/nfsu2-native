@@ -206,6 +206,12 @@ private:
     uint32_t m_gridOriginalMirror = 0;     // preview mirror paint when the grid opened
     uint32_t m_gridOriginalSpoilerSet = 0; // preview spoiler finish when the grid opened
     uint32_t m_gridOriginalSpoiler = 0;    // preview spoiler paint when the grid opened
+    uint32_t m_gridOriginalRoofSet = 0;    // preview roof scoop finish when the grid opened
+    uint32_t m_gridOriginalRoof = 0;       // preview roof scoop paint when the grid opened
+    uint32_t m_gridOriginalEngineSet = 0;  // preview engine accent finish when the grid opened
+    uint32_t m_gridOriginalEngine = 0;     // preview engine accent paint when the grid opened
+    uint32_t m_gridOriginalExhaustSet = 0; // preview muffler tip finish when the grid opened
+    uint32_t m_gridOriginalExhaust = 0;    // preview muffler tip paint when the grid opened
     uint32_t m_partSet[kPaintPartCount] = {}; // finish per card (session + saved per-car)
     uint32_t m_partSel[kPaintPartCount] = {}; // 0-based swatch per card (0 = stock/first)
     uint32_t m_partPaintIndex[kPaintPartCount] = {}; // 1-based saved paint per card (0 = stock)

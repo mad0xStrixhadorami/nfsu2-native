@@ -1684,6 +1684,12 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
     m_gridOriginalMirror = m_fe->PreviewMirrorPaint();
     m_gridOriginalSpoilerSet = m_fe->PreviewSpoilerSet();
     m_gridOriginalSpoiler = m_fe->PreviewSpoilerPaint();
+    m_gridOriginalRoofSet = m_fe->PreviewRoofSet();
+    m_gridOriginalRoof = m_fe->PreviewRoofPaint();
+    m_gridOriginalEngineSet = m_fe->PreviewEngineSet();
+    m_gridOriginalEngine = m_fe->PreviewEnginePaint();
+    m_gridOriginalExhaustSet = m_fe->PreviewExhaustSet();
+    m_gridOriginalExhaust = m_fe->PreviewExhaustPaint();
     m_paintGridActive = true;
     ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
@@ -1697,6 +1703,12 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
         m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 1) // Spoiler tints the stock wing (#175)
         m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 2) // Roof Scoop tints the installed scoop (#180)
+        m_fe->SetPreviewRoofPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 7) // Engine Accents tint the installed accents (#180)
+        m_fe->SetPreviewEnginePaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 8) // Muffler Tip tints the installed tip (#180)
+        m_fe->SetPreviewExhaustPaint(m_paintSet, m_paintSel + 1);
     printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
            kPaintParts[m_paintPart].id, count);
 }
@@ -1715,6 +1727,12 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
         m_fe->SetPreviewMirrorPaint(m_gridOriginalMirrorSet, m_gridOriginalMirror);
     if (restorePreview && m_paintPart == 1)
         m_fe->SetPreviewSpoilerPaint(m_gridOriginalSpoilerSet, m_gridOriginalSpoiler);
+    if (restorePreview && m_paintPart == 2)
+        m_fe->SetPreviewRoofPaint(m_gridOriginalRoofSet, m_gridOriginalRoof);
+    if (restorePreview && m_paintPart == 7)
+        m_fe->SetPreviewEnginePaint(m_gridOriginalEngineSet, m_gridOriginalEngine);
+    if (restorePreview && m_paintPart == 8)
+        m_fe->SetPreviewExhaustPaint(m_gridOriginalExhaustSet, m_gridOriginalExhaust);
     m_paintGridActive = false;
     ShowPaintGrid(pkg, false);
     RefreshPaintCost(pkg);
@@ -1905,6 +1923,12 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 1)
         m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 2) // Roof Scoop
+        m_fe->SetPreviewRoofPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 7) // Engine Accents
+        m_fe->SetPreviewEnginePaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 8) // Muffler Tip
+        m_fe->SetPreviewExhaustPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
     RefreshPaintCost(pkg);
