@@ -10,7 +10,9 @@ namespace Career {
 namespace {
 
 constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
-constexpr uint32_t kVersion = 4; // v2 adds the best-time direction key, v3 the drift scores, v4 the signed sponsors
+// v2 adds the best-time direction key, v3 the drift scores, v4 the signed sponsors, v5 the paint
+// finish set of each owned car (GLOSS/METAL/PEARL, ISSUES #168).
+constexpr uint32_t kVersion = 5;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -92,6 +94,11 @@ std::vector<uint8_t> Serialize(const Profile &p)
     // v4: the signed sponsor of each career area (0 = none), the +0xe8 slot of the area objects.
     for (uint32_t h : p.signedSponsors)
         PutU32(payload, h);
+    // v5: the finish set of each car.  Appended (instead of widening the car records above) so a
+    // v4 save still parses; 0 means GLOSS, which is what every v4 paint index referred to.
+    PutU32(payload, uint32_t(p.cars.size()));
+    for (const OwnedCar &c : p.cars)
+        PutU32(payload, c.paintSet);
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -113,7 +120,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 4) || o + size > data.size())
+    if ((version < 1 || version > 5) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -180,6 +187,14 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
         for (uint32_t &h : p.signedSponsors)
             if (!GetU32(payload, q, h))
                 return false;
+    if (version >= 5 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n != p.cars.size())
+            return false;
+        for (OwnedCar &c : p.cars)
+            if (!GetU32(payload, q, c.paintSet))
+                return false;
+    }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;
     p.valid = true;

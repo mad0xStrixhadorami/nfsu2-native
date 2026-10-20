@@ -759,12 +759,17 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             }
         } else if (c->id == 0x80034602) { // repacked car part database: the paint/color catalog
             m_paint.Parse(c->Data(), c->size);
-            const size_t colors = m_paint.Count();
-            if (colors)
-                printf("[Paint] %zu base paint colors (0x2daab07 GLOSS set), first %s=%u,%u,%u last %s=%u,%u,%u\n",
-                       colors, m_paint.At(0).name.c_str(), m_paint.At(0).r, m_paint.At(0).g, m_paint.At(0).b,
-                       m_paint.At(colors - 1).name.c_str(), m_paint.At(colors - 1).r,
-                       m_paint.At(colors - 1).g, m_paint.At(colors - 1).b);
+            for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl,
+                                 PaintCatalog::kHoses, PaintCatalog::kMufflers, PaintCatalog::kRims,
+                                 PaintCatalog::kBrakes}) {
+                const size_t colors = m_paint.Count(set);
+                if (colors)
+                    printf("[Paint] %zu %s colors (0x%x set), first %s=%u,%u,%u last %s=%u,%u,%u\n",
+                           colors, PaintCatalog::SetName(set), set, m_paint.At(set, 0).name.c_str(),
+                           m_paint.At(set, 0).r, m_paint.At(set, 0).g, m_paint.At(set, 0).b,
+                           m_paint.At(set, colors - 1).name.c_str(), m_paint.At(set, colors - 1).r,
+                           m_paint.At(set, colors - 1).g, m_paint.At(set, colors - 1).b);
+            }
         } else if (c->id == 0x00034201) { // race database
             for (uint32_t off = 0; off + 0x128 <= c->size; off += 0x128) {
                 const uint8_t *r = c->Data() + off;

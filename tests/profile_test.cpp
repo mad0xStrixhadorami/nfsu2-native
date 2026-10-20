@@ -99,12 +99,14 @@ int main()
     fs::create_directories(dir, ec);
     setenv("NFSU2_MEMCARD", dir.c_str(), 1);
 
-    // Version 3 round-trip: forward and reverse best times are separate keys, the smaller time wins
-    // within a key, and drift scores keep the larger value under the same direction key.
+    // Version 5 round-trip: forward and reverse best times are separate keys, the smaller time wins
+    // within a key, drift scores keep the larger value under the same direction key, and each car
+    // keeps its paint index plus finish set (#167/#168).
     Career::Profile p;
     p.name = "TEST";
     p.cars.push_back({"SKYLINE", 0});
-    p.cars[0].paint = 17; // GLOBALB GLOSS colour index (ISSUES #167)
+    p.cars[0].paint = 17;                 // GLOBALB colour index (ISSUES #167)
+    p.cars[0].paintSet = 0x3437a52;       // METAL (ISSUES #168)
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
@@ -134,8 +136,8 @@ int main()
         return Fail("unknown score direction must not alias");
     if (q.signedSponsors[2] != 0x167a374f || q.signedSponsors[5] != 0x5e96e1be || q.SignedSponsorCount() != 2)
         return Fail("signed sponsors must round-trip (v4)");
-    if (q.cars.size() != 1 || q.cars[0].paint != 17)
-        return Fail("body paint index must round-trip");
+    if (q.cars.size() != 1 || q.cars[0].paint != 17 || q.cars[0].paintSet != 0x3437a52)
+        return Fail("body paint index and finish set must round-trip (v5)");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {

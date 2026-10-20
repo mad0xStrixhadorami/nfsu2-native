@@ -110,19 +110,20 @@ int main()
     PaintCatalog cat;
     if (!cat.Parse(pack.data(), pack.size()))
         return Fail("whole 0x80034602 bundle did not parse");
-    if (cat.Count() != 1)
+    if (cat.Count(PaintCatalog::kGloss) != 1)
         return Fail("expected one GLOSS colour");
-    const PaintColor &c = cat.At(0);
+    const PaintColor &c = cat.At(PaintCatalog::kGloss, 0);
     if (c.name != "GLOSS_TEST_COLOR" || c.r != 10 || c.g != 20 || c.b != 30 || c.gloss != 200)
         return Fail("colour fields mismatch");
 
     // AddBundle may hand Parse the 0x80034602 payload directly (no wrapper chunk).
     PaintCatalog payloadCat;
-    if (!payloadCat.Parse(pack.data() + 8, pack.size() - 8) || payloadCat.Count() != 1 ||
-        payloadCat.At(0).name != "GLOSS_TEST_COLOR")
+    if (!payloadCat.Parse(pack.data() + 8, pack.size() - 8) ||
+        payloadCat.Count(PaintCatalog::kGloss) != 1 ||
+        payloadCat.At(PaintCatalog::kGloss, 0).name != "GLOSS_TEST_COLOR")
         return Fail("payload form did not parse");
 
-    // A non-GLOSS colour set (e.g. METAL) must not appear in the Base Paint catalog.
+    // A non-GLOSS colour set (e.g. METAL) is its own set, not part of GLOSS (#168).
     std::vector<uint8_t> metal = pack;
     // The finish value is the second u32 of the first attribute record; find the attributes chunk
     // and patch it.  The chunk layout above is fixed, so walk it to stay honest about offsets.
@@ -139,11 +140,24 @@ int main()
         off += 8 + size;
     }
     PaintCatalog metalCat;
-    if (metalCat.Parse(metal.data(), metal.size()))
-        return Fail("METAL pack should report no base-paint colours");
-    if (!metalCat.Empty())
-        return Fail("METAL must not be listed as base paint");
+    if (!metalCat.Parse(metal.data(), metal.size()))
+        return Fail("METAL pack did not parse");
+    if (metalCat.Count(PaintCatalog::kMetal) != 1 || metalCat.Count(PaintCatalog::kGloss) != 0)
+        return Fail("METAL must be its own set, not GLOSS");
 
-    std::printf("paint_test: passed (%zu colours)\n", cat.Count());
+    // 0x002bedd8: the nine paint-shop part ids and their sets.
+    if (PaintCatalog::SetForPart(0x3f) != PaintCatalog::kGloss ||
+        PaintCatalog::SetForPart(0x45) != PaintCatalog::kGloss ||
+        PaintCatalog::SetForPart(0x4b) != PaintCatalog::kGloss ||
+        PaintCatalog::SetForPart(0x4c) != PaintCatalog::kGloss ||
+        PaintCatalog::SetForPart(0x44) != PaintCatalog::kHoses ||
+        PaintCatalog::SetForPart(0x46) != PaintCatalog::kBrakes ||
+        PaintCatalog::SetForPart(0x47) != PaintCatalog::kMufflers ||
+        PaintCatalog::SetForPart(0x49) != PaintCatalog::kRims ||
+        PaintCatalog::SetForPart(0x4a) != PaintCatalog::kRims ||
+        PaintCatalog::SetForPart(0x99) != 0)
+        return Fail("SetForPart mapping mismatch");
+
+    std::printf("paint_test: passed (%zu GLOSS colours)\n", cat.Count(PaintCatalog::kGloss));
     return 0;
 }

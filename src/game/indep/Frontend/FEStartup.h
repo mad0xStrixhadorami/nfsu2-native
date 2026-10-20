@@ -42,6 +42,10 @@ public:
     static constexpr uint32_t kMsgPadRight = 0xb5971bf1;     // __PAD_RIGHT__
     static constexpr uint32_t kMsgPadUp = 0x72619778;        // __PAD_UP__
     static constexpr uint32_t kMsgPadDown = 0x911c0a4b;      // __PAD_DOWN__
+    // Shoulder buttons.  0x002bc2f0 (UI_Paint message handler) forwards these to 0x002be5f0,
+    // which cycles the base-paint finish GLOSS -> METAL -> PEARL (#168).
+    static constexpr uint32_t kMsgPadLTrigger = 0x5073ef13;  // L1
+    static constexpr uint32_t kMsgPadRTrigger = 0x260113a7;  // R1
     static constexpr uint32_t kMsgButtonPressed = 0x0c407210; // __BUTTON_PRESSED__
 
     FEStartupSequence(FEngine *engine, FENativeInterface *fe, bool isPal = true);
@@ -153,9 +157,9 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
-    // Car shop paint flow (ISSUES #167): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.  Only the
-    // body's Base Paint (the 60-record GLOBALB GLOSS set) is implemented; the other categories and
-    // the eight other colorable parts are greyed/hidden for now.
+    // Car shop paint flow (ISSUES #167/#168): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.  The
+    // body's Base Paint edits GLOSS and cycles to METAL/PEARL with L1/R1 (0x002be5f0); the other
+    // categories and the eight other colorable parts are greyed/hidden for now.
     void HandleCustomizeCategoryLoaded(FEPackage *pkg);
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
     void HandlePaintLoaded(FEPackage *pkg);
@@ -163,11 +167,14 @@ private:
     void RefreshPaintSwatches(FEPackage *pkg);
     void PositionPaintHighlight(FEPackage *pkg);
     void RefreshPaintLabel(FEPackage *pkg);
-    void ApplyPaint(uint32_t index);
+    bool CyclePaintFinish(int direction);
+    void ApplyPaint(uint32_t set, uint32_t index);
     bool PopScreen(); // back to the package saved by NavigateTo
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
-    uint32_t m_paintSel = 0;           // 0-based swatch index in the 60-colour GLOSS grid
+    uint32_t m_paintSet = 0;           // current finish set (PaintCatalog::kGloss/Metal/Pearl, #168)
+    uint32_t m_paintSel = 0;           // 0-based swatch index in the current set
     uint32_t m_paintOriginal = 0;      // paint when the screen opened (Back restores it)
+    uint32_t m_paintOriginalSet = 0;   // finish when the screen opened (Back restores it)
     bool m_careerExists = false; // DAT_004f0e70: a saved career is present
     bool m_cribRequested = false; // the next world session opens in UI_CareerCrib.fng
     void HandleStartCareerLoaded(FEPackage *pkg);

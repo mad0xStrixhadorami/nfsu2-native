@@ -75,19 +75,30 @@ public:
     // Load a specific car as the car-select/race preview (career mode restores the saved car).
     bool SetPreviewCar(const std::string &model);
     const std::string &PreviewCarName() const { return m_previewCarName; } // car folder, e.g. SKYLINE
-    // Body paint: the index selects PaintCatalog::At(index - 1); 0 is the car's stock paint.  The
-    // index is what OwnedCar::paint stores, so it survives through the memory-card save.
-    void SetPreviewPaint(uint32_t index) { m_previewPaint = index; }
+    // Body paint: the set selects a PaintCatalog color set (GLOSS/METAL/PEARL, ISSUES #168) and the
+    // 1-based index selects At(set, index - 1); index 0 is the car's stock paint.  Both values are
+    // what OwnedCar::paintSet/paint store, so they survive through the memory-card save.
+    void SetPreviewPaint(uint32_t index) { m_previewPaint = index; } // keep the current finish
+    void SetPreviewPaint(uint32_t set, uint32_t index)
+    {
+        m_previewPaintSet = set ? set : PaintCatalog::kGloss;
+        m_previewPaint = index;
+    }
     uint32_t PreviewPaint() const { return m_previewPaint; }
+    uint32_t PreviewPaintSet() const { return m_previewPaintSet; }
     const PaintCatalog &Paint() const { return m_paint; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
-    SDL_Color ColorForPaint(uint32_t index, SDL_Color stock) const
+    SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
     {
-        if (index >= 1 && index <= m_paint.Count()) {
-            const PaintColor &c = m_paint.At(index - 1);
+        if (index >= 1 && index <= m_paint.Count(set)) {
+            const PaintColor &c = m_paint.At(set, index - 1);
             return SDL_Color{c.r, c.g, c.b, 255};
         }
         return stock;
+    }
+    SDL_Color ColorForPaint(uint32_t index, SDL_Color stock) const
+    {
+        return ColorForPaint(m_previewPaintSet, index, stock);
     }
     // Wheel placement for a car folder from the database (false if unknown).
     bool CarWheels(const std::string &folder, PlayerCar::Wheel out[4]) const
@@ -301,7 +312,8 @@ private:
     bool m_carPreviewLoadAttempted = false;
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
-    uint32_t m_previewPaint = 0; // 0 = stock; else 1..PaintCatalog::Count()
+    uint32_t m_previewPaint = 0; // 0 = stock; else 1..PaintCatalog::Count(set)
+    uint32_t m_previewPaintSet = PaintCatalog::kGloss; // the finish the index belongs to (#168)
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;

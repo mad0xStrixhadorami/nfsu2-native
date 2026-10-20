@@ -1,5 +1,6 @@
 #include "game/indep/Frontend/FEStartup.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <cstdlib>
@@ -170,11 +171,20 @@ void FEStartupSequence::LoadBootProfile()
     if (!m_profile.valid)
         LoadCareerProfile();
     // Dev aid: NFSU2_PAINT=<1..60> selects a GLOBALB GLOSS body colour without the paint screen
-    // (0 = the port's stock blue).  ISSUES.md #167.
+    // (0 = the port's stock blue).  NFSU2_PAINT_SET=metal|pearl selects that finish instead (#168).
+    uint32_t paintSet = PaintCatalog::kGloss;
+    if (const char *set = getenv("NFSU2_PAINT_SET")) {
+        if (strcasecmp(set, "metal") == 0)
+            paintSet = PaintCatalog::kMetal;
+        else if (strcasecmp(set, "pearl") == 0)
+            paintSet = PaintCatalog::kPearl;
+    }
     if (const char *paint = getenv("NFSU2_PAINT")) {
         const int index = atoi(paint);
         if (index >= 0)
-            m_fe->SetPreviewPaint(uint32_t(index));
+            m_fe->SetPreviewPaint(paintSet, uint32_t(index));
+    } else if (getenv("NFSU2_PAINT_SET")) {
+        m_fe->SetPreviewPaint(paintSet, m_fe->PreviewPaint());
     }
     // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
@@ -592,9 +602,14 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
         strcasecmp(active->GetName(), "UI_Paint.fng") == 0) {
         static const struct { uint32_t bit, msg; } kPaintMap[] = {
-            {FENativeInterface::kPadUp, kMsgPadUp},         {FENativeInterface::kPadDown, kMsgPadDown},
-            {FENativeInterface::kPadLeft, kMsgPadLeft},     {FENativeInterface::kPadRight, kMsgPadRight},
-            {FENativeInterface::kPadAccept, kMsgPadAccept}, {FENativeInterface::kPadBack, kMsgPadBack}};
+            {FENativeInterface::kPadUp, kMsgPadUp},
+            {FENativeInterface::kPadDown, kMsgPadDown},
+            {FENativeInterface::kPadLeft, kMsgPadLeft},
+            {FENativeInterface::kPadRight, kMsgPadRight},
+            {FENativeInterface::kPadLTrigger, kMsgPadLTrigger},
+            {FENativeInterface::kPadRTrigger, kMsgPadRTrigger},
+            {FENativeInterface::kPadAccept, kMsgPadAccept},
+            {FENativeInterface::kPadBack, kMsgPadBack}};
         for (auto &m : kPaintMap)
             if (pressed & m.bit) {
                 HandlePaintMessage(m.msg, active);
@@ -1295,6 +1310,26 @@ size_t PaintGridIndex(int row, int col)
 {
     return size_t(row * 20 + (row == 1 ? 19 - col : col));
 }
+int PaintGridRows(size_t count)
+{
+    return int((count + 19) / 20);
+}
+// Occupied columns of a row.  A short last row leaves the rest of the 20-slot strip hidden; row 1
+// fills from the right because the package lays it out right-to-left (serpentine).
+void PaintRowRange(int row, size_t count, int &lo, int &hi)
+{
+    const size_t start = size_t(row) * 20;
+    const size_t n = count > start ? std::min<size_t>(20, count - start) : 0;
+    if (!n) {
+        lo = hi = 0;
+    } else if (row == 1) {
+        lo = 20 - int(n);
+        hi = 19;
+    } else {
+        lo = 0;
+        hi = int(n) - 1;
+    }
+}
 } // namespace
 
 void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
@@ -1302,8 +1337,14 @@ void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
     // Start on the swatch the body currently wears (0 is the port's stock blue, which has no swatch).
     // The category handler also seeds these, but doing it here keeps a direct NFSU2_PACKAGE=UI_Paint.fng
     // launch consistent with the car in the preview.
+    m_paintOriginalSet = m_fe->PreviewPaintSet();
+    if (!m_fe->Paint().Has(m_paintOriginalSet))
+        m_paintOriginalSet = PaintCatalog::kGloss; // a set the pack does not carry
+    m_paintSet = m_paintOriginalSet;
     m_paintOriginal = m_fe->PreviewPaint();
-    m_paintSel = m_paintOriginal > 0 && m_paintOriginal <= m_fe->Paint().Count() ? m_paintOriginal - 1 : 0;
+    m_paintSel = m_paintOriginal > 0 && m_paintOriginal <= m_fe->Paint().Count(m_paintSet)
+                     ? m_paintOriginal - 1
+                     : 0;
 
     // Hide the part cards and their carousel/scrollbar (the same OPTION_MASTER at (0,-150) the
     // scroller would otherwise use).  The header stays "Graphics Shop" (the package's 42adb44c
@@ -1340,7 +1381,7 @@ void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
         FENativeInterface::SetAlpha(pkg, kPaintInfoGroup, 255);
     }
     if (m_fe->Paint().Empty())
-        printf("[Paint] no GLOBALB GLOSS colours; the grid stays empty\n");
+        printf("[Paint] no GLOBALB paint colours; the grid stays empty\n");
     RefreshPaintSwatches(pkg);
 }
 
@@ -1349,11 +1390,18 @@ void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
     FEObject *grid = pkg->FindObjectByHash(kPaintSwatchGroup);
     if (!grid || grid->Type != FE_Group)
         return;
-    const size_t count = m_fe->Paint().Count();
+    const size_t count = m_fe->Paint().Count(m_paintSet);
     size_t i = 0;
-    for (FEObject *swatch = static_cast<FEGroup *>(grid)->GetFirstChild(); swatch && i < count;
+    // Walk every package slot: a 30-color set (PEARL) must hide the grid's last 30 swatches, and
+    // switching back to a 60-color set must reveal them again (0x002bd868 hides slots past the
+    // filled count with 0x00259ee8).
+    for (FEObject *swatch = static_cast<FEGroup *>(grid)->GetFirstChild(); swatch;
          swatch = swatch->GetNext(), ++i) {
-        const PaintColor &c = m_fe->Paint().At(i);
+        if (i >= count) {
+            FENativeInterface::SetObjectVisible(swatch, false);
+            continue;
+        }
+        const PaintColor &c = m_fe->Paint().At(m_paintSet, i);
         FEObjData *d = swatch->GetObjData();
         if (!d)
             continue;
@@ -1393,9 +1441,10 @@ void FEStartupSequence::RefreshPaintLabel(FEPackage *pkg)
 {
     // 031a9c0a's ef653aff is the selected colour's name in the bottom bar.  The original shows the
     // paint's friendly name from the paint manager; the port has only the GLOBALB record names
-    // (GLOSS_L1_COLOR01, ...), which overflow the bar, so use the swatch number.
+    // (GLOSS_L1_COLOR01, ...), which overflow the bar.  The set name makes the L1/R1 finish switch
+    // visible, which the flat-color preview cannot show by itself (#168).
     char text[48];
-    snprintf(text, sizeof(text), "Color %02u", unsigned(m_paintSel + 1));
+    snprintf(text, sizeof(text), "%s %02u", PaintCatalog::SetName(m_paintSet), unsigned(m_paintSel + 1));
     FENativeInterface::SetString(pkg, kPaintColorName, text);
 }
 
@@ -1404,48 +1453,106 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
     if (msg == kMsgScreenTick || msg == kMsgInitComplete)
         return;
     if (msg == kMsgPadBack && !m_navPending) {
-        m_fe->SetPreviewPaint(m_paintOriginal); // Back keeps the colour the screen opened with
+        // Back keeps the colour and finish the screen opened with.
+        m_fe->SetPreviewPaint(m_paintOriginalSet, m_paintOriginal);
         PopScreen();
         return;
     }
+    if (msg == kMsgPadLTrigger || msg == kMsgPadRTrigger) {
+        // 0x002bc2f0 only forwards the shoulder buttons while the color grid is open and the part
+        // edits one of the base-paint finishes; 0x002be5f0 then walks GLOSS/METAL/PEARL.
+        if (m_paintSet != PaintCatalog::kGloss && m_paintSet != PaintCatalog::kMetal &&
+            m_paintSet != PaintCatalog::kPearl)
+            return;
+        if (CyclePaintFinish(msg == kMsgPadRTrigger ? 1 : -1))
+            RefreshPaintSwatches(pkg);
+        return;
+    }
+    const size_t count = m_fe->Paint().Count(m_paintSet);
+    if (!count)
+        return;
     if (msg == kMsgPadLeft || msg == kMsgPadRight) {
         const int row = int(m_paintSel / 20);
+        int lo, hi;
+        PaintRowRange(row, count, lo, hi);
         int col = PaintGridCol(m_paintSel);
-        col = (col + (msg == kMsgPadLeft ? -1 : 1) + 20) % 20;
+        if (msg == kMsgPadLeft)
+            col = col > lo ? col - 1 : hi;
+        else
+            col = col < hi ? col + 1 : lo;
         m_paintSel = uint32_t(PaintGridIndex(row, col));
     } else if (msg == kMsgPadUp || msg == kMsgPadDown) {
-        const int col = PaintGridCol(m_paintSel);
-        int row = int(m_paintSel / 20);
-        row = (row + (msg == kMsgPadUp ? -1 : 1) + 3) % 3;
-        m_paintSel = uint32_t(PaintGridIndex(row, col));
+        const int rows = PaintGridRows(count);
+        const int row = int(m_paintSel / 20);
+        int col = PaintGridCol(m_paintSel);
+        const int next = (row + (msg == kMsgPadUp ? -1 : 1) + rows) % rows;
+        int lo, hi;
+        PaintRowRange(next, count, lo, hi);
+        col = std::clamp(col, lo, hi);
+        m_paintSel = uint32_t(PaintGridIndex(next, col));
     } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
-        ApplyPaint(m_paintSel + 1);
+        ApplyPaint(m_paintSet, m_paintSel + 1);
         PopScreen();
         return;
     } else {
         return;
     }
     // The original previews the body colour while the swatch moves (0x002bc2f0 -> 0x002bdf10).
-    m_fe->SetPreviewPaint(m_paintSel + 1);
+    m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
 }
 
-void FEStartupSequence::ApplyPaint(uint32_t index)
+bool FEStartupSequence::CyclePaintFinish(int direction)
 {
-    m_fe->SetPreviewPaint(index);
+    // 0x002be5f0: R1 walks GLOSS -> METAL -> PEARL -> GLOSS, L1 walks the other way.  0x002be4d8
+    // (the "is this finish available" test) is a constant 1 in this build, so every present set is
+    // reachable; an empty set is still skipped here in case the pack is partial.
+    static constexpr uint32_t kFinishes[] = {PaintCatalog::kGloss, PaintCatalog::kMetal,
+                                             PaintCatalog::kPearl};
+    constexpr int kCount = int(sizeof(kFinishes) / sizeof(kFinishes[0]));
+    int current = -1;
+    for (int i = 0; i < kCount; ++i)
+        if (kFinishes[i] == m_paintSet) {
+            current = i;
+            break;
+        }
+    if (current < 0)
+        return false;
+    for (int step = 1; step <= kCount; ++step) {
+        const uint32_t next = kFinishes[(current + direction * step + kCount * 2) % kCount];
+        if (!m_fe->Paint().Has(next))
+            continue;
+        if (next == m_paintSet)
+            return false;
+        m_paintSet = next;
+        // 0x002bd868 re-fills the grid and selects the equipped color when the new set contains it;
+        // a different finish does not, so the first swatch of the new set is current.
+        m_paintSel = 0;
+        m_fe->SetPreviewPaint(m_paintSet, 1);
+        printf("[Paint] finish %s\n", PaintCatalog::SetName(m_paintSet));
+        return true;
+    }
+    return false;
+}
+
+void FEStartupSequence::ApplyPaint(uint32_t set, uint32_t index)
+{
+    m_fe->SetPreviewPaint(set, index);
     if (m_careerExists && m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size())) {
         Career::OwnedCar &car = m_profile.cars[size_t(m_profile.currentCar)];
         if (car.model == m_fe->PreviewCarName()) {
             car.paint = index;
+            car.paintSet = set;
             if (Career::SaveCareer(m_profile))
-                printf("[Paint] %u saved on %s\n", index, car.model.c_str());
+                printf("[Paint] %s %u saved on %s\n", PaintCatalog::SetName(set), index,
+                       car.model.c_str());
             else
-                printf("[Paint] %u applied, save failed\n", index);
+                printf("[Paint] %s %u applied, save failed\n", PaintCatalog::SetName(set), index);
             return;
         }
     }
-    printf("[Paint] %u applied for this session\n", index);
+    printf("[Paint] %s %u applied for this session\n", PaintCatalog::SetName(set), index);
 }
 
 bool FEStartupSequence::PopScreen()
@@ -1860,7 +1967,7 @@ void FEStartupSequence::RefreshCareerCarSelect(FEPackage *pkg)
 void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
 {
     m_fe->SetPreviewCar(car.model);
-    m_fe->SetPreviewPaint(car.paint);
+    m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
 }
 
 void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)
@@ -2296,7 +2403,8 @@ bool FEStartupSequence::LoadCareerProfile()
         m_careerExists = true;
         m_records.MergeFrom(m_profile);
         if (const Career::OwnedCar *car = m_profile.CurrentCar())
-            m_fe->SetPreviewPaint(car->paint); // the career race car uses this colour (#167)
+            m_fe->SetPreviewPaint(car->paintSet ? car->paintSet : PaintCatalog::kGloss,
+                                  car->paint); // the career race car uses this colour (#167/#168)
         // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
         if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {
             std::string list = extra;

@@ -7,8 +7,9 @@ namespace Career {
 
 // A car the player owns in career mode.
 struct OwnedCar {
-    std::string model; // GLOBALB car database folder, e.g. "SKYLINE"
-    uint32_t paint = 0; // paint index (0 = the car's stock paint)
+    std::string model;   // GLOBALB car database folder, e.g. "SKYLINE"
+    uint32_t paint = 0;  // 1-based color index in `paintSet` (0 = the car's stock paint)
+    uint32_t paintSet = 0; // 0 = GLOSS (the only set v4 saves could store), else a 0xebb03e66 set
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

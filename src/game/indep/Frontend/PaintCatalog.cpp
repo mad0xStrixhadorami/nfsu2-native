@@ -12,12 +12,9 @@ constexpr uint32_t kPackHeader = 0x34603;     // version + record counts
 constexpr uint32_t kPackParts = 0x34604;      // 14-byte part records
 constexpr uint32_t kPackAttrs = 0x34605;      // 8-byte {name hash, value} attribute records
 constexpr uint32_t kPackStrings = 0x34606;    // names, each at 4 * u16 offset
-constexpr uint32_t kPackTypes = 0x3460b;      // car type hashes
 constexpr uint32_t kPackTables = 0x3460c;     // per-part attribute tables (i16 count + i16 offsets)
 
 constexpr uint32_t kColorSetAttr = 0xebb03e66; // the color-set key FUN_002bedd8 returns
-constexpr uint32_t kGlossSet = 0x2daab07;      // Base Paint (part id 0x3f) -> the 60 GLOSS colors
-constexpr int kPaintPartId = 48;               // PAINT type: 48 = paint/hoses/mufflers, 49 = vinyls
 constexpr size_t kPartRecord = 14;
 
 uint32_t ReadU32(const uint8_t *p)
@@ -55,11 +52,68 @@ template <typename Fn> void ForEachChunk(const uint8_t *data, size_t size, Fn fn
     }
 }
 
+const PaintColor kNoColor{};
+
 } // namespace
+
+// 0x002bedd8: the color set each paint-shop part id edits.
+uint32_t PaintCatalog::SetForPart(uint32_t partId)
+{
+    switch (partId) {
+    case 0x3f: // Base Paint
+    case 0x45: // Spoiler
+    case 0x4b: // Roof Scoop
+    case 0x4c: // Mirrors
+        return kGloss;
+    case 0x44: // Engine Accents
+        return kHoses;
+    case 0x46: // Brakes
+        return kBrakes;
+    case 0x47: // Muffler Tip
+        return kMufflers;
+    case 0x49: // Rims
+    case 0x4a: // Spinners
+        return kRims;
+    default:
+        return 0;
+    }
+}
+
+bool PaintCatalog::IsPaintSet(uint32_t set)
+{
+    switch (set) {
+    case kGloss:
+    case kMetal:
+    case kPearl:
+    case kHoses:
+    case kMufflers:
+    case kVinyl:
+    case kRims:
+    case kBrakes:
+        return true;
+    default:
+        return false;
+    }
+}
+
+const char *PaintCatalog::SetName(uint32_t set)
+{
+    switch (set) {
+    case kGloss: return "Gloss";
+    case kMetal: return "Metal";
+    case kPearl: return "Pearl";
+    case kHoses: return "Hoses";
+    case kMufflers: return "Mufflers";
+    case kVinyl: return "Vinyl";
+    case kRims: return "Rims";
+    case kBrakes: return "Calipers";
+    default: return "Color";
+    }
+}
 
 bool PaintCatalog::Parse(const uint8_t *bundle, size_t size)
 {
-    m_colors.clear();
+    m_sets.clear();
     if (!bundle || size < 8)
         return false;
 
@@ -74,38 +128,22 @@ bool PaintCatalog::Parse(const uint8_t *bundle, size_t size)
     }
 
     const uint8_t *header = nullptr, *parts = nullptr, *attrs = nullptr;
-    const uint8_t *strs = nullptr, *types = nullptr, *tables = nullptr;
-    size_t headerSize = 0, partsSize = 0, attrsSize = 0, strsSize = 0, typesSize = 0, tablesSize = 0;
+    const uint8_t *strs = nullptr, *tables = nullptr;
+    size_t headerSize = 0, partsSize = 0, attrsSize = 0, strsSize = 0, tablesSize = 0;
     ForEachChunk(pack, packSize, [&](const Chunk &c) {
         switch (c.id) {
         case kPackHeader: header = c.data; headerSize = c.size; break;
         case kPackParts: parts = c.data; partsSize = c.size; break;
         case kPackAttrs: attrs = c.data; attrsSize = c.size; break;
         case kPackStrings: strs = c.data; strsSize = c.size; break;
-        case kPackTypes: types = c.data; typesSize = c.size; break;
         case kPackTables: tables = c.data; tablesSize = c.size; break;
         default: break;
         }
         return true;
     });
-    if (!parts || !attrs || !strs || !types || !tables)
-        return false;
-
-    // Car type index of "PAINT" (the folder-style type hash, like the car database records).
-    uint32_t numTypes = 0;
-    if (header && headerSize >= 0x2c)
-        numTypes = ReadU32(header + 0x28);
-    if (!numTypes)
-        numTypes = uint32_t(typesSize / 4);
-    const uint32_t paintType = bStringHash("PAINT");
-    int paintTypeIndex = -1;
-    for (uint32_t i = 0; i < numTypes && (i + 1) * 4 <= typesSize; ++i) {
-        if (ReadU32(types + i * 4) == paintType) {
-            paintTypeIndex = int(i);
-            break;
-        }
-    }
-    if (paintTypeIndex < 0)
+    (void)header;
+    (void)headerSize;
+    if (!parts || !attrs || !strs || !tables)
         return false;
 
     const uint32_t attrRed = bStringHash("RED");
@@ -113,14 +151,14 @@ bool PaintCatalog::Parse(const uint8_t *bundle, size_t size)
     const uint32_t attrBlue = bStringHash("BLUE");
     const uint32_t attrGloss = bStringHash("GLOSS");
 
+    // Color records live in several car-part types (PAINT for body/hoses/mufflers, PAINT_RIM,
+    // PAINT_BRAKE, ...); the 0xebb03e66 value, not the type, identifies the set.  The records are
+    // already in UI order (L1, L2, L3), so keep that rather than re-sorting: the catalog order
+    // matches the swatch grid index-for-index.
     for (size_t off = 0; off + kPartRecord <= partsSize; off += kPartRecord) {
         const uint8_t *r = parts + off;
-        const int partId = int(int8_t(r[4]));
-        const uint8_t typeIndex = r[7];
         const uint16_t nameOff = ReadU16(r + 8);
         const uint16_t attrTable = ReadU16(r + 10);
-        if (partId != kPaintPartId || typeIndex != uint8_t(paintTypeIndex))
-            continue;
 
         uint32_t set = 0;
         int red = -1, green = -1, blue = -1, gloss = -1;
@@ -146,7 +184,7 @@ bool PaintCatalog::Parse(const uint8_t *bundle, size_t size)
                 }
             }
         }
-        if (set != kGlossSet)
+        if (!IsPaintSet(set))
             continue;
 
         PaintColor color;
@@ -159,10 +197,35 @@ bool PaintCatalog::Parse(const uint8_t *bundle, size_t size)
         color.g = clamp8(green);
         color.b = clamp8(blue);
         color.gloss = clamp8(gloss);
-        m_colors.push_back(std::move(color));
+        m_sets[set].push_back(std::move(color));
     }
 
-    // The records already come in UI order (L1, L2, L3); keep that rather than re-sorting, so the
-    // catalog order matches the swatch grid index-for-index.
-    return !m_colors.empty();
+    return !m_sets.empty();
+}
+
+bool PaintCatalog::Has(uint32_t set) const
+{
+    auto it = m_sets.find(set);
+    return it != m_sets.end() && !it->second.empty();
+}
+
+size_t PaintCatalog::Count(uint32_t set) const
+{
+    auto it = m_sets.find(set);
+    return it == m_sets.end() ? 0 : it->second.size();
+}
+
+const PaintColor &PaintCatalog::At(uint32_t set, size_t index) const
+{
+    auto it = m_sets.find(set);
+    if (it == m_sets.end() || index >= it->second.size())
+        return kNoColor;
+    return it->second[index];
+}
+
+const std::vector<PaintColor> &PaintCatalog::Colors(uint32_t set) const
+{
+    static const std::vector<PaintColor> kEmpty;
+    auto it = m_sets.find(set);
+    return it == m_sets.end() ? kEmpty : it->second;
 }
