@@ -844,12 +844,15 @@ static void FormatBestTime(int millis, char *out, size_t n)
         snprintf(out, n, "0.00");
         return;
     }
+    // 0x002ef230(param_4 = 0) space-pads a leading zero: the hours/minutes/seconds field that starts
+    // the string is written with "%2d", while the following fields use param_4 = 1 ("%02d"). The
+    // helper emits exactly two digits, so hours are taken modulo 100.
     if (millis >= 3600000)
-        snprintf(out, n, "%02dh:%02d:%02d", millis / 3600000, millis / 60000 % 60, millis / 1000 % 60);
+        snprintf(out, n, "%2dh:%02d:%02d", millis / 3600000 % 100, millis / 60000 % 60, millis / 1000 % 60);
     else if (millis >= 60000)
-        snprintf(out, n, "%02d:%02d.%02d", millis / 60000, millis / 1000 % 60, millis / 10 % 100);
+        snprintf(out, n, "%2d:%02d.%02d", millis / 60000, millis / 1000 % 60, millis / 10 % 100);
     else if (millis >= 1000)
-        snprintf(out, n, "%02d.%02d", millis / 1000, millis / 10 % 100);
+        snprintf(out, n, "%2d.%02d", millis / 1000, millis / 10 % 100);
     else
         snprintf(out, n, "0.%02d", millis / 10 % 100);
 }
