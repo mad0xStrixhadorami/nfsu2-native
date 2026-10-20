@@ -148,6 +148,7 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         m_carPreviewRims = assembled.TriangleRims();
         m_carPreviewCalipers = assembled.TriangleCalipers();
         m_carPreviewMirrors = assembled.TriangleMirrors();
+        m_carPreviewSpoilers = assembled.TriangleSpoilers();
         m_carPreviewWheels = assembled.WheelTrianglesStart();
     }
     m_carPreviewTris.clear();
@@ -201,6 +202,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
     const SDL_Color rim = ColorForPaint(m_previewRimSet, m_previewRim, SDL_Color{38, 38, 38, 255});
     const SDL_Color caliper = ColorForPaint(m_previewCaliperSet, m_previewCaliper, SDL_Color{128, 128, 128, 255});
     const SDL_Color mirror = ColorForPaint(m_previewMirrorSet, m_previewMirror, body);
+    const SDL_Color spoiler = ColorForPaint(m_previewSpoilerSet, m_previewSpoiler, body);
     if (!m_carPreviewModel.empty()) {
         int x0, y0, x1, y1;
         SDL_RenderLogicalToWindow(m_renderer, 150.0f, 180.0f, &x0, &y0);
@@ -215,7 +217,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
             UpdateStatBars(pkg);
         if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, body, &m_carPreviewSlots,
                         m_carPreviewWheels, &m_carPreviewRims, rim, &m_carPreviewCalipers, caliper,
-                        &m_carPreviewMirrors, mirror)) {
+                        &m_carPreviewMirrors, mirror, &m_carPreviewSpoilers, spoiler)) {
             if (carSelect)
                 DrawCarPreviewLabel(pkg);
             return;

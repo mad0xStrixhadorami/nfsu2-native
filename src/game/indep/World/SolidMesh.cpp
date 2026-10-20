@@ -330,6 +330,7 @@ void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t 
                     s.hash = ReadLE32(h, 0x10);
                     memcpy(s.bboxMin, h + 0x20, 12);
                     memcpy(s.bboxMax, h + 0x30, 12);
+                    memcpy(s.transform, h + 0x40, sizeof(s.transform));
                     s.name.assign(reinterpret_cast<const char *>(h + 0xa4), strnlen(reinterpret_cast<const char *>(h + 0xa4), clen - pad - 0xa4));
                 }
                 if (cid == 0x134012) // (texture name hash, 0) pairs
@@ -351,6 +352,16 @@ std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size)
 {
     std::vector<NamedSolid> out;
     CollectNamedSolids(d, size, 0, size, out);
+    return out;
+}
+
+Point TransformPoint(const NamedSolid &solid, const Point &p)
+{
+    const float *m = solid.transform;
+    Point out = p;
+    out.x = p.x * m[0] + p.y * m[4] + p.z * m[8] + m[12];
+    out.y = p.x * m[1] + p.y * m[5] + p.z * m[9] + m[13];
+    out.z = p.x * m[2] + p.y * m[6] + p.z * m[10] + m[14];
     return out;
 }
 

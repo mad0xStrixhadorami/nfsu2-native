@@ -45,8 +45,13 @@ struct NamedSolid {
     std::string name;
     uint32_t hash = 0;
     float bboxMin[3] = {}, bboxMax[3] = {};
+    // 0x134011 header +0x40: column-major local-to-car matrix (translation in [12..14]).  Most
+    // body solids are identity; detached parts such as the stock spoiler carry their mount here.
+    float transform[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     std::vector<Triangle> tris;
     std::vector<uint32_t> textures; // 0x134012 texture name hashes, indexed by Triangle::tex
 };
+// Apply NamedSolid::transform to a solid-space point (row-vector convention, translation in [12..14]).
+Point TransformPoint(const NamedSolid &solid, const Point &p);
 std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size);
 } // namespace SolidMesh

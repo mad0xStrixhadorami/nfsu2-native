@@ -50,6 +50,11 @@ target_include_directories(paint_test PRIVATE src)
 target_link_libraries(paint_test PRIVATE bware)
 add_test(NAME paint COMMAND paint_test)
 
+# Solid-header transform: the stock spoiler's mount matrix (#175).
+add_executable(solid_test tests/solid_test.cpp src/game/indep/World/SolidMesh.cpp)
+target_include_directories(solid_test PRIVATE src)
+add_test(NAME solid COMMAND solid_test)
+
 # EA FEng front-end engine, reused from nfsmw. UG2 packages are the same format (version 0x20000).
 file(GLOB FENG_SOURCES ${NFSMW}/src/Speed/Indep/Src/FEng/*.cpp)
 add_library(feng STATIC ${FENG_SOURCES})

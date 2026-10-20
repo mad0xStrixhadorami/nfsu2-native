@@ -81,6 +81,18 @@ void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle
             tex.push_back(t.tex >= 0 && size_t(t.tex) < s.textures.size() ? s.textures[t.tex] : 0);
         }
 }
+// Detached car parts (the stock spoiler, #175) are modelled around their own origin and carry the
+// mount transform in the 0x134011 header.  Apply it as the game's solid loader does.
+void AddTransformed(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
+{
+    for (const SolidMesh::Triangle &t : s.tris) {
+        SolidMesh::Triangle o = t;
+        for (int k = 0; k < 3; ++k)
+            o.v[k] = SolidMesh::TransformPoint(s, t.v[k]);
+        out.push_back(o);
+        tex.push_back(t.tex >= 0 && size_t(t.tex) < s.textures.size() ? s.textures[t.tex] : 0);
+    }
+}
 } // namespace
 
 bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels)
@@ -90,6 +102,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triRim.clear();
     m_triCaliper.clear();
     m_triMirror.clear();
+    m_triSpoiler.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
@@ -120,7 +133,17 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 rearBrake = &s;
             continue;
         }
-        if (Contains(n, "SPOILER") || Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
+        if (Contains(n, "SPOILER")) {
+            // The stock KIT00 spoiler is a detached solid whose header transform mounts it on the
+            // trunk (#175).  It was previously skipped with the other origin-centred parts.
+            const size_t before = m_model.size();
+            AddTransformed(s, m_model, m_triTex);
+            m_triSpoiler.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triSpoiler[i] = 1;
+            continue;
+        }
+        if (Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
             Contains(n, "ENGINE") || Contains(n, "AUDIO") || Contains(n, "UNLIT"))
             continue;
         if (Contains(n, "_BODY_"))
@@ -242,6 +265,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triRim.resize(m_model.size(), 0);
     m_triCaliper.resize(m_model.size(), 0);
     m_triMirror.resize(m_model.size(), 0);
+    m_triSpoiler.resize(m_model.size(), 0);
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }

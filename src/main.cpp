@@ -689,6 +689,10 @@ int main(int argc, char **argv)
                          &car.TriangleMirrors(),
                          fe.ColorForPaint(fe.PreviewMirrorSet(), fe.PreviewMirrorPaint(),
                                           fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
+                                                           SDL_Color{40, 90, 200, 255})),
+                         &car.TriangleSpoilers(),
+                         fe.ColorForPaint(fe.PreviewSpoilerSet(), fe.PreviewSpoilerPaint(),
+                                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
                                                            SDL_Color{40, 90, 200, 255})));
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);

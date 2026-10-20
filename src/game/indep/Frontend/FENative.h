@@ -113,6 +113,15 @@ public:
     }
     uint32_t PreviewMirrorPaint() const { return m_previewMirror; }
     uint32_t PreviewMirrorSet() const { return m_previewMirrorSet; }
+    // The paint on the preview car's stock spoiler (Spoiler card, ISSUES #175).  index 0 keeps the
+    // body colour; the set is normally PaintCatalog::kGloss.
+    void SetPreviewSpoilerPaint(uint32_t set, uint32_t index)
+    {
+        m_previewSpoilerSet = set ? set : PaintCatalog::kGloss;
+        m_previewSpoiler = index;
+    }
+    uint32_t PreviewSpoilerPaint() const { return m_previewSpoiler; }
+    uint32_t PreviewSpoilerSet() const { return m_previewSpoilerSet; }
     const PaintCatalog &Paint() const { return m_paint; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
@@ -336,6 +345,7 @@ private:
     std::vector<uint8_t> m_carPreviewRims;              // 1 = painted rim face (#172)
     std::vector<uint8_t> m_carPreviewCalipers;          // 1 = brake caliper (#173)
     std::vector<uint8_t> m_carPreviewMirrors;           // 1 = painted mirror housing (#174)
+    std::vector<uint8_t> m_carPreviewSpoilers;          // 1 = stock spoiler mesh (#175)
     size_t m_carPreviewWheels = SIZE_MAX;               // first wheel triangle
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
@@ -350,6 +360,8 @@ private:
     uint32_t m_previewCaliperSet = PaintCatalog::kBrakes;
     uint32_t m_previewMirror = 0; // 0 = stock body colour; else 1..Count(mirror set)
     uint32_t m_previewMirrorSet = PaintCatalog::kGloss;
+    uint32_t m_previewSpoiler = 0; // 0 = body colour; else 1..Count(spoiler set)
+    uint32_t m_previewSpoilerSet = PaintCatalog::kGloss;
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;

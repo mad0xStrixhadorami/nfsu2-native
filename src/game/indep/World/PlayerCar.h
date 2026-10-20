@@ -63,6 +63,8 @@ public:
     const std::vector<uint8_t> &TriangleCalipers() const { return m_triCaliper; }
     // 1 for a side-mirror housing (slot 1; the glass in slot 0 stays), 0 otherwise (#174).
     const std::vector<uint8_t> &TriangleMirrors() const { return m_triMirror; }
+    // 1 for the stock spoiler mesh, 0 otherwise (#175).  The solid's header transform mounts it.
+    const std::vector<uint8_t> &TriangleSpoilers() const { return m_triSpoiler; }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
 
@@ -88,8 +90,8 @@ public:
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
                                                  m_triCaliper = other.m_triCaliper, m_triMirror = other.m_triMirror,
-                                                 m_rideHeight = other.m_rideHeight, m_wheelStart = other.m_wheelStart,
-                                                 m_wheelRadius = other.m_wheelRadius; }
+                                                 m_triSpoiler = other.m_triSpoiler, m_rideHeight = other.m_rideHeight,
+                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
 
 private:
     void UpdateEngine(float throttle, float brake, float dt, float power);
@@ -99,6 +101,7 @@ private:
     std::vector<uint8_t> m_triRim;
     std::vector<uint8_t> m_triCaliper;
     std::vector<uint8_t> m_triMirror;
+    std::vector<uint8_t> m_triSpoiler;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

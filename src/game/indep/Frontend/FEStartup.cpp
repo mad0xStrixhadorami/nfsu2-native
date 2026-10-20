@@ -204,6 +204,12 @@ void FEStartupSequence::LoadBootProfile()
         if (index >= 0)
             m_fe->SetPreviewMirrorPaint(PaintCatalog::kGloss, uint32_t(index));
     }
+    // Dev aid: NFSU2_SPOILER_PAINT=<1..60> previews a GLOSS colour on the stock spoiler.
+    if (const char *spoiler = getenv("NFSU2_SPOILER_PAINT")) {
+        const int index = atoi(spoiler);
+        if (index >= 0)
+            m_fe->SetPreviewSpoilerPaint(PaintCatalog::kGloss, uint32_t(index));
+    }
     // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
@@ -1204,6 +1210,8 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewCaliperPaint(PaintCatalog::kBrakes, 0);
         if (!getenv("NFSU2_MIRROR_PAINT"))
             m_fe->SetPreviewMirrorPaint(PaintCatalog::kGloss, 0);
+        if (!getenv("NFSU2_SPOILER_PAINT"))
+            m_fe->SetPreviewSpoilerPaint(PaintCatalog::kGloss, 0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1522,6 +1530,7 @@ void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
     RefreshRimPreview();
     RefreshCaliperPreview();
     RefreshMirrorPreview();
+    RefreshSpoilerPreview();
 
     // 0x002bc2f0 keeps the swatch grid closed (0x67) until Accept; the cards and OPTION_MASTER's
     // header are the screen's initial state.  The header stays "Graphics Shop" (42adb44c label
@@ -1586,6 +1595,19 @@ void FEStartupSequence::RefreshMirrorPreview()
                                 m_partPaintIndex[3]);
 }
 
+void FEStartupSequence::RefreshSpoilerPreview()
+{
+    if (const char *spoiler = getenv("NFSU2_SPOILER_PAINT")) {
+        const int index = atoi(spoiler);
+        if (index >= 0) {
+            m_fe->SetPreviewSpoilerPaint(PaintCatalog::kGloss, uint32_t(index));
+            return;
+        }
+    }
+    m_fe->SetPreviewSpoilerPaint(m_partSet[1] ? m_partSet[1] : PaintCatalog::kGloss,
+                                 m_partPaintIndex[1]);
+}
+
 void FEStartupSequence::ShowPaintGrid(FEPackage *pkg, bool show)
 {
     // 0x002bd868 reveals db285767 (grid + info strip) when a part is entered; 0x002be150 hides the
@@ -1625,6 +1647,8 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
     m_gridOriginalCaliper = m_fe->PreviewCaliperPaint();
     m_gridOriginalMirrorSet = m_fe->PreviewMirrorSet();
     m_gridOriginalMirror = m_fe->PreviewMirrorPaint();
+    m_gridOriginalSpoilerSet = m_fe->PreviewSpoilerSet();
+    m_gridOriginalSpoiler = m_fe->PreviewSpoilerPaint();
     m_paintGridActive = true;
     ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
@@ -1636,6 +1660,8 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
         m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 3) // Mirrors tint the housings (#174)
         m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 1) // Spoiler tints the stock wing (#175)
+        m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
     printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
            kPaintParts[m_paintPart].id, count);
 }
@@ -1652,6 +1678,8 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
         m_fe->SetPreviewCaliperPaint(m_gridOriginalCaliperSet, m_gridOriginalCaliper);
     if (restorePreview && m_paintPart == 3)
         m_fe->SetPreviewMirrorPaint(m_gridOriginalMirrorSet, m_gridOriginalMirror);
+    if (restorePreview && m_paintPart == 1)
+        m_fe->SetPreviewSpoilerPaint(m_gridOriginalSpoilerSet, m_gridOriginalSpoiler);
     m_paintGridActive = false;
     ShowPaintGrid(pkg, false);
 }
@@ -1819,6 +1847,8 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 3)
         m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 1)
+        m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
 }
@@ -1871,6 +1901,8 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
         m_fe->SetPreviewCaliperPaint(set, index); // Brakes tint the calipers (#173)
     else if (part == 3)
         m_fe->SetPreviewMirrorPaint(set, index); // Mirrors tint the housings (#174)
+    else if (part == 1)
+        m_fe->SetPreviewSpoilerPaint(set, index); // Spoiler tints the stock wing (#175)
 
     if (m_careerExists && m_profile.currentCar >= 0 &&
         m_profile.currentCar < int(m_profile.cars.size())) {
@@ -2317,6 +2349,8 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
                                  car.partPaint[5]);
     m_fe->SetPreviewMirrorPaint(car.partPaintSet[2] ? car.partPaintSet[2] : PaintCatalog::kGloss,
                                 car.partPaint[2]);
+    m_fe->SetPreviewSpoilerPaint(car.partPaintSet[0] ? car.partPaintSet[0] : PaintCatalog::kGloss,
+                                 car.partPaint[0]);
 }
 
 void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)
@@ -2760,6 +2794,8 @@ bool FEStartupSequence::LoadCareerProfile()
                                          car->partPaint[5]);
             m_fe->SetPreviewMirrorPaint(car->partPaintSet[2] ? car->partPaintSet[2] : PaintCatalog::kGloss,
                                         car->partPaint[2]);
+            m_fe->SetPreviewSpoilerPaint(car->partPaintSet[0] ? car->partPaintSet[0] : PaintCatalog::kGloss,
+                                         car->partPaint[0]);
         }
         // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
         if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {
