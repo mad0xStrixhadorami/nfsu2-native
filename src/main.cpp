@@ -886,7 +886,7 @@ int main(int argc, char **argv)
     for (bool running = true; running;) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
-            if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE))
+            if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F10)) // Esc is Back
                 running = false;
         if (!musicStarted && musicVolume > 0 && (inWorld || startup.IsFinished())) {
             musicStarted = true;

@@ -884,7 +884,7 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
             mask |= kPadAccept;
         if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER])
             mask |= kPadStart;
-        if (keys[SDL_SCANCODE_BACKSPACE])
+        if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_ESCAPE])
             mask |= kPadBack;
         if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_PAGEUP])
             mask |= kPadLTrigger;
