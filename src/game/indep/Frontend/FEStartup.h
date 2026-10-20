@@ -62,8 +62,9 @@ public:
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
     int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
-    // 0x004f13b0 settings +4: 0 = Forward, 1 = Reverse (0x00256b10 / 0x0025c7b0).
-    bool RaceReverse() const { return m_options[m_raceType & 15].reverse; }
+    // Race direction: 0x004f13b0 settings +4 for Quick Race; a career event carries its own slot
+    // flag (0x00263848, bit 0) and must not leak into the shared per-type Quick Race settings.
+    bool RaceReverse() const { return m_careerEventRun ? m_careerReverse : m_options[m_raceType & 15].reverse; }
 
     // The front end asked for the career crib (career entry; the world map will ask for the return
     // from a career event the same way). main.cpp takes it once when the world session starts and
@@ -170,6 +171,7 @@ private:
     size_t m_wmSel = 0;
     std::vector<const Career::Event *> m_wmEvents;
     bool m_careerEventRun = false; // the running world session is a career event started from the map
+    bool m_careerReverse = false;  // the event slot's direction flag (0x00263848)
     std::vector<bool> m_trackLocked; // per m_tracks entry: Quick Race lock (0x001facc0 item +8, #157)
     std::vector<int> m_cribActions;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode

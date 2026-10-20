@@ -42,25 +42,26 @@ struct Profile {
     // Best finishing times (the 0x4fb4ac best-time table, 0x00272e18: {race s16, direction u8, value}).
     struct BestTime {
         int race;
+        int direction; // 0 forward / 1 reverse (the 0x4fb4ac key)
         int millis;
     };
     std::vector<BestTime> bestTimes;
-    int BestTimeFor(int race) const
+    int BestTimeFor(int race, int direction = 0) const
     {
         for (const BestTime &b : bestTimes)
-            if (b.race == race)
+            if (b.race == race && b.direction == direction)
                 return b.millis;
         return 0;
     }
-    void RecordTime(int race, int millis)
+    void RecordTime(int race, int direction, int millis)
     {
         for (BestTime &b : bestTimes)
-            if (b.race == race) {
+            if (b.race == race && b.direction == direction) {
                 if (millis < b.millis)
                     b.millis = millis;
                 return;
             }
-        bestTimes.push_back({race, millis});
+        bestTimes.push_back({race, direction, millis});
     }
 
     bool Completed(uint32_t id) const

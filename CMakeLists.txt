@@ -38,6 +38,11 @@ target_include_directories(bware_test PRIVATE src)
 target_link_libraries(bware_test PRIVATE bware)
 add_test(NAME bware COMMAND bware_test)
 
+# Career save format: best-time direction key (0x4fb4ac) and v1 compatibility.
+add_executable(profile_test tests/profile_test.cpp src/game/indep/Career/Profile.cpp src/game/indep/Career/Memcard.cpp)
+target_include_directories(profile_test PRIVATE src)
+add_test(NAME profile COMMAND profile_test)
+
 # EA FEng front-end engine, reused from nfsmw. UG2 packages are the same format (version 0x20000).
 file(GLOB FENG_SOURCES ${NFSMW}/src/Speed/Indep/Src/FEng/*.cpp)
 add_library(feng STATIC ${FENG_SOURCES})

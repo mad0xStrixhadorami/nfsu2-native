@@ -904,7 +904,10 @@ void FEStartupSequence::HandleQRModeOptionsLoaded(FEPackage *pkg)
     std::vector<FEWidgetMenu::Widget> w;
     // Track Direction (0x0046f380, tracked at 0x00256b10): only races whose record byte +0x86 is set
     // offer Reverse. 0x001f7a80 adds it before every other row. Values: 0x9e4c4648 "Forward" /
-    // 0x22f254af "Reverse"; the setting lives at race settings +4 (0x0025c7b0 copies it to 0x0053e404).
+    // 0x22f254af "Reverse"; REA/Ghidra shows 0x00256b10 toggles on __PAD_LEFT__ (0x9120409e) and
+    // __PAD_RIGHT__ (0xb5971bf1): any nonzero setting is reset to 0, otherwise +4 becomes 1. It also
+    // writes the active direction global 0x0053e404 immediately; 0x0025c7b0 copies settings +4 again
+    // at race start. (Modes 8/0x200 use 0x00506b9c instead of the per-type 0x004f13b0 settings.)
     const RaceInfo *selected = nullptr;
     for (const RaceInfo &r : m_fe->Races())
         if (r.number == m_raceNumber) {
@@ -1361,7 +1364,7 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
         snprintf(text, sizeof(text), "%.1f Miles", r->length * 0.001f * 0.62137f);
         FENativeInterface::SetString(pkg, 0x23eae8bb, text);
     }
-    const int best = r ? m_profile.BestTimeFor(r->number) : 0;
+    const int best = r ? m_profile.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
     if (best > 0 && ev.stage != 5)
         snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
     else
@@ -1380,7 +1383,9 @@ void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
     m_raceNumber = r->number;
     m_raceType = CareerRaceType(ev, *r);
     m_careerEventRun = true;
-    printf("[Career] start event %08x: race %d type %d purse %u\n", ev.id, m_raceNumber, m_raceType, ev.purse);
+    m_careerReverse = ev.DirectionFor(r->number) != 0;
+    printf("[Career] start event %08x: race %d type %d purse %u direction %s\n", ev.id, m_raceNumber, m_raceType,
+           ev.purse, m_careerReverse ? "Reverse" : "Forward");
     RequestRace();
 }
 
@@ -1775,7 +1780,7 @@ bool FEStartupSequence::LoadCareerProfile()
         if (const char *bt = getenv("NFSU2_BEST_TIME")) {
             int race = 0, ms = 0;
             if (sscanf(bt, "%d:%d", &race, &ms) == 2 && ms > 0) {
-                m_profile.RecordTime(race, ms);
+                m_profile.RecordTime(race, 0, ms);
                 Career::SaveCareer(m_profile);
             }
         }
@@ -1798,7 +1803,7 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     // points, not time (0x00272ee8), so they keep no time.
     const Career::Event *timed = Career::EventTable::Get().FindByRace(raceNumber);
     if (seconds > 0.0f && timed && timed->stage != 5) {
-        m_profile.RecordTime(raceNumber, int(seconds * 1000.0f + 0.5f));
+        m_profile.RecordTime(raceNumber, timed->DirectionFor(raceNumber), int(seconds * 1000.0f + 0.5f));
         Career::SaveCareer(m_profile);
     }
     const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);

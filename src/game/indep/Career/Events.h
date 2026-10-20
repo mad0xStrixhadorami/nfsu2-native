@@ -31,6 +31,15 @@ struct Event {
     // (0x00263848) and bit 1 marks the race as unlocked from the start (0x00263858). Parallel to
     // races; used by the Quick Race track list (ISSUES #157).
     std::vector<uint8_t> raceFlags;
+
+    // The direction the slot that runs `race` is authored with (0x00263848: flag bit 0).
+    uint8_t DirectionFor(int race) const
+    {
+        for (size_t i = 0; i < races.size() && i < raceFlags.size(); ++i)
+            if (races[i] == race)
+                return raceFlags[i] & 1;
+        return 0;
+    }
 };
 
 // The parsed 0x34a11 table. It is static game data: load it once from the GLOBALB bundle.
