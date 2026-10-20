@@ -14,10 +14,199 @@ uint32_t Read32(const uint8_t *p)
     return v;
 }
 
+uint16_t Read16(const uint8_t *p)
+{
+    uint16_t v;
+    memcpy(&v, p, 2);
+    return v;
+}
+
 float Dist(float ax, float ay, float bx, float by) { return std::hypot(bx - ax, by - ay); }
+
+struct RoutePoint {
+    float x, y;
+};
+
+// A 0x34149 road segment. `front`/`back` are the segment indices linked at its two endpoints
+// (+0x24/+0x44); the Paths file also contains the other lane of each dual carriageway and the
+// roads of neighbouring events, so the links -- not the array order -- define the route.
+struct RouteSeg {
+    std::vector<RoutePoint> pts;
+    std::vector<uint16_t> front;
+    std::vector<uint16_t> back;
+    float length = 0;
+};
+
+float PolylineLength(const std::vector<RoutePoint> &pts)
+{
+    float len = 0;
+    for (size_t i = 1; i < pts.size(); ++i)
+        len += Dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+    return len;
+}
+
+// Depth-first search over the segment links. The race record's length picks one connected
+// cycle/path out of the branching lane graph (0x00344fb8 loads the chunks, 0x00345418 links
+// the segment tables; the 0x3414a graph itself is the AI route, not the race line).
+struct RouteSearch {
+    const std::vector<RouteSeg> &segs;
+    float target = 0;
+    float tolerance = 0;
+    int expansions = 0;
+    static constexpr int kExpansionLimit = 500000;
+
+    bool have = false;
+    float bestScore = 1e30f;
+    float bestLength = 0;
+    bool bestClosed = false;
+    int bestSegments = 0;
+    int bestForward = -1;
+    std::vector<RoutePoint> bestPts;
+
+    std::vector<char> visited;
+    std::vector<RoutePoint> cur;
+    int segCount = 0;
+    int forwardCount = 0;
+    int startSeg = -1;
+    int startDir = 1;
+    RoutePoint startEntry{0, 0};
+
+    explicit RouteSearch(const std::vector<RouteSeg> &s, float t) : segs(s), target(t)
+    {
+        tolerance = std::max(40.0f, t * 0.05f);
+        cur.reserve(2048);
+        bestPts.reserve(2048);
+    }
+
+    void Append(int seg, int dir)
+    {
+        const auto &pts = segs[seg].pts;
+        auto add = [&](const RoutePoint &p) {
+            if (cur.empty() || Dist(cur.back().x, cur.back().y, p.x, p.y) > 1e-4f)
+                cur.push_back(p);
+        };
+        if (dir == 1) {
+            for (const RoutePoint &p : pts)
+                add(p);
+        } else {
+            for (auto it = pts.rbegin(); it != pts.rend(); ++it)
+                add(*it);
+        }
+    }
+
+    void Consider(float length, bool closed, float closingGap)
+    {
+        const float total = length + (closed ? closingGap : 0.0f);
+        if (target > 0) {
+            const float diff = std::fabs(total - target);
+            if (diff > tolerance && have)
+                return;
+            if (diff > tolerance * 2.0f)
+                return;
+            // The segment point order is the forward race direction; a candidate that reverses
+            // several segments is usually hopping the central reservation to the other lane.
+            // Prefer the all-forward lane unless it misses the race length by a lot.
+            const int backward = segCount - forwardCount;
+            const float score = diff + backward * 3.0f;
+            bool better = !have || score < bestScore - 0.05f;
+            if (!better && have && std::fabs(score - bestScore) <= 2.0f) {
+                if (forwardCount > bestForward || (forwardCount == bestForward && segCount < bestSegments))
+                    better = true;
+            }
+            if (!better)
+                return;
+            bestScore = score;
+        } else if (!have || total > bestLength) {
+            // No race record length: use the longest connected route.
+        } else {
+            return;
+        }
+        have = true;
+        bestLength = total;
+        bestClosed = closed;
+        bestSegments = segCount;
+        bestForward = forwardCount;
+        bestPts = cur;
+        if (closed)
+            bestPts.push_back(startEntry);
+    }
+
+    void Dfs(int seg, int dir, float length)
+    {
+        if (++expansions > kExpansionLimit)
+            return;
+        const auto &pts = segs[seg].pts;
+        const RoutePoint &exit = dir == 1 ? pts.back() : pts.front();
+        const auto &links = dir == 1 ? segs[seg].back : segs[seg].front;
+        bool advanced = false;
+        for (uint16_t j : links) {
+            if (j >= segs.size() || segs[j].pts.empty())
+                continue;
+            const float dFront = Dist(exit.x, exit.y, segs[j].pts.front().x, segs[j].pts.front().y);
+            const float dBack = Dist(exit.x, exit.y, segs[j].pts.back().x, segs[j].pts.back().y);
+            const float gap = std::min(dFront, dBack);
+            if (gap > 25.0f)
+                continue;
+            const int nextDir = dFront <= dBack ? 1 : -1;
+            if (j == startSeg) {
+                if (segCount >= 2 && Dist(exit.x, exit.y, startEntry.x, startEntry.y) <= 25.0f)
+                    Consider(length, true, gap);
+                advanced = true;
+                continue;
+            }
+            if (visited[j])
+                continue;
+            const float nextLength = length + gap + segs[j].length;
+            if (target > 0 && nextLength > target * 1.25f + 300.0f)
+                continue;
+            advanced = true;
+            visited[j] = 1;
+            ++segCount;
+            if (nextDir == 1)
+                ++forwardCount;
+            const size_t oldSize = cur.size();
+            Append(j, nextDir);
+            Dfs(j, nextDir, nextLength);
+            cur.resize(oldSize);
+            if (nextDir == 1)
+                --forwardCount;
+            --segCount;
+            visited[j] = 0;
+            if (expansions > kExpansionLimit)
+                return;
+        }
+        // A sprint ends at a dead end (or where its remaining links are already used).
+        if (!advanced)
+            Consider(length, false, 0.0f);
+    }
+
+    bool Run()
+    {
+        visited.assign(segs.size(), 0);
+        for (int s = 0; s < int(segs.size()); ++s) {
+            if (segs[s].pts.empty())
+                continue;
+            for (int d : {1, -1}) {
+                visited.assign(segs.size(), 0);
+                cur.clear();
+                segCount = 1;
+                forwardCount = d == 1 ? 1 : 0;
+                startSeg = s;
+                startDir = d;
+                startEntry = d == 1 ? segs[s].pts.front() : segs[s].pts.back();
+                visited[s] = 1;
+                Append(s, d);
+                Dfs(s, d, segs[s].length);
+                if (expansions > kExpansionLimit)
+                    return have;
+            }
+        }
+        return have;
+    }
+};
 } // namespace
 
-bool RaceRoute::Load(const std::vector<uint8_t> &paths)
+bool RaceRoute::Load(const std::vector<uint8_t> &paths, float targetLength)
 {
     m_points.clear();
     m_dist.clear();
@@ -44,54 +233,104 @@ bool RaceRoute::Load(const std::vector<uint8_t> &paths)
     if (!nodes || !segments)
         return false;
 
-    std::map<uint32_t, std::vector<Point>> byOrder;
+    std::vector<RouteSeg> segs(segmentCount);
     for (size_t k = 0; k < segmentCount; ++k) {
         const uint8_t *s = segments + k * 220;
-        uint16_t first, last;
-        memcpy(&first, s + 0x1c, 2);
-        memcpy(&last, s + 0x1e, 2);
-        std::vector<Point> pts;
+        const uint16_t first = Read16(s + 0x1c), last = Read16(s + 0x1e);
+        auto &pts = segs[k].pts;
         for (uint32_t n = first; n < last && n < nodeCount; ++n) {
-            Point pt;
+            RoutePoint pt;
             memcpy(&pt, nodes + n * 24, 8);
             pts.push_back(pt);
         }
-        if (!pts.empty())
-            byOrder[Read32(s + 0x14)] = std::move(pts);
+        if (pts.size() < 2)
+            continue;
+        segs[k].length = PolylineLength(pts);
+        // Link counts at +0x22/+0x23; each list holds at most four 8-byte entries.
+        const int count[2] = {std::min<int>(s[0x22], 4), std::min<int>(s[0x23], 4)};
+        for (int side = 0; side < 2; ++side) {
+            auto &dst = side == 0 ? segs[k].front : segs[k].back;
+            for (int i = 0; i < count[side]; ++i) {
+                const uint16_t next = Read16(s + (side == 0 ? 0x24 : 0x44) + i * 8);
+                if (next < segmentCount && next != k)
+                    dst.push_back(next);
+            }
+        }
     }
-    // Chain in race order, orienting each segment to continue from the previous one; the first
-    // segment is oriented towards the second.
-    for (auto it = byOrder.begin(); it != byOrder.end(); ++it) {
-        std::vector<Point> pts = it->second;
-        if (m_points.empty()) {
-            auto next = std::next(it);
-            if (next != byOrder.end() && pts.size() > 0) {
-                const Point &n0 = next->second.front(), &n1 = next->second.back();
-                float toFront = std::min(Dist(pts.front().x, pts.front().y, n0.x, n0.y),
-                                         Dist(pts.front().x, pts.front().y, n1.x, n1.y));
-                float toBack = std::min(Dist(pts.back().x, pts.back().y, n0.x, n0.y),
-                                        Dist(pts.back().x, pts.back().y, n1.x, n1.y));
-                if (toFront < toBack)
+
+    RouteSearch search(segs, targetLength);
+    const bool found = search.Run();
+    if (found) {
+        m_closed = search.bestClosed;
+        m_points.reserve(search.bestPts.size());
+        for (const RoutePoint &p : search.bestPts) {
+            Point pt;
+            pt.x = p.x;
+            pt.y = p.y;
+            m_points.push_back(pt);
+        }
+        m_length = search.bestLength;
+    } else {
+        // Fallback for a Paths file without usable links: chain the segments by their stored
+        // order field, as the port did before the lane graph was decoded.
+        std::map<uint32_t, std::vector<Point>> byOrder;
+        for (size_t k = 0; k < segmentCount; ++k) {
+            const uint8_t *s = segments + k * 220;
+            const uint16_t first = Read16(s + 0x1c), last = Read16(s + 0x1e);
+            std::vector<Point> pts;
+            for (uint32_t n = first; n < last && n < nodeCount; ++n) {
+                Point pt;
+                memcpy(&pt, nodes + n * 24, 8);
+                pts.push_back(pt);
+            }
+            if (!pts.empty())
+                byOrder[Read32(s + 0x14)] = std::move(pts);
+        }
+        for (auto it = byOrder.begin(); it != byOrder.end(); ++it) {
+            std::vector<Point> pts = it->second;
+            if (m_points.empty()) {
+                auto next = std::next(it);
+                if (next != byOrder.end() && pts.size() > 0) {
+                    const Point &n0 = next->second.front(), &n1 = next->second.back();
+                    float toFront = std::min(Dist(pts.front().x, pts.front().y, n0.x, n0.y),
+                                             Dist(pts.front().x, pts.front().y, n1.x, n1.y));
+                    float toBack = std::min(Dist(pts.back().x, pts.back().y, n0.x, n0.y),
+                                            Dist(pts.back().x, pts.back().y, n1.x, n1.y));
+                    if (toFront < toBack)
+                        std::reverse(pts.begin(), pts.end());
+                }
+            } else {
+                const Point &last = m_points.back();
+                if (Dist(last.x, last.y, pts.back().x, pts.back().y) <
+                    Dist(last.x, last.y, pts.front().x, pts.front().y))
                     std::reverse(pts.begin(), pts.end());
             }
-        } else {
-            const Point &last = m_points.back();
-            if (Dist(last.x, last.y, pts.back().x, pts.back().y) < Dist(last.x, last.y, pts.front().x, pts.front().y))
-                std::reverse(pts.begin(), pts.end());
+            m_points.insert(m_points.end(), pts.begin(), pts.end());
         }
-        m_points.insert(m_points.end(), pts.begin(), pts.end());
     }
     if (m_points.size() < 2)
         return false;
+
     m_dist.resize(m_points.size());
     for (size_t i = 1; i < m_points.size(); ++i)
         m_dist[i] = m_dist[i - 1] + Dist(m_points[i - 1].x, m_points[i - 1].y, m_points[i].x, m_points[i].y);
-    const Point &a = m_points.back(), &b = m_points.front();
-    float closing = Dist(a.x, a.y, b.x, b.y);
-    m_closed = closing < 30.0f;
-    m_length = m_dist.back() + (m_closed ? closing : 0.0f);
-    printf("[Route] %zu segments, %zu points, %.0f m, %s\n", segmentCount, m_points.size(), m_length,
-           m_closed ? "closed" : "open");
+    if (found) {
+        if (m_closed)
+            m_length = m_dist.back();
+        else
+            m_length = m_dist.back();
+    } else {
+        const Point &a = m_points.back(), &b = m_points.front();
+        const float closing = Dist(a.x, a.y, b.x, b.y);
+        m_closed = closing < 30.0f;
+        m_length = m_dist.back() + (m_closed ? closing : 0.0f);
+    }
+    printf("[Route] %zu segments, %zu points, %.0f m, %s%s\n", segmentCount, m_points.size(), m_length,
+           m_closed ? "closed" : "open", found ? "" : " (order fallback)");
+    if (getenv("NFSU2_ROUTE_DEBUG")) {
+        for (size_t i = 0; i < m_points.size(); ++i)
+            printf("  p%zu %.1f %.1f\n", i, m_points[i].x, m_points[i].y);
+    }
     return true;
 }
 

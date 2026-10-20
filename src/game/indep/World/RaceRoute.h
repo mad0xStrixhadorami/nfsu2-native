@@ -13,7 +13,9 @@
 // route polyline: track 4012 closes into a 1,870 m loop matching its race record length.
 class RaceRoute {
 public:
-    bool Load(const std::vector<uint8_t> &paths);
+    // `targetLength` is the race record's length (metres); the Paths file also carries the
+    // region's other lanes/branches, so it selects the connected cycle/path of that length.
+    bool Load(const std::vector<uint8_t> &paths, float targetLength = 0.0f);
     bool Valid() const { return m_points.size() >= 2; }
     bool Closed() const { return m_closed; }
     float Length() const { return m_length; }

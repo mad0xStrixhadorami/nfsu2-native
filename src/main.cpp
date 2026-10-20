@@ -430,6 +430,8 @@ int main(int argc, char **argv)
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
+    // Dev aid: NFSU2_AI_LANE offsets the autodrive player's racing line (metres, + = left).
+    const float autoLane = getenv("NFSU2_AI_LANE") ? float(atof(getenv("NFSU2_AI_LANE"))) : 0.0f;
     // Dev aid: NFSU2_CAM_ORBIT=<degrees> swings the chase camera around the car (0 = behind,
     // 90 = right side); for inspecting the car model in the world (ISSUES #161).
     const float camOrbit = getenv("NFSU2_CAM_ORBIT") ? float(atof(getenv("NFSU2_CAM_ORBIT"))) * 0.0174532925f : 0.0f;
@@ -544,7 +546,7 @@ int main(int argc, char **argv)
         const bool reverse = !freeRoam && (startup.RaceReverse() || getenv("NFSU2_REVERSE") != nullptr);
         if (freeRoam)
             raceNumber = 0;
-        else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath))) {
+        else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath), raceConfig.trackLength)) {
             if (reverse) {
                 route.Reverse();
                 printf("[World] race %d: reverse direction\n", raceNumber);
@@ -1195,7 +1197,7 @@ int main(int argc, char **argv)
                 if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.
                     if (playerAi.Car() != &car)
-                        playerAi.Init(&car, &route, 0.0f, 1.0f, raceConfig.startS);
+                        playerAi.Init(&car, &route, autoLane, 1.0f, raceConfig.startS);
                     playerAi.SetPower(power);
                     playerAi.Update(world, dt, go && race.GetPhase() == RaceSession::kRacing);
                 } else if (physTest && go) {
