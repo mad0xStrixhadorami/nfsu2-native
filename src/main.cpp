@@ -370,6 +370,7 @@ int main(int argc, char **argv)
     std::string currentRegion;
     std::string currentHudName; // HUD package of the current world session (pushed on leaving the crib)
     int worldRaceNumber = 0; // the race the world session is running (0 = free roam)
+    bool worldRaceReverse = false; // direction the route was built with (QR setting / career slot)
     FEPackage *hud = nullptr;
     RaceSession race;
     u32 worldLastPad = 0;
@@ -499,6 +500,7 @@ int main(int argc, char **argv)
             raceConfig.route = &route;
         }
         worldRaceNumber = raceNumber;
+        worldRaceReverse = reverse;
         // Barriers the route runs through belong to other races' layouts; keep the rest (side
         // streets closed). Without a route every barrier stays. Free run opens the whole region.
         world.EnableBarriers([&](const float *bb) {
@@ -1064,7 +1066,9 @@ int main(int argc, char **argv)
                     for (size_t i = 0; i < rows.size(); ++i)
                         if (rows[i].name == "YOU")
                             place = int(i) + 1;
-                    startup.AwardCareerResult(worldRaceNumber, place, race.TotalTime());
+                    startup.AwardCareerResult(worldRaceNumber, place, race.BestLap());
+                    if (!race.IsDrift())
+                        startup.RecordQuickRaceTime(worldRaceNumber, worldRaceReverse, race.BestLap());
                     race.HideHud(); // the results panel replaces the HUD (its leftovers showed through)
                     if (hud)
                         engine->UnloadPackage(hud);

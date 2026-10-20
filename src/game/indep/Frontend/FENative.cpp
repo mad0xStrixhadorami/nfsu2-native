@@ -542,8 +542,10 @@ void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32
 void FENativeInterface::SetString(FEPackage *pkg, uint32_t objHash, const char *text)
 {
     FEObject *obj = pkg ? pkg->FindObjectByHash(objHash) : nullptr;
-    if (!obj || obj->Type != FE_String)
+    if (!obj || obj->Type != FE_String) {
+        printf("[FE] SetString %08x: no string object\n", objHash);
         return;
+    }
     FEString *s = static_cast<FEString *>(obj);
     s->SetString(text);
     s->Flags |= 0x2u | 0x400000u; // use own text, dirty

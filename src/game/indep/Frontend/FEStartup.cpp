@@ -859,9 +859,16 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     char text[32];
     snprintf(text, sizeof(text), "%.2f mi", r.length * 0.001f * 0.62137f);
     FENativeInterface::SetString(pkg, 0x080c9daa, text);
-    // Best Lap (0x0555eeca): the package ships the placeholder 01:30:04. The game reads the per-track best
-    // lap from its record table (0x4fb4ac); the port records none for Quick Race, so it shows no time.
-    FENativeInterface::SetString(pkg, 0x0555eeca, "--:--:--");
+    // Best Lap (0x0555eeca): 0x001faf90 line 114 calls 0x00272e18(0x4fb4ac, race, item+0x10).
+    // QR list items store 0 at +0x10 (0x001facc0), so the forward record is shown even when the
+    // Track Direction setting is Reverse. 0x002ef778 formats the value as mm:ss:cc.
+    const int best = m_profile.valid ? m_profile.BestTimeFor(r.number, 0) : 0;
+    if (best > 0)
+        snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
+    else
+        snprintf(text, sizeof(text), "--:--:--");
+    FENativeInterface::SetString(pkg, 0x0555eeca, text);
+    printf("[Menu] track %d best %s\n", r.number, text);
 }
 
 void FEStartupSequence::HandleQRTrackSelectMessage(uint32_t msg, FEPackage *pkg)
@@ -1799,7 +1806,8 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
         return;
-    // The world map's Previous Time (0x00272e18 over the 0x4fb4ac table). Drift events are scored by
+    // The world map's Previous Time (0x00272e18 over the 0x4fb4ac table). The table's value is the
+    // best lap (RaceSession::BestLap), matching the QR "Best Lap" label; drift events are scored by
     // points, not time (0x00272ee8), so they keep no time.
     const Career::Event *timed = Career::EventTable::Get().FindByRace(raceNumber);
     if (seconds > 0.0f && timed && timed->stage != 5) {
@@ -1841,6 +1849,20 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     printf("[Career] event %08x (race %d, type %u) P%d: +%d money +%d respect -> money %d, respect %d (%zu done)%s\n",
            ev->id, raceNumber, unsigned(ev->stage), place, money, respect, m_profile.money, m_profile.respect,
            m_profile.completedEvents.size(), place == 1 ? ", completed" : "");
+}
+
+// Quick Race also feeds the shared 0x4fb4ac table. Only modes 2/4 (Quick Race / split screen) write:
+// career results go through AwardCareerResult, and standalone/direct runs are not a player session.
+void FEStartupSequence::RecordQuickRaceTime(int raceNumber, bool reverse, float seconds)
+{
+    if (!m_profile.valid || IsCareerRun() || (m_raceMode != 2 && m_raceMode != 4))
+        return;
+    if (raceNumber <= 0 || seconds <= 0.0f)
+        return;
+    const int ms = int(seconds * 1000.0f + 0.5f);
+    m_profile.RecordTime(raceNumber, reverse ? 1 : 0, ms);
+    Career::SaveCareer(m_profile);
+    printf("[Race] best %d %s %d ms\n", raceNumber, reverse ? "reverse" : "forward", ms);
 }
 
 // UI_OptionsMain (create 0x00202428, ctor 0x00202460, AddOptions 0x00202780): an icon carousel
