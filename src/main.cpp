@@ -28,6 +28,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Career/Events.h"
+#include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/Sound/CarAudioTable.h"
@@ -192,6 +193,7 @@ int main(int argc, char **argv)
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
+        Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
@@ -235,6 +237,7 @@ int main(int argc, char **argv)
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
+        Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)
@@ -258,6 +261,22 @@ int main(int argc, char **argv)
         if (loadPkg)
             engine->UnloadPackage(loadPkg);
         startup.Start();
+    }
+
+    // NFSU2_SPONSORS=1: dump the sponsor records and each area's offers (ISSUES #165).
+    if (getenv("NFSU2_SPONSORS")) {
+        const Career::SponsorTable &t = Career::SponsorTable::Get();
+        for (int a = 0; a < 6; ++a) {
+            const Career::SponsorArea *area = t.Area(a);
+            if (!area)
+                continue;
+            printf("[Sponsors] area %d: %d sponsors\n", a, area->count);
+            for (int i = 0; i < area->count; ++i)
+                if (const Career::Sponsor *s = t.Find(area->hashes[size_t(i)]))
+                    printf("[Sponsors]   %-16s threshold %d bonus %d race purse %d\n", s->name.c_str(),
+                           area->thresholds[size_t(i)], s->signingBonus, s->racePurse);
+        }
+        fflush(stdout);
     }
 
     // NFSU2_EVENTS=1: dump the career event table (0x34a11).

@@ -1227,9 +1227,8 @@ void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
     std::vector<FEIconScroller::Def> defs;
     m_cribActions.clear();
     for (const auto &o : kOptions) {
-        // View Signed Sponsors is greyed while 0x00267920(0x4e8710) == 0 (no sponsor signed); the port has no
-        // sponsor system, so it is always greyed.
-        defs.push_back({o.tex, o.label, o.action == 5});
+        // View Signed Sponsors is greyed while 0x00267920(0x4e8710) == 0 (no sponsor signed).
+        defs.push_back({o.tex, o.label, o.action == 5 && m_profile.SignedSponsorCount() == 0});
         m_cribActions.push_back(o.action);
     }
     printf("[Career] crib: %zu options\n", defs.size());
@@ -1283,7 +1282,9 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             printf("[Career] crib: performance tuning (not ported)\n");
             break;
         case 5:
-            printf("[Career] crib: no signed sponsors\n");
+            printf("[Career] crib: signed sponsors (%d)\n", m_profile.SignedSponsorCount());
+            if (m_profile.SignedSponsorCount() > 0)
+                m_careerMenuSwitch = "UI_RewardsSponsor.fng";
             break;
         case 6:
             if (m_profile.valid && Career::SaveCareer(m_profile))
@@ -1917,8 +1918,10 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     }
     m_profile.money += money;
     m_profile.respect += respect;
-    if (place == 1)
+    if (place == 1) {
         m_profile.Complete(ev->id);
+        MaybeSignSponsor(*ev);
+    }
     Career::SaveCareer(m_profile);
 
     // (The old "stage complete when every event of its +0x0f is done" rule read +0x0f as a career
@@ -1927,6 +1930,35 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     printf("[Career] event %08x (race %d, type %u) P%d: +%d money +%d respect -> money %d, respect %d (%zu done)%s\n",
            ev->id, raceNumber, unsigned(ev->stage), place, money, respect, m_profile.money, m_profile.respect,
            m_profile.completedEvents.size(), place == 1 ? ", completed" : "");
+}
+
+// Sponsor offer after an event win (0x00268a30 -> 0x0026bc60 -> 0x00266338 / 0x002663d8 / 0x00267890).
+// The area object (profile + 0x72fc + region * 0x104) counts the completed ordinary races of the area
+// (0x002661f0: kind +0x34 == 3 and +0x0d != 1 go to the 35-slot list that 0x002660a0 counts). When the
+// area has no sponsor (+0xe8 == 0) and a sponsor's threshold (0x34a18 +0x1c) is met, one of the
+// qualifying sponsors is picked at random (0x00151f48 over the count; the float bound 0x002663d8
+// compares against is 1e9) and signed: its signing bonus (+0xc) is added to the money (0x0026bbb0 on
+// profile + 0x7154). The signing screen itself is not ported; "View Signed Sponsors" lists it.
+void FEStartupSequence::MaybeSignSponsor(const Career::Event &ev)
+{
+    if (ev.kind != 3 || ev.special || ev.region >= Career::Profile::kAreas)
+        return;
+    if (m_profile.signedSponsors[ev.region] != 0)
+        return;
+    int completed = 0;
+    for (const Career::Event &e : Career::EventTable::Get().All())
+        if (e.region == ev.region && e.kind == 3 && !e.special && m_profile.Completed(e.id))
+            ++completed;
+    const std::vector<const Career::Sponsor *> offers =
+        Career::SponsorTable::Get().Offers(ev.region, completed);
+    if (offers.empty())
+        return;
+    const Career::Sponsor *pick = offers[size_t(rand()) % offers.size()];
+    m_profile.signedSponsors[ev.region] = pick->hash;
+    m_profile.money += pick->signingBonus;
+    m_pendingSponsor = pick->hash;
+    printf("[Career] area %u: signed sponsor %s (+%d signing bonus) -> money %d\n", unsigned(ev.region),
+           pick->name.c_str(), pick->signingBonus, m_profile.money);
 }
 
 // Quick Race also feeds the shared 0x4fb4ac table. Only modes 2/4 (Quick Race / split screen) write:

@@ -9,6 +9,7 @@
 #include "game/indep/Career/Profile.h"
 #include "game/indep/Career/Memcard.h"
 #include "game/indep/Career/Events.h"
+#include "game/indep/Career/Sponsors.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
@@ -118,6 +119,8 @@ public:
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
     // its purse/respect, marking it complete on a win. Called from the results screen.
     void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f, int score = 0);
+    void MaybeSignSponsor(const Career::Event &ev); // ISSUES #165
+    uint32_t m_pendingSponsor = 0;                   // set when a win signed a sponsor
 
     // Quick Race / non-career best lap for the shared 0x4fb4ac table (0x00272e18). The track select
     // always reads the forward key (item +0x10 is 0), but reverse QR runs are stored under direction

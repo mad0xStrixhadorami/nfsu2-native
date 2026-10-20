@@ -38,6 +38,16 @@ struct Profile {
     // Completed 0x34a11 events, keyed by the record's +0x08 id - the same test 0x00268bd8 makes for
     // the world map (0x001ee590 stores the result at item index 7).
     std::vector<uint32_t> completedEvents;
+    // The signed sponsor (name hash, 0 = none) of each of the 8 area objects (+0xe8, ISSUES #165).
+    static constexpr int kAreas = 8;
+    uint32_t signedSponsors[kAreas] = {};
+    int SignedSponsorCount() const // 0x00267920
+    {
+        int n = 0;
+        for (uint32_t h : signedSponsors)
+            n += h != 0;
+        return n;
+    }
     uint32_t playTime = 0; // seconds
     // Best finishing times (the 0x4fb4ac best-time table, 0x00272e18: {race s16, direction u8, value}).
     struct BestTime {
