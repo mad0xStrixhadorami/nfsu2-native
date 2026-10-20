@@ -377,6 +377,9 @@ int main(int argc, char **argv)
     float chaseYaw = 0.0f, steer = 0.0f;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
+    // Dev aid: NFSU2_CAM_ORBIT=<degrees> swings the chase camera around the car (0 = behind,
+    // 90 = right side); for inspecting the car model in the world (ISSUES #161).
+    const float camOrbit = getenv("NFSU2_CAM_ORBIT") ? float(atof(getenv("NFSU2_CAM_ORBIT"))) * 0.0174532925f : 0.0f;
     // Music (ISSUES.md #123): starts once the boot movies are over (first main menu, or a race
     // entered directly); NFSU2_MUSIC_VOLUME scales it (0 = off,
     // which also mutes the engine).
@@ -1167,13 +1170,14 @@ int main(int argc, char **argv)
                 // Chase camera: behind and above, lagging the car's heading.
                 float diff = std::remainder(car.Yaw() - chaseYaw, 6.2831853f);
                 chaseYaw += diff * std::min(1.0f, 5.0f * dt);
-                camera.x = car.X() - std::cos(chaseYaw) * 6.5f;
-                camera.y = car.Y() - std::sin(chaseYaw) * 6.5f;
+                const float viewYaw = chaseYaw + camOrbit; // dev aid; 0 = the normal chase view
+                camera.x = car.X() - std::cos(viewYaw) * 6.5f;
+                camera.y = car.Y() - std::sin(viewYaw) * 6.5f;
                 float camGround = car.Z();
                 world.GroundHeight(camera.x, camera.y, car.Z() + 2.0f, camGround);
                 camera.z = std::max(car.Z(), camGround) + 2.3f;
-                camera.yaw = chaseYaw;
-                camera.pitch = -0.17f;
+                camera.yaw = viewYaw;
+                camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
             }
             // FEng runs on real time even while the race is paused (the pause menu animates).
             engine->Update(static_cast<i32>(std::min<Uint32>(100, now - frameStart)), 0);

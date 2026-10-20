@@ -94,7 +94,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             for (int k = 0; k < 3; ++k)
                 u0 = std::min(u0, t.v[k].u), u1 = std::max(u1, t.v[k].u), v0 = std::min(v0, t.v[k].v), v1 = std::max(v1, t.v[k].v);
         printf("[Wheel] uv range u %.3f..%.3f v %.3f..%.3f\n", u0, u1, v0, v1);
-        // outer face (y >= 0.2) and inner face (y <= 0.02), and the tread (the rest)
+        // Detailed rim face (y <= 0.02), flat backing quad (y >= 0.2) and the tread in between.
         for (int region = 0; region < 3; ++region) {
             float a0 = 1e9f, a1 = -1e9f, b0 = 1e9f, b1 = -1e9f;
             int n = 0;
@@ -107,7 +107,21 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 for (int k = 0; k < 3; ++k)
                     a0 = std::min(a0, t.v[k].u), a1 = std::max(a1, t.v[k].u), b0 = std::min(b0, t.v[k].v), b1 = std::max(b1, t.v[k].v);
             }
-            printf("[Wheel]  %s: %d tris u %.3f..%.3f v %.3f..%.3f\n", region == 0 ? "outer" : region == 1 ? "inner" : "other", n, a0, a1, b0, b1);
+            printf("[Wheel]  %s: %d tris u %.3f..%.3f v %.3f..%.3f\n", region == 0 ? "back" : region == 1 ? "rim" : "tread", n, a0, a1, b0, b1);
+        }
+        // Dev aid: NFSU2_WHEEL_DUMP=1 prints the rim/backing triangles, =2 every wheel triangle
+        // (position, UV, material slot), to check which side of the solid carries the rim face.
+        if (const char *wd = getenv("NFSU2_WHEEL_DUMP")) {
+            const int mode = atoi(wd);
+            for (const SolidMesh::Triangle &t : frontWheel->tris) {
+                const float y = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f;
+                if (mode == 1 && y < 0.2f)
+                    continue;
+                printf("[Wheel] tri y %.3f tex %d", y, int(t.tex));
+                for (int k = 0; k < 3; ++k)
+                    printf(" (%.3f %.3f %.3f uv %.3f %.3f)", t.v[k].x, t.v[k].y, t.v[k].z, t.v[k].u, t.v[k].v);
+                printf("\n");
+            }
         }
     }
     if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))
@@ -115,29 +129,44 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             printf("[Wheel] texture slot hash %08x\n", t);
     if (!rearWheel)
         rearWheel = frontWheel;
+    if (wheels && getenv("NFSU2_WHEEL_DEBUG"))
+        for (int i = 0; i < 4; ++i)
+            printf("[Wheel] slot %d x %.3f y %.3f z %.3f width %.3f radius %.3f\n", i, wheels[i].x, wheels[i].y,
+                   wheels[i].z, wheels[i].width, wheels[i].radius);
+    if (body && getenv("NFSU2_WHEEL_DEBUG"))
+        printf("[Wheel] body bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", body->bboxMin[0], body->bboxMin[1],
+               body->bboxMin[2], body->bboxMax[0], body->bboxMax[1], body->bboxMax[2]);
     m_rideHeight = 0;
     m_wheelStart = m_model.size();
     if (frontWheel && wheels) {
-        // Database placement: the wheel solid's inner face is at y = 0 and it extends outwards
-        // (+y) by about its width, so the hub goes at |y| - width / 2; right-hand wheels mirror.
+        // Database placement: the wheel solid's detailed rim face is at y ~= 0 (normal -y) and a
+        // flat backing quad at y ~= width, so the solid is a right-hand wheel (outboard -y) as
+        // authored. Mirror it on the left so the rim face stays outboard on both sides; the old
+        // code mirrored the right side instead, which pointed the rim face into the car and left
+        // the flat backing quad visible as a grey/black square (ISSUES #161). Place the wheel's
+        // outboard edge at the database track position + half the tyre width using the solid's
+        // own bounds, since its authored width differs slightly from the database figure.
         for (int i = 0; i < 4; ++i) {
             const Wheel &w = wheels[i];
-            const bool right = w.y < 0;
+            const bool left = w.y > 0;
             const SolidMesh::NamedSolid &solid = (i < 2 || !rearWheel) ? *frontWheel : *rearWheel;
-            float hub = std::fabs(w.y) - w.width * 0.5f;
-            AddWheel(solid, w.x, right ? -hub : hub, w.z, right, m_model, m_triTex);
+            const float outboard = std::fabs(w.y) + w.width * 0.5f;
+            const float yMin = solid.bboxMin[1];
+            AddWheel(solid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex);
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
         m_wheelRadius = wheels[0].radius;
     } else if (body && frontWheel) {
         float radius = (frontWheel->bboxMax[2] - frontWheel->bboxMin[2]) * 0.5f;
         float front = body->bboxMax[0] - 0.85f, rear = body->bboxMin[0] + 0.95f;
-        float side = std::max(0.3f, body->bboxMax[1] - 0.2f);
+        // No database wheel positions: put the tyres just inside the widest body point and use the
+        // same mirror/placement rule as above (rim face outboard on both sides).
+        float outboard = std::max(0.3f, body->bboxMax[1] - 0.05f);
         float z = radius;
-        AddWheel(*frontWheel, front, side - 0.2f, z, false, m_model, m_triTex);
-        AddWheel(*frontWheel, front, -side + 0.2f, z, true, m_model, m_triTex);
-        AddWheel(*rearWheel, rear, side - 0.2f, z, false, m_model, m_triTex);
-        AddWheel(*rearWheel, rear, -side + 0.2f, z, true, m_model, m_triTex);
+        AddWheel(*frontWheel, front, outboard + frontWheel->bboxMin[1], z, true, m_model, m_triTex);
+        AddWheel(*frontWheel, front, -outboard - frontWheel->bboxMin[1], z, false, m_model, m_triTex);
+        AddWheel(*rearWheel, rear, outboard + rearWheel->bboxMin[1], z, true, m_model, m_triTex);
+        AddWheel(*rearWheel, rear, -outboard - rearWheel->bboxMin[1], z, false, m_model, m_triTex);
     }
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
