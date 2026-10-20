@@ -832,6 +832,28 @@ void FEStartupSequence::HandleQRTrackSelectLoaded(FEPackage *pkg)
     RefreshTrackInfo(pkg);
 }
 
+// 0x002ef778 / 0x002ef708 format a 0x4fb4ac value: seconds = value / 4000, hundredths =
+// (value % 4000) / 4 (rounded). The English (language 0) templates selected by 0x002ef2b0 are
+// "00h:00:00" above an hour, "00:00.00" above a minute, "00.00" above a second and "0.00" below
+// (0x47cd70 / 0x47cdf0 / 0x568420 / 0x568440). The port stores milliseconds, so ms/10 is hundredths.
+static void FormatBestTime(int millis, char *out, size_t n)
+{
+    // 0x00272e18 returns 0x7fffffff when no entry exists; 0x002ef778 passes that (and 0) to
+    // 0x002ef2b0 as all-zero fields, which the English template "0.--" overwrites to "0.00".
+    if (millis <= 0) {
+        snprintf(out, n, "0.00");
+        return;
+    }
+    if (millis >= 3600000)
+        snprintf(out, n, "%02dh:%02d:%02d", millis / 3600000, millis / 60000 % 60, millis / 1000 % 60);
+    else if (millis >= 60000)
+        snprintf(out, n, "%02d:%02d.%02d", millis / 60000, millis / 1000 % 60, millis / 10 % 100);
+    else if (millis >= 1000)
+        snprintf(out, n, "%02d.%02d", millis / 1000, millis / 10 % 100);
+    else
+        snprintf(out, n, "0.%02d", millis / 10 % 100);
+}
+
 void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
 {
     if (m_tracks.empty())
@@ -874,10 +896,8 @@ void FEStartupSequence::RefreshTrackInfo(FEPackage *pkg)
     if (m_raceType == 3) {
         const int score = m_records.BestScoreFor(r.number, 0);
         snprintf(text, sizeof(text), "%d", score);
-    } else if (best > 0) {
-        snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
     } else {
-        snprintf(text, sizeof(text), "--:--:--");
+        FormatBestTime(best, text, sizeof(text));
     }
     FENativeInterface::SetString(pkg, 0x0555eeca, text);
     printf("[Menu] track %d best %s\n", r.number, text);
@@ -1399,10 +1419,7 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
         snprintf(text, sizeof(text), "%d", score);
     } else {
         const int best = r ? m_records.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0;
-        if (best > 0)
-            snprintf(text, sizeof(text), "%02d:%02d:%02d", best / 60000, best / 1000 % 60, best / 10 % 100);
-        else
-            snprintf(text, sizeof(text), "--:--:--");
+        FormatBestTime(best, text, sizeof(text));
     }
     FENativeInterface::SetString(pkg, 0x23eae8bc, text);
 }
