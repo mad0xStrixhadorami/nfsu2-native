@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/PartCatalog.h"
 
 #include <cstring>
+#include <tuple>
 #include <utility>
 
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
@@ -117,7 +118,7 @@ bool PartCatalog::Parse(const uint8_t *bundle, size_t size)
 
     const size_t numParts = partsSize / kPartRecord;
     const size_t numTypes = typesSize / 4;
-    std::map<std::pair<uint32_t, bool>, uint16_t> styles;
+    std::map<std::tuple<uint32_t, bool, uint8_t>, uint16_t> styles;
     for (size_t i = 0; i < numParts; ++i) {
         const uint8_t *r = parts + i * kPartRecord;
         const uint8_t gl = r[5];
@@ -135,6 +136,13 @@ bool PartCatalog::Parse(const uint8_t *bundle, size_t size)
             continue;
         const char *name = reinterpret_cast<const char *>(strs + size_t(nameOff) * 4);
         part.name.assign(name, strnlen(name, strsSize - size_t(nameOff) * 4));
+        // ROOF lists each scoop in three bodies: base, "NAME OFFSET" and "NAME DUAL", and the
+        // universal file names them ROOF_STYLE<NN>[_DUAL][_OFFSET]_A.  The style number restarts
+        // for each body, so strip the suffix before counting (ISSUES #186).
+        if (part.name.size() > 7 && part.name.compare(part.name.size() - 7, 7, " OFFSET") == 0)
+            part.variant = 1;
+        else if (part.name.size() > 5 && part.name.compare(part.name.size() - 5, 5, " DUAL") == 0)
+            part.variant = 2;
 
         const uint16_t attrTable = ReadU16(r + 10);
         if (attrTable != 0xffff && size_t(attrTable) * 2 + 2 <= tablesSize) {
@@ -153,7 +161,9 @@ bool PartCatalog::Parse(const uint8_t *bundle, size_t size)
         }
 
         const uint32_t typeHash = ReadU32(types + size_t(typeIndex) * 4);
-        part.style = ++styles[{typeHash, part.carbon}];
+        // Level 0 is the stock/no-part record ("NO ROOF SCOOP"); it is not a purchasable style and
+        // must not shift the geometry numbering that follows it.
+        part.style = part.level == 0 ? 0 : ++styles[{typeHash, part.carbon, part.variant}];
         m_parts[typeHash].push_back(std::move(part));
     }
     return !m_parts.empty();
@@ -214,15 +224,15 @@ uint32_t PartCatalog::PriceCategory(const CarPart &part)
         return part.group < sizeof(kGroupCategory) ? kGroupCategory[part.group] : 0;
     if (part.carbon) {
         switch (part.partId) {
-        case 9: return 0x4b;  // roof scoop
-        case 7: return 0x46;  // brakes
+        case 9: return 0x4b;  // hood
+        case 7: return 0x46;  // roof scoop
         case 0xc: return 0x4a; // spoiler
         case 0x20: return 0x45; // body kit
         default: return 0;
         }
     }
     // 0x1d is the paint colour record (its 0xebb03e66 set picks the finish); the paint screen
-    // prices those through PaintCatalog.  9 with group 5 is the stock roof scoop.
+    // prices those through PaintCatalog.  9 with group 5 is the stock hood.
     if (part.partId == 0x1d)
         return 0x21;
     if (part.partId == 9 && part.group == 5)

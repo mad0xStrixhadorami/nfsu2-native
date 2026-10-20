@@ -129,6 +129,11 @@ public:
     void SetPreviewSpoilerPart(int style, bool carbon);
     int PreviewSpoilerPart() const { return m_previewPartSpoiler; }
     bool PreviewSpoilerPartCarbon() const { return m_previewPartSpoilerCarbon; }
+    // Roof scoop / exhaust tip fitted by the Body Shop (#186).  style 0 keeps the stock part.
+    void SetPreviewRoofPart(int style, bool dual, bool offset, bool carbon);
+    int PreviewRoofPart() const { return m_previewPartRoof; }
+    void SetPreviewExhaustPart(int style);
+    int PreviewExhaustPart() const { return m_previewPartExhaust; }
     // The paint on the installed aftermarket parts (Roof Scoop / Engine Accents / Muffler Tip
     // cards, ISSUES.md #178).  index 0 keeps each part's stock colour; the sets are normally
     // PaintCatalog::kGloss / kHoses / kMufflers.
@@ -401,6 +406,9 @@ private:
     uint32_t m_previewSpoilerSet = PaintCatalog::kGloss;
     int m_previewPartSpoiler = 0;       // fitted spoiler style 1..40 (0 = stock, #185)
     bool m_previewPartSpoilerCarbon = false;
+    int m_previewPartRoof = 0;          // fitted roof scoop 1..17 (#186)
+    bool m_previewPartRoofDual = false, m_previewPartRoofOffset = false, m_previewPartRoofCarbon = false;
+    int m_previewPartExhaust = 0;       // fitted exhaust tip 1..10 (#186)
     uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)
     uint32_t m_previewRoofSet = PaintCatalog::kGloss;
     uint32_t m_previewEngine = 0; // 0 = stock engine accent colour; else 1..Count(hoses set)

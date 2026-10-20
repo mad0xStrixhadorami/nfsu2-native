@@ -19,7 +19,8 @@ struct CarPart {
     uint8_t group = 0;   // record byte +5, low 5 bits
     uint8_t level = 0;   // record byte +5, high 3 bits: the price tier (0..4)
     bool carbon = false; // has the CARBONFIBRE attribute (0xef9931bb) set
-    uint16_t style = 0;  // 1-based position among the same type and finish: the model's _STYLE%02d
+    uint8_t variant = 0; // roof scoop body: 0 base, 1 OFFSET, 2 DUAL (from the record's name suffix)
+    uint16_t style = 0;  // 1-based position among the same type, finish and variant: _STYLE%02d
 };
 
 class PartCatalog {

@@ -176,6 +176,17 @@ private:
     void RefreshPartsBrowserInfo(FEPackage *pkg);
     void BuyPartsBrowserPart(FEPackage *pkg);
     Career::OwnedCar *ShopCar();
+    // One row of the Body Shop's PARTS_ICON list: the catalogue type it came from, the record's
+    // index inside that type, and the slot card's icon (thumbnails are placeholders, #185).
+    struct PartsShopItem {
+        uint32_t type = 0;
+        uint16_t index = 0;
+        uint32_t icon = 0;
+    };
+    const CarPart *SelectedPartsShopPart() const;
+    void PreviewPartsBrowserPart(const CarPart &part);
+    void PreviewOwnedParts(const Career::OwnedCar *car);
+    static bool OwnedCarHasPart(const Career::OwnedCar &car, const CarPart &part);
     // UI_ChoosePaintCategory.fng (ctor 0x002ba798, AddOptions 0x002bb0f0): Graphics Shop's
     // Paint / Vinyls / Decals / Install Setup carousel.  The port implements the Paint branch;
     // the other three are kept visible as disabled options until their screens are ported.
@@ -203,9 +214,9 @@ private:
     // Body Shop state (#185): the selected part-slot card and the item selection inside it.
     FEIconScroller m_partsCategoryScroller; // CATEGORY_MASTER / CATEGORY_ICON
     FEIconScroller m_partsScroller;         // MINI_MASTER / PARTS_ICON
-    size_t m_partsCategorySel = 0;          // 0 Spoilers, 1 Carbon Fiber
-    size_t m_partsSel = 0;                  // selected item in m_partsShopIndex
-    std::vector<uint16_t> m_partsShopIndex; // record indices of the current card in PartCatalog
+    size_t m_partsCategorySel = 0;          // 0 Spoilers, 1 Carbon Fiber, 2 Roof Scoops, 3 Exhaust Tips
+    size_t m_partsSel = 0;                  // selected item in m_partsShopItems
+    std::vector<PartsShopItem> m_partsShopItems; // records of the current card in PartCatalog
     FEIconScroller m_paintCategoryScroller; // the four 4b4e3888..8b Graphics Shop cards
     size_t m_paintCategorySel = 0;          // 0 Paint, 1 Vinyls, 2 Decals, 3 Install Setup
     FEIconScroller m_paintScroller;    // the nine 4b4e3888..90 part cards

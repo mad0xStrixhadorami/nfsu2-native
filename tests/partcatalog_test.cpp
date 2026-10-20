@@ -49,43 +49,71 @@ void PutName(std::vector<uint8_t> &strings, const char *name)
         strings.push_back(0);
 }
 
-// Four SPOILER records: two painted styles, the first style's carbon variant, and one level-4
-// (unpriced) style.
+// Spoiler records: two painted styles, the first style's carbon variant and one level-4
+// (unpriced) style.  ROOF adds the three bodies (base / OFFSET / DUAL) plus a carbon base, and
+// EXHAUST two styles at different price tiers (ISSUES #186).
 std::vector<uint8_t> MakePack()
 {
     std::vector<uint8_t> header(0x40, 0);
-    Set32(header, 0x28, 1); // numTypes
-    Set32(header, 0x38, 4); // numParts
+    Set32(header, 0x28, 3);  // numTypes
+    Set32(header, 0x38, 12); // numParts
 
     std::vector<uint8_t> types;
     Put32(types, bStringHash("SPOILER"));
+    Put32(types, bStringHash("ROOF"));
+    Put32(types, bStringHash("EXHAUST"));
 
     std::vector<uint8_t> strings;
-    const uint16_t nameJorgen = 0;
-    PutName(strings, "JORGEN");
-    const uint16_t nameMystic = uint16_t(strings.size() / 4);
-    PutName(strings, "MYSTIC");
-    const uint16_t nameUnique = uint16_t(strings.size() / 4);
-    PutName(strings, "UNIQUE");
-    const uint16_t nameCarbon = uint16_t(strings.size() / 4);
-    PutName(strings, "JORGEN_CF");
+    auto name = [&](const char *text) {
+        const uint16_t at = uint16_t(strings.size() / 4);
+        PutName(strings, text);
+        return at;
+    };
+    const uint16_t nameJorgen = name("JORGEN");
+    const uint16_t nameMystic = name("MYSTIC");
+    const uint16_t nameUnique = name("UNIQUE");
+    const uint16_t nameCarbon = name("JORGEN_CF");
+    const uint16_t nameJetstream = name("JETSTREAM");
+    const uint16_t nameNone = name("NO ROOF SCOOP");
+    const uint16_t nameHeadwind = name("HEADWIND");
+    const uint16_t nameOffset = name("JETSTREAM OFFSET");
+    const uint16_t nameDual = name("JETSTREAM DUAL");
+    const uint16_t nameRoofCarbon = name("JETSTREAM_CF");
+    const uint16_t nameBacklash = name("BACKLASH");
+    const uint16_t nameVortex = name("VORTEX");
 
     std::vector<uint8_t> attrs;
     Put32(attrs, bStringHash("CARBONFIBRE"));
     Put32(attrs, 1);
 
-    auto part = [&](uint8_t level, uint16_t nameOff, uint16_t attrTable) {
+    auto part = [&](uint8_t id, uint8_t typeIndex, uint8_t level, uint16_t nameOff,
+                    uint16_t attrTable) {
         std::vector<uint8_t> p(14, 0);
-        p[4] = 12;                        // spoiler shop id
+        p[4] = id;
         p[5] = uint8_t((level & 7) << 5); // group 0, level
-        p[7] = 0;                         // SPOILER type index
+        p[7] = typeIndex;
         Set16(p, 8, nameOff);
         Set16(p, 10, attrTable);
         return p;
     };
     std::vector<uint8_t> parts;
-    for (const std::vector<uint8_t> &p : {part(1, nameJorgen, 0xffff), part(2, nameMystic, 0xffff),
-                                          part(1, nameCarbon, 1), part(4, nameUnique, 0xffff)})
+    // SPOILER (type 0)
+    for (const std::vector<uint8_t> &p : {part(12, 0, 1, nameJorgen, 0xffff),
+                                          part(12, 0, 2, nameMystic, 0xffff),
+                                          part(12, 0, 1, nameCarbon, 1),
+                                          part(12, 0, 4, nameUnique, 0xffff)})
+        parts.insert(parts.end(), p.begin(), p.end());
+    // ROOF (type 1): the stock record does not count, and styles restart for each body and finish.
+    for (const std::vector<uint8_t> &p : {part(7, 1, 0, nameNone, 0xffff),
+                                          part(7, 1, 1, nameJetstream, 0xffff),
+                                          part(7, 1, 1, nameHeadwind, 0xffff),
+                                          part(7, 1, 2, nameOffset, 0xffff),
+                                          part(7, 1, 3, nameDual, 0xffff),
+                                          part(7, 1, 1, nameRoofCarbon, 1)})
+        parts.insert(parts.end(), p.begin(), p.end());
+    // EXHAUST (type 2): the level is only the price tier, so the style keeps counting.
+    for (const std::vector<uint8_t> &p : {part(16, 2, 1, nameBacklash, 0xffff),
+                                          part(16, 2, 2, nameVortex, 0xffff)})
         parts.insert(parts.end(), p.begin(), p.end());
 
     // Table 0 unused; table 1 = one attribute record (CARBONFIBRE).
@@ -122,6 +150,13 @@ std::vector<uint8_t> MakePrices()
     block(0x4a, 4, 100, 1000);
     block(0x4a, 0x10, 200, 1250);
     block(0x4a, 0x1c, 300, 1500);
+    // ROOF (slot 7), its carbon category, and EXHAUST (slot 0x10).
+    block(0x14, 4, 50, 150);
+    block(0x14, 0x10, 100, 2500);
+    block(0x14, 0x1c, 150, 5000);
+    block(0x46, 4, 75, 7500);
+    block(0x15, 4, 40, 1100);
+    block(0x15, 0x10, 80, 1200);
 
     std::vector<uint8_t> payload;
     Chunk(payload, 0x34a1c, table);
@@ -148,8 +183,30 @@ int main()
         return Fail("Parse rejected the synthetic pack");
     if (cat.Count(spoiler) != 4)
         return Fail("spoiler record count");
-    if (cat.Count(bStringHash("ROOF")) != 0)
-        return Fail("absent type should be empty");
+    const uint32_t roof = bStringHash("ROOF");
+    const uint32_t exhaust = bStringHash("EXHAUST");
+    if (cat.Count(roof) != 6 || cat.Count(exhaust) != 2)
+        return Fail("roof/exhaust record counts");
+
+    // ROOF: the stock record is style 0 and the style number restarts for each body (base /
+    // OFFSET / DUAL) and finish (#186).
+    const std::vector<CarPart> &roofs = cat.Parts(roof);
+    if (roofs[0].style != 0 || roofs[0].level != 0)
+        return Fail("stock roof record has no style");
+    if (roofs[1].style != 1 || roofs[1].variant != 0 || roofs[1].carbon)
+        return Fail("first roof base style");
+    if (roofs[2].style != 2 || roofs[2].variant != 0)
+        return Fail("second roof base style");
+    if (roofs[3].style != 1 || roofs[3].variant != 1 || roofs[3].level != 2)
+        return Fail("roof OFFSET style restarts");
+    if (roofs[4].style != 1 || roofs[4].variant != 2 || roofs[4].level != 3)
+        return Fail("roof DUAL style restarts");
+    if (roofs[5].style != 1 || !roofs[5].carbon || roofs[5].variant != 0)
+        return Fail("carbon roof keeps the base style");
+    // EXHAUST: level is the price tier, so the style keeps counting across tiers.
+    const std::vector<CarPart> &exhausts = cat.Parts(exhaust);
+    if (exhausts[0].style != 1 || exhausts[1].style != 2 || exhausts[1].level != 2)
+        return Fail("exhaust style counts across price tiers");
 
     const std::vector<CarPart> &parts = cat.Parts(spoiler);
     if (parts[0].name != "JORGEN" || parts[0].partId != 12 || parts[0].level != 1 ||
@@ -175,6 +232,12 @@ int main()
         return Fail("out-of-table part id");
     if (PartCatalog::PriceCategory(parts[0]) != 0xc || PartCatalog::PriceCategory(parts[2]) != 0x4a)
         return Fail("carbon attribute switches the spoiler price category");
+    if (PartCatalog::PriceCategory(roofs[1]) != 0x14 || PartCatalog::PriceCategory(roofs[3]) != 0x14)
+        return Fail("roof scoop price category");
+    if (PartCatalog::PriceCategory(roofs[5]) != 0x46)
+        return Fail("carbon roof scoop price category");
+    if (PartCatalog::PriceCategory(exhausts[0]) != 0x15)
+        return Fail("exhaust tip price category");
 
     PartCatalog priced;
     const std::vector<uint8_t> prices = MakePrices();
@@ -186,8 +249,14 @@ int main()
         return Fail("carbon spoiler price");
     if (priced.Price(parts[3]) != 0)
         return Fail("no price for tier 4");
+    if (priced.Price(roofs[1]) != 150 || priced.Price(roofs[3]) != 2500 || priced.Price(roofs[4]) != 5000)
+        return Fail("roof scoop prices per body/tier");
+    if (priced.Price(roofs[5]) != 7500)
+        return Fail("carbon roof scoop price");
+    if (priced.Price(exhausts[0]) != 1100 || priced.Price(exhausts[1]) != 1200)
+        return Fail("exhaust tip prices per tier");
 
-    std::printf("partcatalog_test: ok (%zu spoilers, styles 1..%u)\n", parts.size(),
-                unsigned(parts.back().style));
+    std::printf("partcatalog_test: ok (%zu spoilers, styles 1..%u; %zu roofs, %zu exhausts)\n",
+                parts.size(), unsigned(parts.back().style), roofs.size(), exhausts.size());
     return 0;
 }

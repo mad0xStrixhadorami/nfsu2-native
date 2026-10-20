@@ -144,6 +144,10 @@ int main()
     p.cars[0].partPaintSet[4] = 0xda27;   // RIMS
     p.cars[0].spoiler = 17;               // Body Shop spoiler style (ISSUES #185)
     p.cars[0].spoilerCarbon = true;
+    p.cars[0].roof = 5;                   // Body Shop roof scoop / exhaust tip (ISSUES #186)
+    p.cars[0].roofDual = true;
+    p.cars[0].roofCarbon = true;
+    p.cars[0].exhaust = 7;
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
@@ -179,6 +183,9 @@ int main()
         return Fail("per-part paint must round-trip (v6)");
     if (q.cars[0].spoiler != 17 || !q.cars[0].spoilerCarbon)
         return Fail("fitted spoiler must round-trip (v7)");
+    if (q.cars[0].roof != 5 || !q.cars[0].roofDual || q.cars[0].roofOffset || !q.cars[0].roofCarbon ||
+        q.cars[0].exhaust != 7)
+        return Fail("fitted roof scoop and exhaust tip must round-trip (v8)");
 
     // Version 5: the previous layout still loads; the new per-part block stays zero.
     {
@@ -195,6 +202,9 @@ int main()
         return Fail("v5 save must have no per-part colours");
     if (v5.cars[0].spoiler != 0 || v5.cars[0].spoilerCarbon)
         return Fail("v5 save must have the stock spoiler");
+    if (v5.cars[0].roof != 0 || v5.cars[0].roofDual || v5.cars[0].roofOffset || v5.cars[0].roofCarbon ||
+        v5.cars[0].exhaust != 0)
+        return Fail("v5 save must have the stock roof scoop and exhaust tip");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {

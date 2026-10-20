@@ -22,6 +22,11 @@ struct OwnedCar {
     // tests ownership); the port only mounts spoilers so far, so one record per car covers it.
     uint8_t spoiler = 0;
     bool spoilerCarbon = false;
+    // Roof scoop and exhaust tip fitted by the Body Shop (ISSUES #186).  roof 1..17 with the three
+    // body flags (OFFSET / DUAL / carbon), exhaust 1..10; 0 keeps the stock part.
+    uint8_t roof = 0;
+    bool roofDual = false, roofOffset = false, roofCarbon = false;
+    uint8_t exhaust = 0;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

@@ -151,6 +151,17 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         installedParts.spoilerCarbon = m_previewPartSpoilerCarbon;
         installedParts.spoilerGeometry = m_readFile("CARS\\SPOILER\\GEOMETRY.BIN");
     }
+    if (m_previewPartRoof > 0) {
+        installedParts.roof = m_previewPartRoof;
+        installedParts.roofDual = m_previewPartRoofDual;
+        installedParts.roofOffset = m_previewPartRoofOffset;
+        installedParts.roofCarbon = m_previewPartRoofCarbon;
+        installedParts.roofGeometry = m_readFile("CARS\\ROOF\\GEOMETRY.BIN");
+    }
+    if (m_previewPartExhaust > 0) {
+        installedParts.exhaust = m_previewPartExhaust;
+        installedParts.exhaustGeometry = m_readFile("CARS\\EXHAUST\\GEOMETRY.BIN");
+    }
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
@@ -493,10 +504,37 @@ bool FENativeInterface::SetPreviewCar(const std::string &model)
 
 void FENativeInterface::SetPreviewSpoilerPart(int style, bool carbon)
 {
-    m_previewPartSpoiler = style > 0 ? style : 0;
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartSpoiler && carbon == m_previewPartSpoilerCarbon)
+        return;
+    m_previewPartSpoiler = style;
     m_previewPartSpoilerCarbon = carbon;
     // Rebuild so the wing changes on screen.  Before the first preview load there is nothing to
     // rebuild: the next LoadCarPreview picks the style up (ApplyOwnedCarPreview order).
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewRoofPart(int style, bool dual, bool offset, bool carbon)
+{
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartRoof && dual == m_previewPartRoofDual && offset == m_previewPartRoofOffset &&
+        carbon == m_previewPartRoofCarbon)
+        return;
+    m_previewPartRoof = style;
+    m_previewPartRoofDual = dual;
+    m_previewPartRoofOffset = offset;
+    m_previewPartRoofCarbon = carbon;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewExhaustPart(int style)
+{
+    style = style > 0 ? style : 0;
+    if (style == m_previewPartExhaust)
+        return;
+    m_previewPartExhaust = style;
     if (!m_carPreviewTris.empty())
         SetPreviewCar(m_previewCarName);
 }

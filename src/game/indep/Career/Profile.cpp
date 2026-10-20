@@ -12,8 +12,9 @@ namespace {
 constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // v2 adds the best-time direction key, v3 the drift scores, v4 the signed sponsors, v5 the paint
 // finish set of each owned car (GLOSS/METAL/PEARL, ISSUES #168), v6 the other eight UI_Paint parts
-// (Spoiler .. Muffler Tip, ISSUES #169), v7 the fitted spoiler (Body Shop, ISSUES #185).
-constexpr uint32_t kVersion = 7;
+// (Spoiler .. Muffler Tip, ISSUES #169), v7 the fitted spoiler (Body Shop, ISSUES #185), v8 the
+// fitted roof scoop and exhaust tip (#186).
+constexpr uint32_t kVersion = 8;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -113,6 +114,15 @@ std::vector<uint8_t> Serialize(const Profile &p)
         PutU32(payload, c.spoiler);
         PutU32(payload, c.spoilerCarbon ? 1 : 0);
     }
+    // v8: the fitted roof scoop and exhaust tip (#186).
+    PutU32(payload, uint32_t(p.cars.size()));
+    for (const OwnedCar &c : p.cars) {
+        PutU32(payload, c.roof);
+        PutU32(payload, c.roofDual ? 1 : 0);
+        PutU32(payload, c.roofOffset ? 1 : 0);
+        PutU32(payload, c.roofCarbon ? 1 : 0);
+        PutU32(payload, c.exhaust);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -134,7 +144,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 7) || o + size > data.size())
+    if ((version < 1 || version > 8) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -229,6 +239,22 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
                 return false;
             c.spoiler = uint8_t(spoiler);
             c.spoilerCarbon = carbon != 0;
+        }
+    }
+    if (version >= 8 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n != p.cars.size())
+            return false;
+        for (OwnedCar &c : p.cars) {
+            uint32_t roof = 0, dual = 0, offset = 0, carbon = 0, exhaust = 0;
+            if (!GetU32(payload, q, roof) || !GetU32(payload, q, dual) || !GetU32(payload, q, offset) ||
+                !GetU32(payload, q, carbon) || !GetU32(payload, q, exhaust))
+                return false;
+            c.roof = uint8_t(roof);
+            c.roofDual = dual != 0;
+            c.roofOffset = offset != 0;
+            c.roofCarbon = carbon != 0;
+            c.exhaust = uint8_t(exhaust);
         }
     }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
