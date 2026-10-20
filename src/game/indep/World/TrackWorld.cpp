@@ -396,9 +396,10 @@ void TrackWorld::EnableBarriers(const std::function<bool(const float *bbox)> &ke
 }
 
 size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
-                          SDL_Color paint, const std::vector<uint8_t> *rims, SDL_Color rimPaint)
+                          SDL_Color paint, const std::vector<uint8_t> *rims, SDL_Color rimPaint,
+                          const std::vector<uint8_t> *calipers, SDL_Color caliperPaint)
 {
-    Car car{model, textures, paint, rims, rimPaint, {}, {}, {}};
+    Car car{model, textures, paint, rims, rimPaint, calipers, caliperPaint, {}, {}, {}};
     car.order.resize(model->size());
     for (size_t i = 0; i < car.order.size(); ++i)
         car.order[i] = i;
@@ -446,6 +447,7 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.render.reserve(car.model->size());
     const bool textured = car.textures && car.textures->size() == car.model->size();
     const bool rimmed = car.rims && car.rims->size() == car.model->size();
+    const bool calipered = car.calipers && car.calipers->size() == car.model->size();
     for (size_t i : car.order) {
         const SolidMesh::Triangle &t = (*car.model)[i];
         float rgb[3];
@@ -454,6 +456,10 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             // The wheel texture's rim area is dark and would swallow the paint; draw the rim face
             // untextured so the chosen colour reads like the car-shop preview (#172).
             rgb[0] = car.rimPaint.r / 255.0f, rgb[1] = car.rimPaint.g / 255.0f, rgb[2] = car.rimPaint.b / 255.0f;
+            tex = 0;
+        } else if (calipered && (*car.calipers)[i]) {
+            rgb[0] = car.caliperPaint.r / 255.0f, rgb[1] = car.caliperPaint.g / 255.0f,
+            rgb[2] = car.caliperPaint.b / 255.0f;
             tex = 0;
         }
         Tri w;

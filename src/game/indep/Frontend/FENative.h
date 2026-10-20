@@ -95,6 +95,15 @@ public:
     }
     uint32_t PreviewRimPaint() const { return m_previewRim; }
     uint32_t PreviewRimSet() const { return m_previewRimSet; }
+    // The paint on the preview car's brake calipers (Brakes card, ISSUES #173).  index 0 keeps
+    // the stock grey calipers; the set is PaintCatalog::kBrakes.
+    void SetPreviewCaliperPaint(uint32_t set, uint32_t index)
+    {
+        m_previewCaliperSet = set ? set : PaintCatalog::kBrakes;
+        m_previewCaliper = index;
+    }
+    uint32_t PreviewCaliperPaint() const { return m_previewCaliper; }
+    uint32_t PreviewCaliperSet() const { return m_previewCaliperSet; }
     const PaintCatalog &Paint() const { return m_paint; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
@@ -316,6 +325,7 @@ private:
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
     std::vector<uint32_t> m_carPreviewSlots;            // its material slot hashes
     std::vector<uint8_t> m_carPreviewRims;              // 1 = painted rim face (#172)
+    std::vector<uint8_t> m_carPreviewCalipers;          // 1 = brake caliper (#173)
     size_t m_carPreviewWheels = SIZE_MAX;               // first wheel triangle
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
@@ -326,6 +336,8 @@ private:
     uint32_t m_previewPaintSet = PaintCatalog::kGloss; // the finish the index belongs to (#168)
     uint32_t m_previewRim = 0; // 0 = stock dark wheels; else 1..Count(kRims)
     uint32_t m_previewRimSet = PaintCatalog::kRims;
+    uint32_t m_previewCaliper = 0; // 0 = stock grey calipers; else 1..Count(kBrakes)
+    uint32_t m_previewCaliperSet = PaintCatalog::kBrakes;
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;

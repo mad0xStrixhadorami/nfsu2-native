@@ -53,7 +53,9 @@ public:
     void ClearCars();
     size_t AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
                   SDL_Color paint, const std::vector<uint8_t> *rims = nullptr,
-                  SDL_Color rimPaint = {38, 38, 38, 255});
+                  SDL_Color rimPaint = {38, 38, 38, 255},
+                  const std::vector<uint8_t> *calipers = nullptr,
+                  SDL_Color caliperPaint = {128, 128, 128, 255});
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
@@ -156,6 +158,8 @@ private:
         SDL_Color paint;
         const std::vector<uint8_t> *rims = nullptr; // 1 = painted rim face (#172)
         SDL_Color rimPaint = {38, 38, 38, 255};
+        const std::vector<uint8_t> *calipers = nullptr; // 1 = painted brake caliper (#173)
+        SDL_Color caliperPaint = {128, 128, 128, 255};
         std::vector<size_t> order;  // model triangles grouped by texture
         std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
         std::vector<RTri> render;   // same, textured and lit, in `order`

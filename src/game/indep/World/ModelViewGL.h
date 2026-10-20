@@ -13,5 +13,7 @@
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
                  float yaw, SDL_Color paint, const std::vector<uint32_t> *textures = nullptr,
                  size_t wheelsFrom = SIZE_MAX, const std::vector<uint8_t> *rimMask = nullptr,
-                 SDL_Color rimPaint = {38, 38, 38, 255}); // triangles from wheelsFrom on: dark tyres,
-                                                           // with rimMask triangles in rimPaint
+                 SDL_Color rimPaint = {38, 38, 38, 255},
+                 const std::vector<uint8_t> *caliperMask = nullptr,
+                 SDL_Color caliperPaint = {128, 128, 128, 255}); // triangles from wheelsFrom on: dark tyres,
+                                                               // rimMask in rimPaint, caliperMask in caliperPaint

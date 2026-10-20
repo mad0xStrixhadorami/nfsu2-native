@@ -682,7 +682,10 @@ int main(int argc, char **argv)
                                           SDL_Color{40, 90, 200, 255}),
                          &car.TriangleRims(),
                          fe.ColorForPaint(fe.PreviewRimSet(), fe.PreviewRimPaint(),
-                                          SDL_Color{38, 38, 38, 255}));
+                                          SDL_Color{38, 38, 38, 255}),
+                         &car.TriangleCalipers(),
+                         fe.ColorForPaint(fe.PreviewCaliperSet(), fe.PreviewCaliperPaint(),
+                                          SDL_Color{128, 128, 128, 255}));
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);
@@ -728,7 +731,9 @@ int main(int argc, char **argv)
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
-                world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5]);
+                world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5],
+                             nullptr, SDL_Color{38, 38, 38, 255}, &opponentCars[i].TriangleCalipers(),
+                             SDL_Color{128, 128, 128, 255});
                 world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + name + "\\TEXTURES.BIN").c_str()));
                 // Lane: keep each car on its own side of the route line; faster cars at the front.
                 // Resolve against lineS so a multi-lap Paths file does not place the grid on the
@@ -780,7 +785,9 @@ int main(int argc, char **argv)
                 }
                 // Cars whose model failed to load stay empty; they are still driven but invisible.
                 for (PlayerCar &c : trafficCars)
-                    world.AddCar(&c.Model(), &c.TriangleTextures(), kTrafficPaints[(&c - trafficCars.data()) % 5]);
+                    world.AddCar(&c.Model(), &c.TriangleTextures(), kTrafficPaints[(&c - trafficCars.data()) % 5],
+                                 nullptr, SDL_Color{38, 38, 38, 255}, &c.TriangleCalipers(),
+                                 SDL_Color{128, 128, 128, 255});
                 traffic.Init(&trafficNet, &trafficCars, 0x2a5eu + unsigned(raceNumber));
                 if (getenv("NFSU2_WORLD_DEBUG"))
                     for (const std::string &n : pool)

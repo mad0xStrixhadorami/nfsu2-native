@@ -59,6 +59,8 @@ public:
     const std::vector<uint32_t> &TriangleTextures() const { return m_triTex; }
     // 1 for a wheel's painted rim face, 0 for the tyre/backing/body (same size as Model()).
     const std::vector<uint8_t> &TriangleRims() const { return m_triRim; }
+    // 1 for a brake caliper, 0 for every other triangle (same size as Model()).
+    const std::vector<uint8_t> &TriangleCalipers() const { return m_triCaliper; }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
 
@@ -83,8 +85,8 @@ public:
     void ScaleSpeed(float f) { m_speed *= f; }
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
-                                                 m_rideHeight = other.m_rideHeight, m_wheelStart = other.m_wheelStart,
-                                                 m_wheelRadius = other.m_wheelRadius; }
+                                                 m_triCaliper = other.m_triCaliper, m_rideHeight = other.m_rideHeight,
+                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
 
 private:
     void UpdateEngine(float throttle, float brake, float dt, float power);
@@ -92,6 +94,7 @@ private:
     std::vector<SolidMesh::Triangle> m_model;
     std::vector<uint32_t> m_triTex;
     std::vector<uint8_t> m_triRim;
+    std::vector<uint8_t> m_triCaliper;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

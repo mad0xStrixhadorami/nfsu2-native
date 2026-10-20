@@ -179,6 +179,7 @@ private:
     void LeavePaintGrid(FEPackage *pkg, bool restorePreview);
     void ShowPaintGrid(FEPackage *pkg, bool show);
     void RefreshRimPreview(); // Rims/Spinners card -> preview wheel colour (#172)
+    void RefreshCaliperPreview(); // Brakes card -> preview caliper colour (#173)
     uint32_t PartDefaultSet(size_t part) const;
     bool CyclePaintFinish(int direction);
     void ApplyPaint(size_t part, uint32_t set, uint32_t index);
@@ -196,6 +197,8 @@ private:
     uint32_t m_gridOriginalPaint = 0;  // paint when the grid opened (grid Back restores it)
     uint32_t m_gridOriginalRimSet = 0; // preview rim finish when the grid opened
     uint32_t m_gridOriginalRim = 0;    // preview rim paint when the grid opened
+    uint32_t m_gridOriginalCaliperSet = 0; // preview caliper finish when the grid opened
+    uint32_t m_gridOriginalCaliper = 0;    // preview caliper paint when the grid opened
     uint32_t m_partSet[kPaintPartCount] = {}; // finish per card (session + saved per-car)
     uint32_t m_partSel[kPaintPartCount] = {}; // 0-based swatch per card (0 = stock/first)
     uint32_t m_partPaintIndex[kPaintPartCount] = {}; // 1-based saved paint per card (0 = stock)

@@ -192,6 +192,12 @@ void FEStartupSequence::LoadBootProfile()
         if (index >= 0)
             m_fe->SetPreviewRimPaint(PaintCatalog::kRims, uint32_t(index));
     }
+    // Dev aid: NFSU2_BRAKE_PAINT=<1..60> previews a CALIPERS colour on the brake calipers.
+    if (const char *brake = getenv("NFSU2_BRAKE_PAINT")) {
+        const int index = atoi(brake);
+        if (index >= 0)
+            m_fe->SetPreviewCaliperPaint(PaintCatalog::kBrakes, uint32_t(index));
+    }
     // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
@@ -1188,6 +1194,8 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewPaint(0);
         if (!getenv("NFSU2_RIM_PAINT"))
             m_fe->SetPreviewRimPaint(PaintCatalog::kRims, 0);
+        if (!getenv("NFSU2_BRAKE_PAINT"))
+            m_fe->SetPreviewCaliperPaint(PaintCatalog::kBrakes, 0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1504,6 +1512,7 @@ void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
     m_paintSet = m_partSet[0];
     m_paintSel = m_partSel[0];
     RefreshRimPreview();
+    RefreshCaliperPreview();
 
     // 0x002bc2f0 keeps the swatch grid closed (0x67) until Accept; the cards and OPTION_MASTER's
     // header are the screen's initial state.  The header stays "Graphics Shop" (42adb44c label
@@ -1542,6 +1551,19 @@ void FEStartupSequence::RefreshRimPreview()
                              m_partPaintIndex[part]);
 }
 
+void FEStartupSequence::RefreshCaliperPreview()
+{
+    if (const char *brake = getenv("NFSU2_BRAKE_PAINT")) {
+        const int index = atoi(brake);
+        if (index >= 0) {
+            m_fe->SetPreviewCaliperPaint(PaintCatalog::kBrakes, uint32_t(index));
+            return;
+        }
+    }
+    m_fe->SetPreviewCaliperPaint(m_partSet[6] ? m_partSet[6] : PaintCatalog::kBrakes,
+                                 m_partPaintIndex[6]);
+}
+
 void FEStartupSequence::ShowPaintGrid(FEPackage *pkg, bool show)
 {
     // 0x002bd868 reveals db285767 (grid + info strip) when a part is entered; 0x002be150 hides the
@@ -1577,6 +1599,8 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
     m_gridOriginalPaint = m_fe->PreviewPaint();
     m_gridOriginalRimSet = m_fe->PreviewRimSet();
     m_gridOriginalRim = m_fe->PreviewRimPaint();
+    m_gridOriginalCaliperSet = m_fe->PreviewCaliperSet();
+    m_gridOriginalCaliper = m_fe->PreviewCaliperPaint();
     m_paintGridActive = true;
     ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
@@ -1584,6 +1608,8 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
         m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 4 || m_paintPart == 5) // Rims/Spinners tint the wheel faces (#172)
         m_fe->SetPreviewRimPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 6) // Brakes tint the calipers (#173)
+        m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
     printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
            kPaintParts[m_paintPart].id, count);
 }
@@ -1596,6 +1622,8 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
         m_fe->SetPreviewPaint(m_gridOriginalSet, m_gridOriginalPaint);
     if (restorePreview && (m_paintPart == 4 || m_paintPart == 5))
         m_fe->SetPreviewRimPaint(m_gridOriginalRimSet, m_gridOriginalRim);
+    if (restorePreview && m_paintPart == 6)
+        m_fe->SetPreviewCaliperPaint(m_gridOriginalCaliperSet, m_gridOriginalCaliper);
     m_paintGridActive = false;
     ShowPaintGrid(pkg, false);
 }
@@ -1759,6 +1787,8 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
     else if (m_paintPart == 4 || m_paintPart == 5)
         m_fe->SetPreviewRimPaint(m_paintSet, m_paintSel + 1);
+    else if (m_paintPart == 6)
+        m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
 }
@@ -1807,6 +1837,8 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
         m_fe->SetPreviewPaint(set, index); // Base Paint tints the body
     else if (part == 4 || part == 5)
         m_fe->SetPreviewRimPaint(set, index); // Rims/Spinners tint the wheel faces (#172)
+    else if (part == 6)
+        m_fe->SetPreviewCaliperPaint(set, index); // Brakes tint the calipers (#173)
 
     if (m_careerExists && m_profile.currentCar >= 0 &&
         m_profile.currentCar < int(m_profile.cars.size())) {
@@ -2249,6 +2281,8 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     // that colour, matching the shared wheel mesh in the port (#172).
     m_fe->SetPreviewRimPaint(car.partPaintSet[3] ? car.partPaintSet[3] : PaintCatalog::kRims,
                              car.partPaint[3] ? car.partPaint[3] : car.partPaint[4]);
+    m_fe->SetPreviewCaliperPaint(car.partPaintSet[5] ? car.partPaintSet[5] : PaintCatalog::kBrakes,
+                                 car.partPaint[5]);
 }
 
 void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg)
@@ -2688,6 +2722,8 @@ bool FEStartupSequence::LoadCareerProfile()
                                   car->paint); // the career race car uses this colour (#167/#168)
             m_fe->SetPreviewRimPaint(car->partPaintSet[3] ? car->partPaintSet[3] : PaintCatalog::kRims,
                                      car->partPaint[3] ? car->partPaint[3] : car->partPaint[4]);
+            m_fe->SetPreviewCaliperPaint(car->partPaintSet[5] ? car->partPaintSet[5] : PaintCatalog::kBrakes,
+                                         car->partPaint[5]);
         }
         // Dev aid: NFSU2_EXTRA_CARS=A,B adds owned cars in memory (tests the garage car select).
         if (const char *extra = getenv("NFSU2_EXTRA_CARS")) {

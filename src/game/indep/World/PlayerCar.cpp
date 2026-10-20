@@ -46,6 +46,26 @@ void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, boo
         rim.push_back(isRim ? 1 : 0);
     }
 }
+// Brake solids are authored around their own hub like the wheels; place a copy at each wheel
+// centre, just inboard of the rim face.  Material slot 0 is the caliper, slot 1 the disc, so only
+// slot 0 gets the Brakes paint (#173).
+void AddBrake(const SolidMesh::NamedSolid &brake, float x, float y, float z, bool mirror,
+              std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex,
+              std::vector<uint8_t> &rim, std::vector<uint8_t> &caliper)
+{
+    for (const SolidMesh::Triangle &t : brake.tris) {
+        SolidMesh::Triangle b = t;
+        for (int k = 0; k < 3; ++k) {
+            b.v[k].x += x;
+            b.v[k].y = (mirror ? -t.v[k].y : t.v[k].y) + y;
+            b.v[k].z += z;
+        }
+        out.push_back(b);
+        tex.push_back(t.tex >= 0 && size_t(t.tex) < brake.textures.size() ? brake.textures[t.tex] : 0);
+        rim.push_back(0);
+        caliper.push_back(t.tex == 0 ? 1 : 0);
+    }
+}
 // Drop triangles reaching outside the part's header bounds (a guard against mis-decoded vertices;
 // with the exact strip topology, ISSUES.md #110, none are expected).
 void AddFiltered(const SolidMesh::NamedSolid &s, std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
@@ -68,9 +88,11 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_model.clear();
     m_triTex.clear();
     m_triRim.clear();
+    m_triCaliper.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
+    const SolidMesh::NamedSolid *frontBrake = nullptr, *rearBrake = nullptr;
     // Service/traffic vehicles (TAXI, BUS, ...) have no tuning kits: their parts are <NAME>_BODY_A and
     // <NAME>_TIRE_FRONT_A (ISSUES #130), so accept those when there is no KIT00 part at all.
     bool traffic = true;
@@ -90,7 +112,14 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         if (Contains(n, "FRONT_WHEEL") || Contains(n, "TIRE_FRONT")) { frontWheel = &s; continue; }
         if (Contains(n, "REAR_WHEEL") || Contains(n, "TIRE_REAR")) { rearWheel = &s; continue; }
         // Parts modelled around their own origin, or hidden inside the body.
-        if (Contains(n, "BRAKE_") || Contains(n, "SPOILER") || Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
+        if (Contains(n, "BRAKE_")) {
+            if (Contains(n, "FRONT_BRAKE"))
+                frontBrake = &s;
+            else if (Contains(n, "REAR_BRAKE"))
+                rearBrake = &s;
+            continue;
+        }
+        if (Contains(n, "SPOILER") || Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
             Contains(n, "ENGINE") || Contains(n, "AUDIO") || Contains(n, "UNLIT"))
             continue;
         if (Contains(n, "_BODY_"))
@@ -150,6 +179,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         printf("[Wheel] body bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", body->bboxMin[0], body->bboxMin[1],
                body->bboxMin[2], body->bboxMax[0], body->bboxMax[1], body->bboxMax[2]);
     m_triRim.resize(m_model.size(), 0);
+    m_triCaliper.resize(m_model.size(), 0);
     m_rideHeight = 0;
     m_wheelStart = m_model.size();
     if (frontWheel && wheels) {
@@ -182,7 +212,27 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         AddWheel(*rearWheel, rear, outboard + rearWheel->bboxMin[1], z, true, m_model, m_triTex, m_triRim);
         AddWheel(*rearWheel, rear, -outboard - rearWheel->bboxMin[1], z, false, m_model, m_triTex, m_triRim);
     }
+    // AddWheel only appends the rim mask; pad the caliper mask with the wheel triangles before the
+    // brake triangles are appended, otherwise the caliper flags shift onto the first wheel faces.
+    m_triCaliper.resize(m_model.size(), 0);
+    if (wheels && (frontBrake || rearBrake)) {
+        // The wheel face sits at its placement y; brake solids span local y -0.05..0.03, so push
+        // them 0.055 m inboard (opposite the rim face) to keep them behind the spokes.
+        for (int i = 0; i < 4; ++i) {
+            const SolidMesh::NamedSolid *brake = (i < 2 ? frontBrake : rearBrake);
+            const SolidMesh::NamedSolid *wheelSolid = (i < 2) ? frontWheel : rearWheel;
+            if (!brake || !wheelSolid)
+                continue;
+            const bool left = (i == 0 || i == 3);
+            const PlayerCar::Wheel &w = wheels[i];
+            const float outboard = std::fabs(w.y) + w.width * 0.5f;
+            const float wheelY = left ? outboard + wheelSolid->bboxMin[1] : -outboard - wheelSolid->bboxMin[1];
+            const float brakeY = left ? wheelY - 0.055f : wheelY + 0.055f;
+            AddBrake(*brake, w.x, brakeY, w.z, left, m_model, m_triTex, m_triRim, m_triCaliper);
+        }
+    }
     m_triRim.resize(m_model.size(), 0);
+    m_triCaliper.resize(m_model.size(), 0);
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }

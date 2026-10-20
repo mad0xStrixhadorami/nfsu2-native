@@ -8,7 +8,8 @@
 
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
                  float yaw, SDL_Color paint, const std::vector<uint32_t> *textures, size_t wheelsFrom,
-                 const std::vector<uint8_t> *rimMask, SDL_Color rimPaint)
+                 const std::vector<uint8_t> *rimMask, SDL_Color rimPaint,
+                 const std::vector<uint8_t> *caliperMask, SDL_Color caliperPaint)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -78,8 +79,11 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
         float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
         if (i >= wheelsFrom) {
             const bool rim = rimMask && rimMask->size() == model.size() && (*rimMask)[i];
+            const bool caliper = caliperMask && caliperMask->size() == model.size() && (*caliperMask)[i];
             if (rim)
                 rgb[0] = rimPaint.r / 255.0f, rgb[1] = rimPaint.g / 255.0f, rgb[2] = rimPaint.b / 255.0f;
+            else if (caliper)
+                rgb[0] = caliperPaint.r / 255.0f, rgb[1] = caliperPaint.g / 255.0f, rgb[2] = caliperPaint.b / 255.0f;
             else
                 rgb[0] = rgb[1] = rgb[2] = 0.09f;
         } else if (slots)
