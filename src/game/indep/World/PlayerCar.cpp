@@ -457,7 +457,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                     it == exhaust.end() ? "solid not found" : "no LEFT/RIGHT_EXHAUST marker on the bumper");
         }
     }
-    // Installed aftermarket spoiler (#181): the universal file's 40 styles are a display line-up
+    // Installed aftermarket spoiler (#182): the universal file's 40 styles are a display line-up
     // (header translations step along x/y), so the chosen solid is mounted at the base solid's
     // SPOILER marker, the same point the stock KIT00 spoiler's header transform uses.
     if (parts && parts->spoiler > 0 && !parts->spoilerGeometry.empty()) {
