@@ -679,7 +679,10 @@ int main(int argc, char **argv)
             // The career/QR paint (OwnedCar::paintSet/paint) selects a GLOBALB color (#167/#168).
             world.AddCar(&car.Model(), &car.TriangleTextures(),
                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                          SDL_Color{40, 90, 200, 255}));
+                                          SDL_Color{40, 90, 200, 255}),
+                         &car.TriangleRims(),
+                         fe.ColorForPaint(fe.PreviewRimSet(), fe.PreviewRimPaint(),
+                                          SDL_Color{38, 38, 38, 255}));
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);

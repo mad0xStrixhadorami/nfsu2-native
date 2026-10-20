@@ -21,8 +21,15 @@ bool Contains(const std::string &s, const char *part) { return s.find(part) != s
 // Wheel solids are modelled around their own hub (the attachment points come from the unported
 // car attribute data), so they are placed at estimated axle positions from the body bounds.
 void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, bool mirror,
-              std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex)
+              std::vector<SolidMesh::Triangle> &out, std::vector<uint32_t> &tex, std::vector<uint8_t> &rim)
 {
+    // The wheel solid is a single face at local y ~= 0 (tyre sidewall plus rim) backed by a quad at
+    // y ~= width.  Only the inner radial part of that face is the rim; the outer ring is the tyre
+    // sidewall and must stay dark.  The same 0.68 radius split is used for the debug dump (#161).
+    const float cx = (wheel.bboxMin[0] + wheel.bboxMax[0]) * 0.5f;
+    const float cz = (wheel.bboxMin[2] + wheel.bboxMax[2]) * 0.5f;
+    const float radius = 0.5f * std::max(wheel.bboxMax[0] - wheel.bboxMin[0], wheel.bboxMax[2] - wheel.bboxMin[2]);
+    const float rimRadius = radius * 0.68f;
     for (const SolidMesh::Triangle &t : wheel.tris) {
         SolidMesh::Triangle w = t;
         for (int k = 0; k < 3; ++k) {
@@ -30,8 +37,13 @@ void AddWheel(const SolidMesh::NamedSolid &wheel, float x, float y, float z, boo
             w.v[k].y = (mirror ? -t.v[k].y : t.v[k].y) + y;
             w.v[k].z += z;
         }
+        const float ty = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f;
+        const float tx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f - cx;
+        const float tz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f - cz;
+        const bool isRim = ty <= 0.02f && std::sqrt(tx * tx + tz * tz) <= rimRadius;
         out.push_back(w);
         tex.push_back(t.tex >= 0 && size_t(t.tex) < wheel.textures.size() ? wheel.textures[t.tex] : 0);
+        rim.push_back(isRim ? 1 : 0);
     }
 }
 // Drop triangles reaching outside the part's header bounds (a guard against mis-decoded vertices;
@@ -55,6 +67,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
 {
     m_model.clear();
     m_triTex.clear();
+    m_triRim.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
     std::set<std::string> seen;
     const SolidMesh::NamedSolid *frontWheel = nullptr, *rearWheel = nullptr, *body = nullptr;
@@ -136,6 +149,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     if (body && getenv("NFSU2_WHEEL_DEBUG"))
         printf("[Wheel] body bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", body->bboxMin[0], body->bboxMin[1],
                body->bboxMin[2], body->bboxMax[0], body->bboxMax[1], body->bboxMax[2]);
+    m_triRim.resize(m_model.size(), 0);
     m_rideHeight = 0;
     m_wheelStart = m_model.size();
     if (frontWheel && wheels) {
@@ -152,7 +166,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             const SolidMesh::NamedSolid &solid = (i < 2 || !rearWheel) ? *frontWheel : *rearWheel;
             const float outboard = std::fabs(w.y) + w.width * 0.5f;
             const float yMin = solid.bboxMin[1];
-            AddWheel(solid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex);
+            AddWheel(solid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
         m_wheelRadius = wheels[0].radius;
@@ -163,11 +177,12 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // same mirror/placement rule as above (rim face outboard on both sides).
         float outboard = std::max(0.3f, body->bboxMax[1] - 0.05f);
         float z = radius;
-        AddWheel(*frontWheel, front, outboard + frontWheel->bboxMin[1], z, true, m_model, m_triTex);
-        AddWheel(*frontWheel, front, -outboard - frontWheel->bboxMin[1], z, false, m_model, m_triTex);
-        AddWheel(*rearWheel, rear, outboard + rearWheel->bboxMin[1], z, true, m_model, m_triTex);
-        AddWheel(*rearWheel, rear, -outboard - rearWheel->bboxMin[1], z, false, m_model, m_triTex);
+        AddWheel(*frontWheel, front, outboard + frontWheel->bboxMin[1], z, true, m_model, m_triTex, m_triRim);
+        AddWheel(*frontWheel, front, -outboard - frontWheel->bboxMin[1], z, false, m_model, m_triTex, m_triRim);
+        AddWheel(*rearWheel, rear, outboard + rearWheel->bboxMin[1], z, true, m_model, m_triTex, m_triRim);
+        AddWheel(*rearWheel, rear, -outboard - rearWheel->bboxMin[1], z, false, m_model, m_triTex, m_triRim);
     }
+    m_triRim.resize(m_model.size(), 0);
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }

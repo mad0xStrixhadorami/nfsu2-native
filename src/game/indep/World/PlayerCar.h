@@ -57,6 +57,8 @@ public:
     const std::vector<SolidMesh::Triangle> &Model() const { return m_model; }
     // Texture name hash of each Model() triangle (0 = none): resolved from its part's 0x134012 list.
     const std::vector<uint32_t> &TriangleTextures() const { return m_triTex; }
+    // 1 for a wheel's painted rim face, 0 for the tyre/backing/body (same size as Model()).
+    const std::vector<uint8_t> &TriangleRims() const { return m_triRim; }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
 
@@ -80,14 +82,16 @@ public:
     void Nudge(float dx, float dy) { m_x += dx, m_y += dy; }
     void ScaleSpeed(float f) { m_speed *= f; }
     // Shares another car's assembled model (opponents of the same make).
-    void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_rideHeight = other.m_rideHeight,
-                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
+    void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
+                                                 m_rideHeight = other.m_rideHeight, m_wheelStart = other.m_wheelStart,
+                                                 m_wheelRadius = other.m_wheelRadius; }
 
 private:
     void UpdateEngine(float throttle, float brake, float dt, float power);
 
     std::vector<SolidMesh::Triangle> m_model;
     std::vector<uint32_t> m_triTex;
+    std::vector<uint8_t> m_triRim;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

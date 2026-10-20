@@ -7,7 +7,8 @@
 #include "game/indep/World/GLBridge.h"
 
 bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> &model, const SDL_Rect &pixels,
-                 float yaw, SDL_Color paint, const std::vector<uint32_t> *textures, size_t wheelsFrom)
+                 float yaw, SDL_Color paint, const std::vector<uint32_t> *textures, size_t wheelsFrom,
+                 const std::vector<uint8_t> *rimMask, SDL_Color rimPaint)
 {
     if (model.empty() || !GLBridge::Available(renderer))
         return false;
@@ -75,9 +76,13 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
             continue;
         float lit = 0.3f + 0.7f * std::fabs((nx * lx + ny * ly + nz * lz) / len);
         float rgb[3] = {paint.r / 255.0f, paint.g / 255.0f, paint.b / 255.0f};
-        if (i >= wheelsFrom)
-            rgb[0] = rgb[1] = rgb[2] = 0.09f;
-        else if (slots)
+        if (i >= wheelsFrom) {
+            const bool rim = rimMask && rimMask->size() == model.size() && (*rimMask)[i];
+            if (rim)
+                rgb[0] = rimPaint.r / 255.0f, rgb[1] = rimPaint.g / 255.0f, rgb[2] = rimPaint.b / 255.0f;
+            else
+                rgb[0] = rgb[1] = rgb[2] = 0.09f;
+        } else if (slots)
             CarMaterial::SlotColour((*textures)[i], rgb);
         glColor3ub(GLubyte(255 * rgb[0] * lit), GLubyte(255 * rgb[1] * lit), GLubyte(255 * rgb[2] * lit));
         glVertex3f(a.x, a.y, a.z);

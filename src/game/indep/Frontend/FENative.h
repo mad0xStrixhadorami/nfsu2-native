@@ -86,6 +86,15 @@ public:
     }
     uint32_t PreviewPaint() const { return m_previewPaint; }
     uint32_t PreviewPaintSet() const { return m_previewPaintSet; }
+    // The paint on the preview car's rim faces (Rims/Spinners cards, ISSUES #172).  index 0 keeps
+    // the stock dark wheels; the set is normally PaintCatalog::kRims.
+    void SetPreviewRimPaint(uint32_t set, uint32_t index)
+    {
+        m_previewRimSet = set ? set : PaintCatalog::kRims;
+        m_previewRim = index;
+    }
+    uint32_t PreviewRimPaint() const { return m_previewRim; }
+    uint32_t PreviewRimSet() const { return m_previewRimSet; }
     const PaintCatalog &Paint() const { return m_paint; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
@@ -306,6 +315,7 @@ private:
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)
     std::vector<uint32_t> m_carPreviewSlots;            // its material slot hashes
+    std::vector<uint8_t> m_carPreviewRims;              // 1 = painted rim face (#172)
     size_t m_carPreviewWheels = SIZE_MAX;               // first wheel triangle
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
@@ -314,6 +324,8 @@ private:
     std::string m_previewCarName = "SKYLINE";
     uint32_t m_previewPaint = 0; // 0 = stock; else 1..PaintCatalog::Count(set)
     uint32_t m_previewPaintSet = PaintCatalog::kGloss; // the finish the index belongs to (#168)
+    uint32_t m_previewRim = 0; // 0 = stock dark wheels; else 1..Count(kRims)
+    uint32_t m_previewRimSet = PaintCatalog::kRims;
     std::function<std::vector<uint8_t>(const char *)> m_readFile;
     struct TextScroll {
         FEObject *obj = nullptr;
