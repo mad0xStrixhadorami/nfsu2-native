@@ -165,6 +165,11 @@ private:
     // per car (#169), but the port's single-mesh car has no model for them to tint.
     void HandleCustomizeCategoryLoaded(FEPackage *pkg);
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
+    // UI_ChoosePaintCategory.fng (ctor 0x002ba798, AddOptions 0x002bb0f0): Graphics Shop's
+    // Paint / Vinyls / Decals / Install Setup carousel.  The port implements the Paint branch;
+    // the other three are kept visible as disabled options until their screens are ported.
+    void HandlePaintCategoryLoaded(FEPackage *pkg);
+    void HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg);
     void HandlePaintLoaded(FEPackage *pkg);
     void HandlePaintMessage(uint32_t msg, FEPackage *pkg);
     void RefreshPaintSwatches(FEPackage *pkg);
@@ -179,6 +184,8 @@ private:
     bool PopScreen(); // back to the package saved by NavigateTo
     static constexpr size_t kPaintPartCount = 9; // 0x002bcff8 card order
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
+    FEIconScroller m_paintCategoryScroller; // the four 4b4e3888..8b Graphics Shop cards
+    size_t m_paintCategorySel = 0;          // 0 Paint, 1 Vinyls, 2 Decals, 3 Install Setup
     FEIconScroller m_paintScroller;    // the nine 4b4e3888..90 part cards
     size_t m_paintPart = 0;            // selected card (0 Base Paint .. 8 Muffler Tip)
     bool m_paintGridActive = false;    // [0x67] in 0x002bc2f0

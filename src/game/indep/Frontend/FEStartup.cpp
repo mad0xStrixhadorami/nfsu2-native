@@ -317,6 +317,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCustomizeCategoryLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
+        HandlePaintCategoryLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_Paint.fng") == 0) {
         HandlePaintLoaded(pkg);
         return;
@@ -446,6 +450,12 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         // Pad messages are taken from the pad in Tick(); keep FEng's copies out of the scroller.
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
             HandleCustomizeCategoryMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
+        // Pad messages are taken from the pad in Tick(); keep FEng's copies out of the scroller.
+        if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandlePaintCategoryMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_Paint.fng") == 0) {
@@ -597,6 +607,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_ChoosePaintCategory.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandlePaintCategoryMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandlePaintCategoryMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandlePaintCategoryMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandlePaintCategoryMessage(kMsgPadBack, active);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -1285,7 +1307,74 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
             printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
             return;
         }
-        NavigateTo(pkg->GetName(), "UI_Paint.fng");
+        NavigateTo(pkg->GetName(), "UI_ChoosePaintCategory.fng");
+    }
+}
+
+// UI_ChoosePaintCategory.fng (ctor 0x002ba798, AddOptions 0x002bb0f0): the Graphics Shop's four
+// cards.  0x002bb0f0 adds Paint (option +0x58 = 2, +0x5c = 0), Vinyls (+0x58 = 0, +0x5c = 1),
+// Decals (+0x58 = 1, +0x5c = 2) and the Install/Purchase Setup option (+0x54 = 1).  The package
+// ships the cards transparent at 4b4e3888..8b, so bind them with their AddOptions icon/label
+// hashes.  Only Paint's destination, UI_Paint.fng, exists in the port; the other three remain
+// visible but disabled rather than opening an unimplemented screen.
+void FEStartupSequence::HandlePaintCategoryLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t tex, label;
+        bool disabled;
+        const char *debug;
+    } kOptions[] = {
+        {0x550681a4, 0x6a4c46a6, false, "Paint"},
+        {0x55778e5a, 0x78deea1c, true, "Vinyls"},
+        {0xda1dae54, 0x4e933e83, true, "Decals"},
+        // 0x002bb0f0 picks the label by game mode: 0x920dbb02 in career (DAT_00506b50 == 1),
+        // otherwise 0xd132a6fe.  The port's car-shop path is the non-career one.
+        {0x911a4ede, 0xd132a6fe, true, "Install Setup"},
+    };
+    m_paintCategorySel = std::min<size_t>(m_paintCategorySel, 3);
+    std::vector<FEIconScroller::Def> defs;
+    std::vector<FEObject *> slots;
+    for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i) {
+        defs.push_back({kOptions[i].tex, kOptions[i].label, kOptions[i].disabled});
+        slots.push_back(pkg->FindObjectByHash(0x4b4e3888u + uint32_t(i)));
+    }
+    m_paintCategoryScroller.SetupObjects(pkg, defs, slots, m_paintCategorySel, "OPTION_MASTER");
+    printf("[Customize] graphics shop: %zu cards, %s selected\n", defs.size(),
+           kOptions[m_paintCategorySel].debug);
+}
+
+void FEStartupSequence::HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_paintCategoryScroller.Empty() || m_paintCategoryScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_paintCategoryScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_paintCategoryScroller.HandleMessage(msg, 0.0f);
+        m_paintCategoryScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_paintCategoryScroller.HandleMessage(msg, 0.0f);
+        m_paintCategorySel = m_paintCategoryScroller.Selected();
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        m_paintCategorySel = m_paintCategoryScroller.Selected();
+        if (m_paintCategorySel == 0) {
+            NavigateTo(pkg->GetName(), "UI_Paint.fng");
+        } else {
+            // 0x002a45e0 maps these to UI_ChooseVinylLayer.fng / UI_DecalMain.fng; neither screen
+            // is ported yet, and Install/Purchase Setup has no ported target either.
+            printf("[Customize] graphics shop option %zu is not ported yet\n", m_paintCategorySel);
+        }
+        return;
     }
 }
 

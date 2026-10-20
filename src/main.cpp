@@ -175,6 +175,23 @@ int main(int argc, char **argv)
     fe.AddBundle(globalA.data(), globalA.size());
     fe.AddBundle(langTextures.data(), langTextures.size());
     fe.AddBundle(english.data(), english.size());
+    if (const char *lang = getenv("NFSU2_LANG")) {
+        // Dev aid: resolve comma-separated language label hashes (hex) to their text.
+        std::string list(lang);
+        size_t pos = 0;
+        while (pos < list.size()) {
+            size_t comma = list.find(',', pos);
+            std::string item = list.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+            if (!item.empty()) {
+                uint32_t h = uint32_t(strtoul(item.c_str(), nullptr, 16));
+                printf("[Lang] %08x = %s\n", h, fe.LanguageText(h).c_str());
+            }
+            if (comma == std::string::npos)
+                break;
+            pos = comma + 1;
+        }
+        fflush(stdout);
+    }
     FEngine *engine = new FEngine();
     fe.AttachEngine(engine);
     fe.SetFileReader([fs](const char *path) { return ReadGameFile(*fs, path); });
@@ -208,13 +225,29 @@ int main(int argc, char **argv)
         FEPackage *pkg = engine->PushPackage(package, 0, 0xff);
         if (!pkg)
             fprintf(stderr, "could not push %s\n", package);
-        else if (getenv("NFSU2_FETREE")) {
+        if (pkg && getenv("NFSU2_FE_SHOWALL")) {
+            // Dev aid: reveal every object in a directly pushed package (no screen handler).
+            std::function<void(FEObject *)> show = [&](FEObject *o) {
+                for (; o; o = o->GetNext()) {
+                    if (FEObjData *d = o->GetObjData())
+                        d->Col.a = 255;
+                    o->Flags &= ~1u;
+                    o->Flags |= 0x400000u;
+                    if (o->Type == FE_Group)
+                        show(static_cast<FEGroup *>(o)->GetFirstChild());
+                }
+            };
+            show(pkg->GetFirstObject());
+        }
+        if (pkg && getenv("NFSU2_FETREE")) {
             std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
                 for (; o; o = o->GetNext()) {
                     const FEObjData *d = o->GetObjData();
-                    char label[32] = "";
+                    char label[64] = "";
                     if (o->Type == FE_String)
                         snprintf(label, sizeof(label), " label %08x", static_cast<FEString *>(o)->GetLabelHash());
+                    else if (o->Type == FE_Image)
+                        snprintf(label, sizeof(label), " tex %08x", o->Handle);
                     printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x c=%u,%u,%u,%u %s%s\n", depth * 2, "",
                            o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
                            d ? d->Size.y : 0, o->Flags, d ? unsigned(d->Col.r) : 0u, d ? unsigned(d->Col.g) : 0u,
@@ -887,9 +920,11 @@ int main(int argc, char **argv)
             std::function<void(FEObject *, int, uint32_t)> dump = [&](FEObject *o, int depth, uint32_t parent) {
                 for (; o; o = o->GetNext()) {
                     const FEObjData *d = o->GetObjData();
-                    char label[32] = "";
+                    char label[64] = "";
                     if (o->Type == FE_String)
                         snprintf(label, sizeof(label), " label %08x", static_cast<FEString *>(o)->GetLabelHash());
+                    else if (o->Type == FE_Image)
+                        snprintf(label, sizeof(label), " tex %08x", o->Handle);
                     printf("[FETree] %*s%08x type %d parent %08x pos (%.0f,%.0f) size (%.1f,%.1f) flags %08x c=%u,%u,%u,%u %s%s\n", depth * 2, "",
                            o->NameHash, int(o->Type), parent, d ? d->Pos.x : 0, d ? d->Pos.y : 0, d ? d->Size.x : 0,
                            d ? d->Size.y : 0, o->Flags, d ? unsigned(d->Col.r) : 0u, d ? unsigned(d->Col.g) : 0u,
