@@ -53,6 +53,10 @@ struct Profile {
     std::string region = "L4RA"; // current region bundle
     int currentCar = 0;          // index into cars
     std::vector<OwnedCar> cars;
+    // The career item pool (0x002b5b00 tests it): owned Body Shop parts, encoded by FEStartup's
+    // PartKey (part id, style and the carbon/OFFSET/DUAL flags).  The original keeps a real item
+    // pool in the save block; this is the port's flat stand-in (ISSUES #187).
+    std::vector<uint32_t> ownedParts;
     // Completed 0x34a11 events, keyed by the record's +0x08 id - the same test 0x00268bd8 makes for
     // the world map (0x001ee590 stores the result at item index 7).
     std::vector<uint32_t> completedEvents;

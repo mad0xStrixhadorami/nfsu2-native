@@ -1424,6 +1424,50 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
 // are the package's own PART_NAME (0xd28b9316, shipped as "Wolf") and PRICE (0x380b632, "$3000")
 // strings, which 0x002a6be0 rewrites through 0x00292d00 with the "%$d" format at 0x5678f8.
 // 0x002a6fd0 also calls 0x002b2518 (the car manager) on every list step, i.e. previews the part.
+//
+// The career item pool helpers (#187).
+namespace {
+// A key packs the shop slot id, the style and the finish/body flags;
+// the original keeps a real item pool in the profile block, this is the flat stand-in.
+uint32_t MakePartKey(uint8_t partId, uint8_t style, bool carbon, uint8_t variant)
+{
+    return uint32_t(partId) | (uint32_t(style) << 8) | (carbon ? 1u << 24 : 0) |
+           (variant == 1 ? 1u << 25 : 0) | (variant == 2 ? 1u << 26 : 0);
+}
+
+uint32_t PartsShopKey(const CarPart &part)
+{
+    return MakePartKey(part.partId, uint8_t(part.style), part.carbon, part.variant);
+}
+
+bool HasOwnedPart(const Career::Profile &profile, uint32_t key)
+{
+    return std::find(profile.ownedParts.begin(), profile.ownedParts.end(), key) !=
+           profile.ownedParts.end();
+}
+
+void AddOwnedPart(Career::Profile &profile, uint32_t key)
+{
+    if (key && !HasOwnedPart(profile, key))
+        profile.ownedParts.push_back(key);
+}
+
+// Old saves (and parts fitted before #187) have no pool entry.  Preserve every part that is on the
+// car, so replacing it later does not lose the part or charge for it again.
+void RememberFittedParts(Career::Profile &profile, const Career::OwnedCar &car)
+{
+    if (car.spoiler)
+        AddOwnedPart(profile, MakePartKey(0xc, car.spoiler, car.spoilerCarbon, 0));
+    if (car.roof)
+        AddOwnedPart(profile, MakePartKey(7, car.roof, car.roofCarbon,
+                                          car.roofDual ? 2 : car.roofOffset ? 1 : 0));
+    if (car.exhaust)
+        AddOwnedPart(profile, MakePartKey(0x10, car.exhaust, false, 0));
+}
+} // namespace
+
+// Load the shared parts browser: build the slot cards and the item list, then restore the car's
+// fitted set on the preview (#185/#186).
 void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
 {
     static const struct {
@@ -1454,6 +1498,8 @@ void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
         if (FEObjData *data = info->GetObjData())
             data->Col.a = 255;
     }
+    if (const Career::OwnedCar *car = ShopCar())
+        RememberFittedParts(m_profile, *car);
     RefreshPartsBrowserList(pkg);
 }
 
@@ -1615,17 +1661,19 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
         return;
     const CarPart &part = *selected;
     Career::OwnedCar *car = ShopCar();
-    // 0x002b5b00 tests the career item pool for the part before selling it; the port only records
-    // the fitted set, so "same part is already fitted" is what "already owned" means here.
+    // 0x002b5b00 tests the career item pool for the part before selling it: an owned part can be
+    // fitted again for free, and the part already on the car is a no-op.
     if (car && OwnedCarHasPart(*car, part)) {
         printf("[PartsShop] %s L%u is already fitted\n", part.name.c_str(), unsigned(part.level));
         return;
     }
+    const uint32_t key = PartsShopKey(part);
+    const bool owned = HasOwnedPart(m_profile, key);
     const uint32_t price = m_fe->Parts().Price(part);
     // 0x002a7278 compares the career balance (0x0026bbc0) with the price (0x0026b0c8) and, when
     // it is short, opens GenericDialog_SMALL.fng (0x9f00f07).  That dialog is not ported, so the
     // port refuses the purchase and says so in the log instead.
-    if (m_profile.valid) {
+    if (!owned && car) {
         if (m_profile.money < int(price)) {
             printf("[PartsShop] %s L%u costs $%u, career has $%d\n", part.name.c_str(),
                    unsigned(part.level), price, m_profile.money);
@@ -1635,6 +1683,8 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
     }
     const char *what = "part";
     if (car) {
+        // Keep whatever was fitted before this replacement in the pool (#187).
+        RememberFittedParts(m_profile, *car);
         switch (part.partId) {
         case 0xc:
             car->spoiler = uint8_t(part.style);
@@ -1655,9 +1705,13 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
         default:
             break;
         }
+        AddOwnedPart(m_profile, key);
         if (m_profile.valid && !Career::SaveCareer(m_profile))
             printf("[PartsShop] fitted %s L%u but the save failed\n", part.name.c_str(),
                    unsigned(part.level));
+        else if (owned)
+            printf("[PartsShop] fitted %s style %u (%s L%u, owned), career $%d\n", what,
+                   unsigned(part.style), part.name.c_str(), unsigned(part.level), m_profile.money);
         else
             printf("[PartsShop] fitted %s style %u (%s L%u, $%u), career $%d\n", what,
                    unsigned(part.style), part.name.c_str(), unsigned(part.level), price,
