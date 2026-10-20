@@ -50,6 +50,12 @@ target_include_directories(paint_test PRIVATE src)
 target_link_libraries(paint_test PRIVATE bware)
 add_test(NAME paint COMMAND paint_test)
 
+# Car-part catalogue: the shop's records, style order and price tiers (#184).
+add_executable(partcatalog_test tests/partcatalog_test.cpp src/game/indep/Frontend/PartCatalog.cpp src/platform/linux/bFunkStub.cpp src/platform/linux/PlatformSystem.cpp)
+target_include_directories(partcatalog_test PRIVATE src)
+target_link_libraries(partcatalog_test PRIVATE bware)
+add_test(NAME partcatalog COMMAND partcatalog_test)
+
 # Solid-header transform: the stock spoiler's mount matrix (#175).
 add_executable(solid_test tests/solid_test.cpp src/game/indep/World/SolidMesh.cpp)
 target_include_directories(solid_test PRIVATE src)

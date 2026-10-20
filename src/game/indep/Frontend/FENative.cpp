@@ -783,8 +783,10 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
         } else if (c->id == 0x80034a10) { // car-shop price bundle: subchunk 0x34a1c (#176)
             if (m_paint.ParsePrices(c->Data(), c->size))
                 printf("[Paint] price table loaded (%zu entries)\n", m_paint.PriceEntryCount());
-        } else if (c->id == 0x80034602) { // repacked car part database: the paint/color catalog
+            m_parts.ParsePrices(c->Data(), c->size);
+        } else if (c->id == 0x80034602) { // repacked car part database: paint + shop parts
             m_paint.Parse(c->Data(), c->size);
+            m_parts.Parse(c->Data(), c->size);
             for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl,
                                  PaintCatalog::kHoses, PaintCatalog::kMufflers, PaintCatalog::kRims,
                                  PaintCatalog::kBrakes}) {
@@ -836,6 +838,20 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
     }
     if (label && size > (512 << 10))
         ShowLoadingProgress(label, 1.0f);
+
+    // The shop catalogue needs the price bundle above, so report it once every chunk is in (#184).
+    const std::vector<CarPart> &spoilers = m_parts.Parts(bStringHash("SPOILER"));
+    if (!spoilers.empty()) {
+        size_t carbon = 0;
+        for (const CarPart &part : spoilers)
+            carbon += part.carbon;
+        const CarPart &first = spoilers.front();
+        const CarPart &last = spoilers.back();
+        printf("[Parts] %zu spoiler styles (%zu carbon), first %s L%u style %u $%u, last %s L%u $%u\n",
+               spoilers.size() - carbon, carbon, first.name.c_str(), unsigned(first.level),
+               unsigned(first.style), unsigned(m_parts.Price(first)), last.name.c_str(),
+               unsigned(last.level), unsigned(m_parts.Price(last)));
+    }
 }
 
 u8 *FENativeInterface::GetPackageData(const char *name, u8 **pBlockStart, bool &bDeleteBlock)
