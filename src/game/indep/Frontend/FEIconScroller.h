@@ -24,6 +24,12 @@ public:
     // menus use OPTION_MASTER / OPTION_n, the track list uses ICON_MASTER / TRACK_ICON_n.
     void Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
                const char *masterName = "OPTION_MASTER", const char *optionPrefix = "OPTION_");
+    // Bind options to existing objects (UI_Paint.fng's 4b4e3888..4b4e3890 cards, which are created
+    // by 0x002bcff8 rather than named OPTION_n).  The cards ship invisible with alpha 0, so this
+    // gives each one its icon/name and makes it render when Position() brings it on screen.
+    void SetupObjects(FEPackage *pkg, const std::vector<Def> &defs,
+                      const std::vector<FEObject *> &slots, size_t defaultSelection,
+                      const char *masterName = "OPTION_MASTER");
     // Left/Right scroll, INITCOMPLETE header refresh, screen-tick animation. dtSeconds for ticks.
     void HandleMessage(uint32_t msg, float dtSeconds);
     // Start edge fades once the menu's intro animation has finished (0x0029dcb0 -> 0x0029d038).
@@ -41,6 +47,9 @@ private:
         int origAlpha = 255;
         bool disabled = false;
     };
+    void Bind(FEPackage *pkg, const std::vector<Def> &defs, const std::vector<FEObject *> &slots,
+              size_t defaultSelection, const char *masterName, bool focusMaster,
+              bool forceVisibleAlpha);
     void UpdateSelection();
     void Position();
 

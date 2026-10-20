@@ -13,29 +13,6 @@
 void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t defaultSelection,
                            const char *masterName, const char *optionPrefix)
 {
-    m_pkg = pkg;
-    m_options.clear();
-    // MenuScreen ctor (0x00294558): hide OL_ICON_GROUP and EA_MESSENGER_GROUP.
-    FENativeInterface::SetVisible(pkg, bStringHash("OL_ICON_GROUP"), false);
-    FENativeInterface::SetVisible(pkg, bStringHash("EA_MESSENGER_GROUP"), false);
-
-    // IconScroller ctor (0x0029c9c8): read the centre of OPTION_MASTER and hide the masters.
-    m_xCenter = m_yCenter = 0.0f;
-    m_focusObject = nullptr;
-    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash(masterName))) {
-        // 0x0029af60 scrollers keep the (hidden) master as the current button (0x002926f0 ->
-        // 0x00291ad8 -> SetCurrentButton), so its BUTTON_PRESSED response receives Accept.
-        size_t len = strlen(optionPrefix);
-        if (len && optionPrefix[len - 1] != '_')
-            m_focusObject = optMaster;
-        FENativeInterface::GetCenter(optMaster, m_xCenter, m_yCenter);
-        FENativeInterface::SetObjectVisible(optMaster, false);
-    }
-    if (FEObject *lockMaster = pkg->FindObjectByHash(bStringHash("LOCK_MASTER")))
-        FENativeInterface::SetObjectVisible(lockMaster, false);
-    if (FEObject *btnMaster = pkg->FindObjectByHash(bStringHash("BUTTON_MASTER")))
-        FENativeInterface::SetObjectVisible(btnMaster, false);
-
     // Option objects: "OPTION_1".."OPTION_n" (prefix ends in '_'), or, for scrollers built by
     // 0x0029af60, every top-level object named exactly optionPrefix, in package order (0x0029b440).
     std::vector<FEObject *> slots;
@@ -52,6 +29,45 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
             if (o->NameHash == hash)
                 slots.push_back(o);
     }
+    // 0x0029af60 scrollers keep the (hidden) master as the current button (0x002926f0 ->
+    // 0x00291ad8 -> SetCurrentButton), so its BUTTON_PRESSED response receives Accept.
+    size_t len = strlen(optionPrefix);
+    Bind(pkg, defs, slots, defaultSelection, masterName, len && optionPrefix[len - 1] != '_',
+         false);
+}
+
+void FEIconScroller::SetupObjects(FEPackage *pkg, const std::vector<Def> &defs,
+                                  const std::vector<FEObject *> &slots, size_t defaultSelection,
+                                  const char *masterName)
+{
+    // The paint cards are option objects created by the screen itself, so Accept is handled by the
+    // screen's message handler rather than the hidden OPTION_MASTER.
+    Bind(pkg, defs, slots, defaultSelection, masterName, false, true);
+}
+
+void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
+                          const std::vector<FEObject *> &slots, size_t defaultSelection,
+                          const char *masterName, bool focusMaster, bool forceVisibleAlpha)
+{
+    m_pkg = pkg;
+    m_options.clear();
+    // MenuScreen ctor (0x00294558): hide OL_ICON_GROUP and EA_MESSENGER_GROUP.
+    FENativeInterface::SetVisible(pkg, bStringHash("OL_ICON_GROUP"), false);
+    FENativeInterface::SetVisible(pkg, bStringHash("EA_MESSENGER_GROUP"), false);
+
+    // IconScroller ctor (0x0029c9c8): read the centre of OPTION_MASTER and hide the masters.
+    m_xCenter = m_yCenter = 0.0f;
+    m_focusObject = nullptr;
+    if (FEObject *optMaster = pkg->FindObjectByHash(bStringHash(masterName))) {
+        if (focusMaster)
+            m_focusObject = optMaster;
+        FENativeInterface::GetCenter(optMaster, m_xCenter, m_yCenter);
+        FENativeInterface::SetObjectVisible(optMaster, false);
+    }
+    if (FEObject *lockMaster = pkg->FindObjectByHash(bStringHash("LOCK_MASTER")))
+        FENativeInterface::SetObjectVisible(lockMaster, false);
+    if (FEObject *btnMaster = pkg->FindObjectByHash(bStringHash("BUTTON_MASTER")))
+        FENativeInterface::SetObjectVisible(btnMaster, false);
 
     float addPos = 0.0f;
     constexpr float kIconSpacing = 40.0f; // 0x42200000 at 0x0029c9c8
@@ -70,6 +86,16 @@ void FEIconScroller::Setup(FEPackage *pkg, const std::vector<Def> &defs, size_t 
         opt.xPos = addPos;
         FENativeInterface::GetSize(obj, opt.origW, opt.origH);
         opt.origAlpha = obj->GetObjData() ? int(obj->GetObjData()->Col.a) : 255;
+        if (forceVisibleAlpha) {
+            // UI_Paint.fng ships its part cards transparent (flags 0x53c80001, Col.a = 0); the
+            // screen's own card manager fills them in before showing them.
+            opt.origAlpha = 255;
+            if (FEObjData *d = obj->GetObjData()) {
+                d->Col.r = d->Col.g = d->Col.b = 255;
+                d->Col.a = 255;
+                obj->Flags |= 0x400000u;
+            }
+        }
         addPos += opt.origW + kIconSpacing;
         m_options.push_back(opt);
     }

@@ -1289,17 +1289,40 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
     }
 }
 
-// UI_Paint.fng (ctor 0x002bc1e0, AddOptions 0x002bcff8, fill 0x002bd868): the color grid for a
-// colorable part.  The package's 9 part cards (4b4e3888..4b4e3890) select Base Paint, Spoiler, Roof
-// Scoop, Mirrors, Rims, Spinners, Brakes, Engine Accents and Muffler Tip; only the body's Base Paint
-// is ported, so the cards are hidden and the 60-swatch GLOSS grid is driven directly.  The grid is
-// 3 rows of 20 (group eefb2050 under db285767), and row 1 runs right-to-left in the package.
+// UI_Paint.fng (ctor 0x002bc1e0, AddOptions 0x002bcff8, fill 0x002bd868): the paint shop's colorable
+// parts.  The package's 9 part cards (4b4e3888..4b4e3890) are a scroller (OPTION_MASTER b04669e3 at
+// 0,-150) selecting Base Paint, Spoiler, Roof Scoop, Mirrors, Rims, Spinners, Brakes, Engine Accents
+// and Muffler Tip.  Accept enters the selected part's color grid (0x002bdf10), Back leaves it
+// (0x002be150), and Back on the cards exits the screen.  The grid is 3 rows of 20 (group eefb2050
+// under db285767), and row 1 runs right-to-left in the package.  Only Base Paint is visible on the
+// port's single-mesh car; the other eight parts still store their own color per car (#169).
 namespace {
 constexpr uint32_t kPaintGridGroup = 0xdb285767;
 constexpr uint32_t kPaintSwatchGroup = 0xeefb2050;
 constexpr uint32_t kPaintInfoGroup = 0x9ff84a88;
 constexpr uint32_t kPaintHighlight = 0x23a43844;
 constexpr uint32_t kPaintColorName = 0xef653aff; // bottom-left selected-colour name (group 031a9c0a)
+
+// 0x002bcff8's part records in AddOptions order.  The icon/label hashes are the ones passed to
+// FUN_0029ae78 for each card; the part id is stored at option +0x58.
+struct PaintPartDef {
+    uint32_t id;
+    uint32_t icon;
+    uint32_t label;
+    const char *debug;
+};
+constexpr PaintPartDef kPaintParts[] = {
+    {0x3f, 0xa3b76154, 0xef5b4a75, "Base Paint"},
+    {0x45, 0xa8d7e6ed, 0xdda5b898, "Spoiler"},
+    {0x4b, 0xd2241205, 0xef644b90, "Roof Scoop"},
+    {0x4c, 0xdf5c2bca, 0x4d90f415, "Mirrors"},
+    {0x49, 0xd223f84a, 0x0f030942, "Rims"},
+    {0x4a, 0xd223f84a, 0xdd3bebf9, "Spinners"},
+    {0x46, 0x7eb55a26, 0xdacd9fff, "Brakes"},
+    {0x44, 0x4e875a92, 0x3b3bfaf0, "Engine Accents"},
+    {0x47, 0xa6343aec, 0xba1cc49c, "Muffler Tip"},
+};
+constexpr size_t kPaintPartCount = sizeof(kPaintParts) / sizeof(kPaintParts[0]);
 
 int PaintGridCol(size_t index)
 {
@@ -1334,55 +1357,118 @@ void PaintRowRange(int row, size_t count, int &lo, int &hi)
 
 void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
 {
-    // Start on the swatch the body currently wears (0 is the port's stock blue, which has no swatch).
-    // The category handler also seeds these, but doing it here keeps a direct NFSU2_PACKAGE=UI_Paint.fng
-    // launch consistent with the car in the preview.
-    m_paintOriginalSet = m_fe->PreviewPaintSet();
-    if (!m_fe->Paint().Has(m_paintOriginalSet))
-        m_paintOriginalSet = PaintCatalog::kGloss; // a set the pack does not carry
-    m_paintSet = m_paintOriginalSet;
-    m_paintOriginal = m_fe->PreviewPaint();
-    m_paintSel = m_paintOriginal > 0 && m_paintOriginal <= m_fe->Paint().Count(m_paintSet)
-                     ? m_paintOriginal - 1
-                     : 0;
+    // 0x002bcff8: add the nine part cards to the part scroller.  The package ships the cards
+    // invisible and transparent; FEIconScroller::SetupObjects fills in the icon/name and alpha.
+    std::vector<FEIconScroller::Def> defs;
+    std::vector<FEObject *> slots;
+    for (size_t i = 0; i < kPaintPartCount; ++i) {
+        defs.push_back({kPaintParts[i].icon, kPaintParts[i].label, false});
+        slots.push_back(pkg->FindObjectByHash(0x4b4e3888u + uint32_t(i)));
+    }
+    m_paintScroller.SetupObjects(pkg, defs, slots, 0, "OPTION_MASTER");
+    m_paintPart = 0;
+    m_paintGridActive = false;
 
-    // Hide the part cards and their carousel/scrollbar (the same OPTION_MASTER at (0,-150) the
-    // scroller would otherwise use).  The header stays "Graphics Shop" (the package's 42adb44c
-    // label 46c41a7c), which is the paint/vinyl shop title.
-    FENativeInterface::SetString(pkg, 0x5e7b09c9, "Base Paint"); // ICON_TITLE (part name)
-    for (uint32_t h = 0x4b4e3888; h <= 0x4b4e3890; ++h)
-        FENativeInterface::SetVisible(pkg, h, false);
-    FENativeInterface::SetVisible(pkg, bStringHash("LOCK_MASTER"), false);
-    FENativeInterface::SetVisible(pkg, bStringHash("BUTTON_MASTER"), false);
+    // Seed each card from the car the preview shows.  Base Paint comes from the preview (which the
+    // career load / car select already set); the other eight parts come from the car's saved part
+    // colours.  A stored set of 0 means the part's default finish (PaintCatalog::SetForPart).
+    const Career::OwnedCar *car = nullptr;
+    if (m_careerExists && m_profile.currentCar >= 0 &&
+        m_profile.currentCar < int(m_profile.cars.size())) {
+        const Career::OwnedCar &c = m_profile.cars[size_t(m_profile.currentCar)];
+        if (c.model == m_fe->PreviewCarName())
+            car = &c;
+    }
+    for (size_t i = 0; i < kPaintPartCount; ++i) {
+        m_partSet[i] = PartDefaultSet(i);
+        m_partSel[i] = 0;
+        if (i == 0) {
+            const uint32_t set = m_fe->PreviewPaintSet();
+            if (m_fe->Paint().Has(set))
+                m_partSet[i] = set;
+            const uint32_t paint = m_fe->PreviewPaint();
+            if (paint > 0 && paint <= m_fe->Paint().Count(m_partSet[i]))
+                m_partSel[i] = paint - 1;
+        } else if (car) {
+            const uint32_t set = car->partPaintSet[i - 1];
+            if (set && m_fe->Paint().Has(set))
+                m_partSet[i] = set;
+            const uint32_t paint = car->partPaint[i - 1];
+            if (paint > 0 && paint <= m_fe->Paint().Count(m_partSet[i]))
+                m_partSel[i] = paint - 1;
+        }
+    }
+    m_paintSet = m_partSet[0];
+    m_paintSel = m_partSel[0];
+
+    // 0x002bc2f0 keeps the swatch grid closed (0x67) until Accept; the cards and OPTION_MASTER's
+    // header are the screen's initial state.  The header stays "Graphics Shop" (42adb44c label
+    // 46c41a7c); the scroller writes the selected part's name into ICON_TITLE.
+    ShowPaintGrid(pkg, false);
     FENativeInterface::SetVisible(pkg, 0x444969fd, false); // scrollbar arrows
     FENativeInterface::SetVisible(pkg, 0x444969fe, false);
     FENativeInterface::SetVisible(pkg, 0x688a1551, false); // scrollbar backing/handle
     FENativeInterface::SetVisible(pkg, 0x3fbb7a4e, false);
-
-    // 0x002bcff8 creates the Base Paint card (part 0x3f, label ef5b4a75) with icon texture
-    // 0xa3b76154.  OPTION_MASTER is the top-centre selected-part display; the scroller would set
-    // it from the selected option, so set it directly here (the nine option cards stay hidden).
-    FENativeInterface::SetTextureHash(pkg, 0xb04669e3, 0xa3b76154);
-    if (FEObject *master = pkg->FindObjectByHash(0xb04669e3)) {
-        FENativeInterface::SetObjectVisible(master, true);
-        if (FEObjData *d = master->GetObjData()) {
-            d->Col.r = d->Col.g = d->Col.b = 255;
-            d->Col.a = 255;
-        }
-    }
-
-    // 0x002bcc68 / 0x002bd868: reveal the grid and the colour info strip.
-    if (FEObject *grid = pkg->FindObjectByHash(kPaintGridGroup)) {
-        FENativeInterface::SetObjectVisible(grid, true);
-        FENativeInterface::SetAlpha(pkg, kPaintGridGroup, 255);
-    }
-    if (FEObject *info = pkg->FindObjectByHash(kPaintInfoGroup)) {
-        FENativeInterface::SetObjectVisible(info, true);
-        FENativeInterface::SetAlpha(pkg, kPaintInfoGroup, 255);
-    }
     if (m_fe->Paint().Empty())
         printf("[Paint] no GLOBALB paint colours; the grid stays empty\n");
+    printf("[Paint] %zu part cards, 0x%08x selected\n", kPaintPartCount, kPaintParts[0].id);
+}
+
+uint32_t FEStartupSequence::PartDefaultSet(size_t part) const
+{
+    return part < kPaintPartCount ? PaintCatalog::SetForPart(kPaintParts[part].id) : 0;
+}
+
+void FEStartupSequence::ShowPaintGrid(FEPackage *pkg, bool show)
+{
+    // 0x002bd868 reveals db285767 (grid + info strip) when a part is entered; 0x002be150 hides the
+    // grid again (0xdf422345) but leaves the cards/header up.
+    if (FEObject *grid = pkg->FindObjectByHash(kPaintGridGroup)) {
+        FENativeInterface::SetObjectVisible(grid, show);
+        if (show)
+            FENativeInterface::SetAlpha(pkg, kPaintGridGroup, 255);
+    }
+    if (FEObject *info = pkg->FindObjectByHash(kPaintInfoGroup)) {
+        FENativeInterface::SetObjectVisible(info, show);
+        if (show)
+            FENativeInterface::SetAlpha(pkg, kPaintInfoGroup, 255);
+    }
+    if (!show)
+        FENativeInterface::SetVisible(pkg, kPaintHighlight, false);
+}
+
+void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
+{
+    if (m_paintPart >= kPaintPartCount)
+        return;
+    m_paintSet = m_partSet[m_paintPart] ? m_partSet[m_paintPart] : PartDefaultSet(m_paintPart);
+    if (!m_fe->Paint().Has(m_paintSet))
+        m_paintSet = PartDefaultSet(m_paintPart);
+    const size_t count = m_fe->Paint().Count(m_paintSet);
+    if (!count) {
+        printf("[Paint] %s has no colours in this pack\n", kPaintParts[m_paintPart].debug);
+        return;
+    }
+    m_paintSel = m_partSel[m_paintPart] < count ? m_partSel[m_paintPart] : 0;
+    m_gridOriginalSet = m_fe->PreviewPaintSet();
+    m_gridOriginalPaint = m_fe->PreviewPaint();
+    m_paintGridActive = true;
+    ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
+    if (m_paintPart == 0) // the other parts have no mesh to preview
+        m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
+    printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
+           kPaintParts[m_paintPart].id, count);
+}
+
+void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
+{
+    if (m_paintPart < kPaintPartCount)
+        m_partSel[m_paintPart] = m_paintSel; // the original keeps the grid's cursor per filter
+    if (m_paintPart == 0 && restorePreview)
+        m_fe->SetPreviewPaint(m_gridOriginalSet, m_gridOriginalPaint);
+    m_paintGridActive = false;
+    ShowPaintGrid(pkg, false);
 }
 
 void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
@@ -1450,22 +1536,59 @@ void FEStartupSequence::RefreshPaintLabel(FEPackage *pkg)
 
 void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
 {
-    if (msg == kMsgScreenTick || msg == kMsgInitComplete)
-        return;
-    if (msg == kMsgPadBack && !m_navPending) {
-        // Back keeps the colour and finish the screen opened with.
-        m_fe->SetPreviewPaint(m_paintOriginalSet, m_paintOriginal);
-        PopScreen();
+    if (msg == kMsgScreenTick) {
+        if (!m_paintScroller.Empty())
+            m_paintScroller.HandleMessage(msg, TickSeconds());
         return;
     }
+    if (msg == kMsgInitComplete) {
+        if (!m_paintScroller.Empty()) {
+            m_paintScroller.HandleMessage(msg, 0.0f);
+            m_paintScroller.AllowFade();
+        }
+        return;
+    }
+    if (m_paintScroller.Empty() || m_paintScroller.Package() != pkg)
+        return;
+
+    if (!m_paintGridActive) {
+        // 0x002bc2f0: while the grid is closed the d-pad drives the part-card scroller; the
+        // selected card's color set becomes the screen's current set (0x002bedd8).
+        if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+            m_paintScroller.HandleMessage(msg, 0.0f);
+            if (m_paintScroller.Selected() != m_paintPart) {
+                m_paintPart = m_paintScroller.Selected();
+                m_paintSet = m_partSet[m_paintPart];
+                m_paintSel = m_partSel[m_paintPart];
+            }
+            return;
+        }
+        if (msg == kMsgPadBack && !m_navPending) {
+            PopScreen();
+            return;
+        }
+        if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+            // 0x002bd6f0 -> 0x002bdf10.  The original can first open the parts-purchase dialog;
+            // the port has no parts economy, so every card opens its grid directly.
+            EnterPaintGrid(pkg);
+            return;
+        }
+        return;
+    }
+
     if (msg == kMsgPadLTrigger || msg == kMsgPadRTrigger) {
-        // 0x002bc2f0 only forwards the shoulder buttons while the color grid is open and the part
-        // edits one of the base-paint finishes; 0x002be5f0 then walks GLOSS/METAL/PEARL.
+        // 0x002bc2f0 forwards the shoulder buttons only while the grid is open and the part edits
+        // one of the base-paint finishes.  0x002bdf10 forces GLOSS back onto the Spoiler card if
+        // it was cycled, so finish switching is effectively Base Paint only.
+        if (m_paintPart != 0)
+            return;
         if (m_paintSet != PaintCatalog::kGloss && m_paintSet != PaintCatalog::kMetal &&
             m_paintSet != PaintCatalog::kPearl)
             return;
-        if (CyclePaintFinish(msg == kMsgPadRTrigger ? 1 : -1))
+        if (CyclePaintFinish(msg == kMsgPadRTrigger ? 1 : -1)) {
             RefreshPaintSwatches(pkg);
+            m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
+        }
         return;
     }
     const size_t count = m_fe->Paint().Count(m_paintSet);
@@ -1491,14 +1614,20 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         col = std::clamp(col, lo, hi);
         m_paintSel = uint32_t(PaintGridIndex(next, col));
     } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
-        ApplyPaint(m_paintSet, m_paintSel + 1);
-        PopScreen();
+        // 0x002bc2f0 applies the part colour and 0x002be150(0) closes the grid back to the cards.
+        ApplyPaint(m_paintPart, m_paintSet, m_paintSel + 1);
+        LeavePaintGrid(pkg, false);
+        return;
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        // 0x002be150(1): leave the grid and drop its temporary colour.
+        LeavePaintGrid(pkg, true);
         return;
     } else {
         return;
     }
     // The original previews the body colour while the swatch moves (0x002bc2f0 -> 0x002bdf10).
-    m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
+    if (m_paintPart == 0)
+        m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
 }
@@ -1536,23 +1665,37 @@ bool FEStartupSequence::CyclePaintFinish(int direction)
     return false;
 }
 
-void FEStartupSequence::ApplyPaint(uint32_t set, uint32_t index)
+void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
 {
-    m_fe->SetPreviewPaint(set, index);
-    if (m_careerExists && m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size())) {
+    if (part >= kPaintPartCount)
+        return;
+    m_partSet[part] = set;
+    m_partSel[part] = index > 0 ? index - 1 : 0;
+    if (part == 0)
+        m_fe->SetPreviewPaint(set, index); // the only part the preview car carries
+
+    if (m_careerExists && m_profile.currentCar >= 0 &&
+        m_profile.currentCar < int(m_profile.cars.size())) {
         Career::OwnedCar &car = m_profile.cars[size_t(m_profile.currentCar)];
         if (car.model == m_fe->PreviewCarName()) {
-            car.paint = index;
-            car.paintSet = set;
+            if (part == 0) {
+                car.paint = index;
+                car.paintSet = set;
+            } else {
+                car.partPaint[part - 1] = index;
+                car.partPaintSet[part - 1] = set;
+            }
             if (Career::SaveCareer(m_profile))
-                printf("[Paint] %s %u saved on %s\n", PaintCatalog::SetName(set), index,
-                       car.model.c_str());
+                printf("[Paint] %s %s %u saved on %s\n", kPaintParts[part].debug,
+                       PaintCatalog::SetName(set), index, car.model.c_str());
             else
-                printf("[Paint] %s %u applied, save failed\n", PaintCatalog::SetName(set), index);
+                printf("[Paint] %s %s %u applied, save failed\n", kPaintParts[part].debug,
+                       PaintCatalog::SetName(set), index);
             return;
         }
     }
-    printf("[Paint] %s %u applied for this session\n", PaintCatalog::SetName(set), index);
+    printf("[Paint] %s %s %u applied for this session\n", kPaintParts[part].debug,
+           PaintCatalog::SetName(set), index);
 }
 
 bool FEStartupSequence::PopScreen()

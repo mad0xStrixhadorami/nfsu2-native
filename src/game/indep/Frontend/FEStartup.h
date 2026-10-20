@@ -157,9 +157,12 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
-    // Car shop paint flow (ISSUES #167/#168): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.  The
-    // body's Base Paint edits GLOSS and cycles to METAL/PEARL with L1/R1 (0x002be5f0); the other
-    // categories and the eight other colorable parts are greyed/hidden for now.
+    // Car shop paint flow (ISSUES #167/#168): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.
+    // UI_Paint is two-state (0x002bc2f0): the nine part cards (AddOptions 0x002bcff8) select a
+    // colorable part, Accept opens that part's swatch grid (0x002bdf10), Back closes the grid
+    // (0x002be150), and Back on the cards leaves the screen.  Base Paint edits the body preview and
+    // cycles GLOSS/METAL/PEARL with L1/R1 (0x002be5f0); the other eight parts store their colour
+    // per car (#169), but the port's single-mesh car has no model for them to tint.
     void HandleCustomizeCategoryLoaded(FEPackage *pkg);
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
     void HandlePaintLoaded(FEPackage *pkg);
@@ -167,14 +170,24 @@ private:
     void RefreshPaintSwatches(FEPackage *pkg);
     void PositionPaintHighlight(FEPackage *pkg);
     void RefreshPaintLabel(FEPackage *pkg);
+    void EnterPaintGrid(FEPackage *pkg);
+    void LeavePaintGrid(FEPackage *pkg, bool restorePreview);
+    void ShowPaintGrid(FEPackage *pkg, bool show);
+    uint32_t PartDefaultSet(size_t part) const;
     bool CyclePaintFinish(int direction);
-    void ApplyPaint(uint32_t set, uint32_t index);
+    void ApplyPaint(size_t part, uint32_t set, uint32_t index);
     bool PopScreen(); // back to the package saved by NavigateTo
+    static constexpr size_t kPaintPartCount = 9; // 0x002bcff8 card order
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
+    FEIconScroller m_paintScroller;    // the nine 4b4e3888..90 part cards
+    size_t m_paintPart = 0;            // selected card (0 Base Paint .. 8 Muffler Tip)
+    bool m_paintGridActive = false;    // [0x67] in 0x002bc2f0
     uint32_t m_paintSet = 0;           // current finish set (PaintCatalog::kGloss/Metal/Pearl, #168)
     uint32_t m_paintSel = 0;           // 0-based swatch index in the current set
-    uint32_t m_paintOriginal = 0;      // paint when the screen opened (Back restores it)
-    uint32_t m_paintOriginalSet = 0;   // finish when the screen opened (Back restores it)
+    uint32_t m_gridOriginalSet = 0;    // finish when the grid opened (grid Back restores it)
+    uint32_t m_gridOriginalPaint = 0;  // paint when the grid opened (grid Back restores it)
+    uint32_t m_partSet[kPaintPartCount] = {}; // finish per card (session + saved per-car)
+    uint32_t m_partSel[kPaintPartCount] = {}; // 0-based swatch per card (0 = stock/first)
     bool m_careerExists = false; // DAT_004f0e70: a saved career is present
     bool m_cribRequested = false; // the next world session opens in UI_CareerCrib.fng
     void HandleStartCareerLoaded(FEPackage *pkg);

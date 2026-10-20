@@ -51,6 +51,39 @@ std::vector<uint8_t> MakeV1Save()
     return out;
 }
 
+// A version-5 save (the #168 layout: body paint + finish set, no per-part block).
+std::vector<uint8_t> MakeV5Save()
+{
+    std::vector<uint8_t> payload;
+    PutStr(payload, "V5");
+    PutU32(payload, 700);
+    PutU32(payload, 70);
+    PutU32(payload, 0); // stage
+    PutStr(payload, "L4RA");
+    PutU32(payload, 0); // currentCar
+    PutU32(payload, 0); // playTime
+    PutU32(payload, 1); // cars
+    PutStr(payload, "SKYLINE");
+    PutU32(payload, 9); // paint
+    PutU32(payload, 0); // completed events
+    PutU32(payload, 0); // best times
+    PutU32(payload, 0); // best scores (v3)
+    for (int i = 0; i < 8; ++i)
+        PutU32(payload, 0); // signed sponsors (v4)
+    PutU32(payload, 1);          // paint-set array (v5)
+    PutU32(payload, 0x3437a52);  // METAL
+
+    uint32_t sum = 0;
+    for (uint8_t c : payload)
+        sum = sum * 31 + c;
+    std::vector<uint8_t> out = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
+    PutU32(out, 5);
+    PutU32(out, uint32_t(payload.size()));
+    PutU32(out, sum);
+    out.insert(out.end(), payload.begin(), payload.end());
+    return out;
+}
+
 // A version-2 save (direction-keyed best times, no score list). The v3 loader must still read it.
 std::vector<uint8_t> MakeV2Save()
 {
@@ -99,14 +132,16 @@ int main()
     fs::create_directories(dir, ec);
     setenv("NFSU2_MEMCARD", dir.c_str(), 1);
 
-    // Version 5 round-trip: forward and reverse best times are separate keys, the smaller time wins
+    // Version 6 round-trip: forward and reverse best times are separate keys, the smaller time wins
     // within a key, drift scores keep the larger value under the same direction key, and each car
-    // keeps its paint index plus finish set (#167/#168).
+    // keeps its paint index plus finish set (#167/#168) and the other eight UI_Paint parts (#169).
     Career::Profile p;
     p.name = "TEST";
     p.cars.push_back({"SKYLINE", 0});
     p.cars[0].paint = 17;                 // GLOBALB colour index (ISSUES #167)
     p.cars[0].paintSet = 0x3437a52;       // METAL (ISSUES #168)
+    p.cars[0].partPaint[4] = 23;          // Spinners, card 5 -> array 4 (ISSUES #169)
+    p.cars[0].partPaintSet[4] = 0xda27;   // RIMS
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
     p.RecordTime(4012, 1, 89000);
@@ -138,6 +173,22 @@ int main()
         return Fail("signed sponsors must round-trip (v4)");
     if (q.cars.size() != 1 || q.cars[0].paint != 17 || q.cars[0].paintSet != 0x3437a52)
         return Fail("body paint index and finish set must round-trip (v5)");
+    if (q.cars[0].partPaint[4] != 23 || q.cars[0].partPaintSet[4] != 0xda27)
+        return Fail("per-part paint must round-trip (v6)");
+
+    // Version 5: the previous layout still loads; the new per-part block stays zero.
+    {
+        const std::vector<uint8_t> old = MakeV5Save();
+        std::ofstream out((dir / "V5.SAV").string(), std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(old.data()), std::streamsize(old.size()));
+    }
+    Career::Profile v5;
+    if (!Career::LoadCareer(v5, "V5"))
+        return Fail("v5 load failed");
+    if (v5.cars.size() != 1 || v5.cars[0].paint != 9 || v5.cars[0].paintSet != 0x3437a52)
+        return Fail("v5 body paint mismatch");
+    if (v5.cars[0].partPaint[0] != 0 || v5.cars[0].partPaintSet[0] != 0)
+        return Fail("v5 save must have no per-part colours");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {
