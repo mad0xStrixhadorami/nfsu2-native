@@ -53,10 +53,11 @@ std::vector<uint8_t> MakePack()
     Put32(types, bStringHash("PAINT"));
 
     std::vector<uint8_t> part(14, 0);
-    part[4] = 48; // part id
-    part[7] = 0;  // PAINT type index
-    Set16(part, 8, 0);  // name offset (u16 units)
-    Set16(part, 10, 1); // attribute table offset (u16 units)
+    part[4] = 48;           // part id
+    part[5] = 1 << 5;       // group | level: GLOSS is L1 (0x0026b0c8 price tier)
+    part[7] = 0;            // PAINT type index
+    Set16(part, 8, 0);      // name offset (u16 units)
+    Set16(part, 10, 1);     // attribute table offset (u16 units)
 
     std::vector<uint8_t> attrs;
     const uint32_t finishAttr = 0xebb03e66;
@@ -113,7 +114,8 @@ int main()
     if (cat.Count(PaintCatalog::kGloss) != 1)
         return Fail("expected one GLOSS colour");
     const PaintColor &c = cat.At(PaintCatalog::kGloss, 0);
-    if (c.name != "GLOSS_TEST_COLOR" || c.r != 10 || c.g != 20 || c.b != 30 || c.gloss != 200)
+    if (c.name != "GLOSS_TEST_COLOR" || c.r != 10 || c.g != 20 || c.b != 30 || c.gloss != 200 ||
+        c.level != 1)
         return Fail("colour fields mismatch");
 
     // AddBundle may hand Parse the 0x80034602 payload directly (no wrapper chunk).
@@ -168,6 +170,47 @@ int main()
         std::strcmp(PaintCatalog::SetName(PaintCatalog::kMufflers), "High Heat") != 0 ||
         std::strcmp(PaintCatalog::SetName(PaintCatalog::kBrakes), "High Heat") != 0)
         return Fail("finish label mismatch");
+
+    // 0x0026fdb0 / 0x0026b0c8: GLOBALB 0x34a1c stores 40-byte price entries, one per category;
+    // the L1/L2/L3 tier blocks are at +4/+0x10/+0x1c and the u16 at block+2 is the price.
+    std::vector<uint8_t> prices(86 * 40, 0);
+    auto tier = [&prices](uint32_t category, int level, uint16_t price) {
+        const size_t block = level == 1 ? 4 : level == 2 ? 0x10 : 0x1c;
+        Set16(prices, (category - 1) * 40 + block + 2, price);
+    };
+    tier(0x25, 1, 200); // Base Paint GLOSS L1
+    tier(0x25, 2, 400);
+    tier(0x25, 3, 800);
+    tier(0x26, 2, 400); // Base Paint METAL L2
+    tier(0x4d, 1, 100); // Rims paint
+    tier(0x50, 1, 100); // Spoiler paint
+
+    std::vector<uint8_t> pricePayload;
+    Chunk(pricePayload, 0x34a1c, prices);
+
+    PaintCatalog priceCat;
+    // AddBundle passes the 0x80034a10 payload, not the wrapper chunk.
+    if (!priceCat.ParsePrices(pricePayload.data(), pricePayload.size()))
+        return Fail("price table did not parse");
+    if (priceCat.PriceEntryCount() != 86)
+        return Fail("expected 86 price entries");
+    if (priceCat.Price(0x3f, PaintCatalog::kGloss, c) != 200)
+        return Fail("GLOSS L1 price mismatch");
+
+    PaintColor metalColor;
+    metalColor.level = 2;
+    if (priceCat.Price(0x3f, PaintCatalog::kMetal, metalColor) != 400)
+        return Fail("METAL L2 price mismatch");
+
+    PaintColor partsColor;
+    partsColor.level = 1;
+    if (priceCat.Price(0x49, PaintCatalog::kRims, partsColor) != 100 ||
+        priceCat.Price(0x45, PaintCatalog::kGloss, partsColor) != 100)
+        return Fail("paint-part price mismatch");
+
+    PaintCatalog noPrices;
+    if (noPrices.Price(0x3f, PaintCatalog::kGloss, c) != 0)
+        return Fail("a catalog without prices must return zero");
 
     std::printf("paint_test: passed (%zu GLOSS colours)\n", cat.Count(PaintCatalog::kGloss));
     return 0;

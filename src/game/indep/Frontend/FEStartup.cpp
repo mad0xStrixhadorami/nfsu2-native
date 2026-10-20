@@ -1424,6 +1424,8 @@ constexpr uint32_t kPaintSwatchGroup = 0xeefb2050;
 constexpr uint32_t kPaintInfoGroup = 0x9ff84a88;
 constexpr uint32_t kPaintHighlight = 0x23a43844;
 constexpr uint32_t kPaintColorName = 0xef653aff; // bottom-left selected-colour name (group 031a9c0a)
+constexpr uint32_t kPaintCost = 0x2f5e7da3;      // total-cost value, set by 0x002bb0a0 (#176)
+constexpr uint32_t kPaintPartPrice = 0x0013c45e; // "CASH" text used as the part price (0x002bdf10)
 
 // 0x002bcff8's part records in AddOptions order.  The icon/label hashes are the ones passed to
 // FUN_0029ae78 for each card; the part id is stored at option +0x58.
@@ -1536,6 +1538,7 @@ void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
     // header are the screen's initial state.  The header stays "Graphics Shop" (42adb44c label
     // 46c41a7c); the scroller writes the selected part's name into ICON_TITLE.
     ShowPaintGrid(pkg, false);
+    RefreshPaintCost(pkg);
     FENativeInterface::SetVisible(pkg, 0x444969fd, false); // scrollbar arrows
     FENativeInterface::SetVisible(pkg, 0x444969fe, false);
     FENativeInterface::SetVisible(pkg, 0x688a1551, false); // scrollbar backing/handle
@@ -1682,6 +1685,7 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
         m_fe->SetPreviewSpoilerPaint(m_gridOriginalSpoilerSet, m_gridOriginalSpoiler);
     m_paintGridActive = false;
     ShowPaintGrid(pkg, false);
+    RefreshPaintCost(pkg);
 }
 
 void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
@@ -1713,6 +1717,7 @@ void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
     }
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
+    RefreshPaintCost(pkg);
 }
 
 void FEStartupSequence::PositionPaintHighlight(FEPackage *pkg)
@@ -1745,6 +1750,25 @@ void FEStartupSequence::RefreshPaintLabel(FEPackage *pkg)
     char text[48];
     snprintf(text, sizeof(text), "%s %02u", PaintCatalog::SetName(m_paintSet), unsigned(m_paintSel + 1));
     FENativeInterface::SetString(pkg, kPaintColorName, text);
+}
+
+void FEStartupSequence::RefreshPaintCost(FEPackage *pkg)
+{
+    // 0x002b3e10 sums the pending parts and 0x002bb0a0 writes the result to 0x2f5e7da3; 0x002bdf10
+    // also writes the highlighted part's own price to the "CASH" text (bStringHash("CASH") =
+    // 0x0013c45e, format "%$d") and shows it, while 0x002be150 hides that row again.  The port has
+    // no purchase/economy path yet, so the highlighted colour's price (0x0026b0c8) stands in for
+    // both fields while the swatch grid is open.
+    unsigned price = 0;
+    if (m_paintGridActive && m_paintPart < kPaintPartCount) {
+        const PaintColor &color = m_fe->Paint().At(m_paintSet, m_paintSel);
+        price = m_fe->Paint().Price(kPaintParts[m_paintPart].id, m_paintSet, color);
+    }
+    char text[16];
+    snprintf(text, sizeof(text), "%05u", price);
+    FENativeInterface::SetString(pkg, kPaintCost, text);
+    FENativeInterface::SetString(pkg, kPaintPartPrice, text);
+    FENativeInterface::SetVisible(pkg, kPaintPartPrice, m_paintGridActive);
 }
 
 void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
@@ -1851,6 +1875,7 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
+    RefreshPaintCost(pkg);
 }
 
 bool FEStartupSequence::CyclePaintFinish(int direction)

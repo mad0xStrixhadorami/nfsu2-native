@@ -766,6 +766,9 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 m_carTable[key] = rec;
                 m_carRoster.push_back(key);
             }
+        } else if (c->id == 0x80034a10) { // car-shop price bundle: subchunk 0x34a1c (#176)
+            if (m_paint.ParsePrices(c->Data(), c->size))
+                printf("[Paint] price table loaded (%zu entries)\n", m_paint.PriceEntryCount());
         } else if (c->id == 0x80034602) { // repacked car part database: the paint/color catalog
             m_paint.Parse(c->Data(), c->size);
             for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl,

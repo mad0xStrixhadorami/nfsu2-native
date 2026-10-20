@@ -22,6 +22,7 @@ struct PaintColor {
     std::string name; // e.g. GLOSS_L1_COLOR01
     uint8_t r = 0, g = 0, b = 0;
     uint8_t gloss = 128;
+    uint8_t level = 0; // part-record group/level byte >> 5 (1..3); selects a price tier
 };
 
 class PaintCatalog {
@@ -45,6 +46,15 @@ public:
     // all sets are absent; the catalog then stays empty and the port keeps its stock paint.
     bool Parse(const uint8_t *bundle, size_t size);
 
+    // GLOBALB chunk 0x80034a10 holds the car-shop price table (subchunk 0x34a1c).  The paint
+    // screen's 0x002b3e10 sums the pending part prices and 0x002bb0a0 writes them to the total.
+    bool ParsePrices(const uint8_t *bundle, size_t size);
+    // 0x0026b0c8 / 0x00270888 / 0x00270228: price of painting a shop part (0x3f, 0x44..0x4c)
+    // with this colour.  The colour's level picks the L1/L2/L3 tier.
+    uint16_t Price(uint32_t shopPartId, uint32_t set, const PaintColor &color) const;
+    static uint32_t PriceCategory(uint32_t shopPartId, uint32_t set);
+    size_t PriceEntryCount() const { return m_priceTable.size() / 40; }
+
     bool Empty() const { return m_sets.empty(); }
     bool Has(uint32_t set) const;
     size_t Count(uint32_t set) const;
@@ -53,4 +63,5 @@ public:
 
 private:
     std::map<uint32_t, std::vector<PaintColor>> m_sets; // catalog order == swatch order
+    std::vector<uint8_t> m_priceTable;                  // 0x34a1c: 40-byte entries, entry-1 index
 };

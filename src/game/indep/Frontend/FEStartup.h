@@ -175,6 +175,7 @@ private:
     void RefreshPaintSwatches(FEPackage *pkg);
     void PositionPaintHighlight(FEPackage *pkg);
     void RefreshPaintLabel(FEPackage *pkg);
+    void RefreshPaintCost(FEPackage *pkg); // 0x002b3e10/0x002bb0a0 total-cost field (#176)
     void EnterPaintGrid(FEPackage *pkg);
     void LeavePaintGrid(FEPackage *pkg, bool restorePreview);
     void ShowPaintGrid(FEPackage *pkg, bool show);
