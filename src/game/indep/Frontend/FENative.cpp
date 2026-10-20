@@ -516,6 +516,20 @@ void FENativeInterface::SetAlpha(uint32_t objHash, uint8_t alpha)
     obj->Flags |= 0x400000u;
 }
 
+std::string FENativeInterface::LanguageText(uint32_t labelHash) const
+{
+    std::vector<uint16_t> cps;
+    for (const FELanguage &lang : m_languages)
+        if (const char *s8 = lang.Find(labelHash)) {
+            lang.DecodeString(s8, cps);
+            break;
+        }
+    std::string out;
+    for (uint16_t c : cps)
+        out += c < 0x80 ? char(c) : '?';
+    return out;
+}
+
 // 0x00292a68 (FEngSetLanguageHash): set label hash and clear FENG_OBJECT_IGNORE_LABELHASH (0x2).
 void FENativeInterface::SetLanguageHash(FEPackage *pkg, uint32_t objHash, uint32_t labelHash)
 {

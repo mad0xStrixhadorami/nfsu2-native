@@ -177,6 +177,14 @@ private:
     void HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pkg);
     void RefreshCareerCarSelect(FEPackage *pkg);
     size_t m_csSel = 0;
+    // UI_RewardsSponsor.fng: the signed sponsors, one scroller option per area with a sponsor (#165).
+    void HandleSponsorViewLoaded(FEPackage *pkg);
+    void HandleSponsorViewMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshSponsorView(FEPackage *pkg);
+    void ShowSponsorTerms(FEPackage *pkg);
+    std::vector<int> m_svAreas;
+    std::vector<std::string> m_svLines; // wrapped SPONSOR_DETAILS text
+    size_t m_svScroll = 0;
     int m_wmArea = 1;
     size_t m_wmSel = 0;
     std::vector<const Career::Event *> m_wmEvents;

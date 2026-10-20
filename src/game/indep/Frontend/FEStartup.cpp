@@ -9,6 +9,7 @@
 #include "Speed/Indep/bWare/Inc/Strings.hpp"
 #include "game/indep/Career/Memcard.h"
 #include "game/indep/Career/Profile.h"
+#include "game/indep/World/CarMaterial.h"
 #include "game/indep/Frontend/FENative.h"
 #include "Speed/Indep/Src/FEng/FEGroup.h"
 
@@ -168,6 +169,28 @@ void FEStartupSequence::LoadBootProfile()
 {
     if (!m_profile.valid)
         LoadCareerProfile();
+    // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
+    if (const char *award = getenv("NFSU2_AWARD_TEST")) {
+        m_raceMode = 1;
+        AwardCareerResult(atoi(award), 1);
+    }
+    // Dev aid: NFSU2_SIGNED="2:STREETGLOW,3:BRIDE" signs sponsors without playing the events (not saved).
+    if (const char *signedList = getenv("NFSU2_SIGNED")) {
+        for (const char *c = signedList; *c;) {
+            const int area = atoi(c);
+            const char *colon = strchr(c, ':');
+            if (!colon)
+                break;
+            const char *end = strchr(colon, ',');
+            const std::string name(colon + 1, end ? size_t(end - colon - 1) : strlen(colon + 1));
+            if (area >= 0 && area < Career::Profile::kAreas)
+                m_profile.signedSponsors[area] = CarMaterial::NameHash(name.c_str());
+            if (!end)
+                break;
+            c = end + 1;
+        }
+        m_profile.valid = true;
+    }
 }
 
 void FEStartupSequence::Advance(const char *fromPkgName)
@@ -289,6 +312,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCareerCarSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
+        HandleSponsorViewLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "Credits.fng") == 0) {
         HandleCreditsLoaded(pkg);
         return;
@@ -404,6 +431,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
         HandleCareerCarSelectMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
+        HandleSponsorViewMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
@@ -1544,6 +1575,131 @@ void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pk
         m_cribRequested = true;
         RequestRace();
     }
+}
+
+// UI_RewardsSponsor.fng (create 0x001e8230, ctor 0x001e8268, scroller fill 0x001e8520, per-sponsor fill
+// 0x001e8658): the crib's "View Signed Sponsors". 0x001e8520 adds one scroller option per area object
+// (areas 0..DAT_004f022c) whose +0xe8 sponsor is set, with the texture DECAL_ICON_<name>. The selected
+// sponsor fills: the name (SPONSOR_<name>, f13f76b4), SPONSOR_INFO_<name> (f13cef3f), the signing
+// bonus (f25b6bba, record +0xc), the sponsor race purse (195d8d22, record +2), "Each URL Victory"
+// (7d8e1791, 0x00267958: the area's first kind-2 event purse) and the TERMS_<n> lines from
+// SPONSOR_DETAILS_<name> (0x001e81d0). Stand-ins: the required-race list and bonuses panels keep
+// their placeholders (their data is not decoded); Back returns to the crib.
+void FEStartupSequence::HandleSponsorViewLoaded(FEPackage *pkg)
+{
+    m_svAreas.clear();
+    std::vector<FEIconScroller::Def> defs;
+    for (int a = 0; a < Career::Profile::kAreas; ++a) {
+        const Career::Sponsor *sp = Career::SponsorTable::Get().Find(m_profile.signedSponsors[a]);
+        if (!sp)
+            continue;
+        m_svAreas.push_back(a);
+        defs.push_back({CarMaterial::NameHash(("DECAL_ICON_" + sp->name).c_str()),
+                        CarMaterial::NameHash(("SPONSOR_" + sp->name).c_str())});
+    }
+    m_scroller.Setup(pkg, defs, 0);
+    FENativeInterface::SetString(pkg, 0xeb406fec, m_profile.name.c_str()); // the package's PLAYER NAME
+    RefreshSponsorView(pkg);
+}
+
+void FEStartupSequence::RefreshSponsorView(FEPackage *pkg)
+{
+    if (m_svAreas.empty())
+        return;
+    const size_t sel = std::min(m_scroller.Selected(), m_svAreas.size() - 1);
+    const int area = m_svAreas[sel];
+    const Career::Sponsor *sp = Career::SponsorTable::Get().Find(m_profile.signedSponsors[area]);
+    if (!sp)
+        return;
+    int urlPurse = 0;
+    for (const Career::Event &e : Career::EventTable::Get().All())
+        if (e.region == area && e.kind == 2) {
+            urlPurse = int(e.purse);
+            break;
+        }
+    char text[32];
+    snprintf(text, sizeof(text), "%d", sp->signingBonus);
+    FENativeInterface::SetString(pkg, 0xf25b6bba, text);
+    snprintf(text, sizeof(text), "%d", sp->racePurse);
+    FENativeInterface::SetString(pkg, 0x195d8d22, text);
+    snprintf(text, sizeof(text), "%d", urlPurse);
+    FENativeInterface::SetString(pkg, 0x7d8e1791, text);
+    FENativeInterface::SetLanguageHash(pkg, 0xf13f76b4, CarMaterial::NameHash(("SPONSOR_" + sp->name).c_str()));
+    FENativeInterface::SetLanguageHash(pkg, 0xf13cef3f,
+                                       CarMaterial::NameHash(("SPONSOR_INFO_" + sp->name).c_str()));
+    // 0x001e81d0 / 0x00262eb8: SPONSOR_DETAILS_<name> split into the TERMS_n lines (explicit line
+    // breaks, then wrapped to the panel width); Up/Down scroll them.
+    m_svLines.clear();
+    const std::string details = m_fe->LanguageText(CarMaterial::NameHash(("SPONSOR_DETAILS_" + sp->name).c_str()));
+    constexpr size_t kWrap = 36;
+    for (size_t pos = 0; pos <= details.size();) {
+        size_t nl = details.find('^', pos); // EA's line-break marker
+        std::string para = details.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = nl == std::string::npos ? details.size() + 1 : nl + 1;
+        while (para.size() > kWrap) {
+            size_t cut = para.rfind(' ', kWrap);
+            if (cut == std::string::npos || cut == 0)
+                cut = kWrap;
+            m_svLines.push_back(para.substr(0, cut));
+            para.erase(0, para.find_first_not_of(' ', cut));
+        }
+        m_svLines.push_back(para);
+    }
+    m_svScroll = 0;
+    if (getenv("NFSU2_FEDEBUG")) {
+        printf("[Sponsors] DETAILS: %s\n", details.c_str());
+        printf("[Sponsors] INFO: %s\n", m_fe->LanguageText(CarMaterial::NameHash(("SPONSOR_INFO_" + sp->name).c_str())).c_str());
+    }
+    ShowSponsorTerms(pkg);
+    printf("[Career] sponsors: %s (area %d) bonus %d purse %d url %d\n", sp->name.c_str(), area,
+           sp->signingBonus, sp->racePurse, urlPurse);
+}
+
+void FEStartupSequence::ShowSponsorTerms(FEPackage *pkg)
+{
+    static const uint32_t kLines[10] = {0xfcc58dda, 0xfcc58ddb, 0xfcc58ddc, 0xfcc58ddd, 0xfcc58dde,
+                                        0xfcc58ddf, 0xfcc58de0, 0xfcc58de1, 0xfcc58de2, 0x9577494a};
+    for (size_t i = 0; i < 10; ++i) {
+        const size_t at = m_svScroll + i;
+        FENativeInterface::SetString(pkg, kLines[i], at < m_svLines.size() ? m_svLines[at].c_str() : "");
+    }
+}
+
+void FEStartupSequence::HandleSponsorViewMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if (msg == kMsgPadBack) {
+        printf("[Career] sponsors: back to the crib\n");
+        m_careerMenuSwitch = "UI_CareerCrib.fng";
+        return;
+    }
+    if (msg == kMsgPadUp && m_svScroll > 0) {
+        --m_svScroll;
+        ShowSponsorTerms(pkg);
+        return;
+    }
+    if (msg == kMsgPadDown && m_svScroll + 10 < m_svLines.size()) {
+        ++m_svScroll;
+        ShowSponsorTerms(pkg);
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        RefreshSponsorView(pkg);
+        return;
+    }
+    if (msg == kMsgScreenTick) {
+        m_scroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_scroller.AllowFade();
+        RefreshSponsorView(pkg);
+        return;
+    }
+    m_scroller.HandleMessage(msg, TickSeconds());
 }
 
 // Credits.fng (the options carousel's Credits entry; OMCredits / CreditsScreen / CreditsArea strings in the

@@ -174,6 +174,8 @@ public:
     static void SetAlpha(FEPackage *pkg, uint32_t objHash, uint8_t alpha);
     // FEPrintf-style: give a string object its own text instead of a language label.
     static void SetString(FEPackage *pkg, uint32_t objHash, const char *text);
+    // The language string for a label hash as ASCII ('?' outside it); empty when no table has it.
+    std::string LanguageText(uint32_t labelHash) const;
     const std::vector<RaceInfo> &Races() const { return m_races; }
     static void SetTextureHash(FEObject *obj, uint32_t texHash);
     static void SetTextureHash(FEPackage *pkg, uint32_t objHash, uint32_t texHash);

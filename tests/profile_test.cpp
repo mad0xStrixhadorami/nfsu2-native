@@ -111,6 +111,8 @@ int main()
     p.RecordScore(4311, 0, 12345);
     p.RecordScore(4311, 1, 15000);
     p.RecordScore(4311, 1, 14000);
+    p.signedSponsors[2] = 0x167a374f;
+    p.signedSponsors[5] = 0x5e96e1be;
     if (!Career::SaveCareer(p))
         return Fail("v3 save failed");
 
@@ -129,6 +131,8 @@ int main()
         return Fail("reverse score must keep the larger value");
     if (q.BestScoreFor(4311, 2) != 0)
         return Fail("unknown score direction must not alias");
+    if (q.signedSponsors[2] != 0x167a374f || q.signedSponsors[5] != 0x5e96e1be || q.SignedSponsorCount() != 2)
+        return Fail("signed sponsors must round-trip (v4)");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {
