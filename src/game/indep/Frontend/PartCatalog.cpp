@@ -46,8 +46,9 @@ uint16_t ReadU16(const uint8_t *p)
 // name, this table's middle string and one of its 8 model-name strings into the solid name; the
 // middle string carries the geometry number.  Hoods, lights and the universal parts use
 // "_STYLE<NN>" (#188); the body panels use the kit number instead, "_KIT<NN>" for front/rear
-// bumpers and side skirts ("<CAR>_KIT17_FRONT_BUMPER_A", #190).  Both are stored in CarPart::style
-// because the shop treats them the same way: the number selects the solid.
+// bumpers and side skirts ("<CAR>_KIT17_FRONT_BUMPER_A", #190) and "_KITW<NN>" for the wide-body
+// shell ("<CAR>_KITW01_BODY_A", #193).  All are stored in CarPart::style because the shop treats
+// them the same way: the number selects the solid.
 uint16_t ModelStyle(uint16_t modelTable, const uint8_t *models, size_t modelsSize, const uint8_t *strs,
                     size_t strsSize)
 {
@@ -65,6 +66,8 @@ uint16_t ModelStyle(uint16_t modelTable, const uint8_t *models, size_t modelsSiz
     size_t digits = 0;
     if (strncmp(name, "_STYLE", 6) == 0)
         digits = 6;
+    else if (strncmp(name, "_KITW", 5) == 0 && 5 < room && name[5] >= '0' && name[5] <= '9')
+        digits = 5; // wide-body kit (#193): <CAR>_KITW<NN>_BODY_A
     else if (strncmp(name, "_KIT", 4) == 0 && 4 < room && name[4] >= '0' && name[4] <= '9')
         digits = 4;
     else

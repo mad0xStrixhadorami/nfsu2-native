@@ -1324,6 +1324,8 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewRearBumperPart(0);
         if (!getenv("NFSU2_PART_SKIRT"))
             m_fe->SetPreviewSkirtPart(0);
+        if (!getenv("NFSU2_PART_WIDEBODY"))
+            m_fe->SetPreviewWideBodyPart(0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1468,10 +1470,9 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
 // categories (0x002a8430).  The Body Shop order in 0x002a7e70 is Front Bumpers (1), Rear Bumpers
 // (2), Side Skirts (0xb), Spoilers (0xc), Hoods (9), Roof Scoops (7), Headlights (0xe), Taillights
 // (0xf), Side Mirrors (0x20), Exhaust Tips (0x10) and Wide Body Kits (6), plus Rims (0x002a7860)
-// and a Carbon Fiber card (0x002a7938).  Spoilers, Roof Scoops, Exhaust Tips and Carbon Fiber are
-// wired up here: their geometry (#182/#180) and prices (#184) are decoded.  The other slot cards
-// still need their universal geometry/models; each card lists the catalogue's records of its type
-// and finish (ISSUES #185/#186).
+// and a Carbon Fiber card (0x002a7938).  The mountable cards are wired up here: their geometry
+// (#182/#180/#188/#190/#193) and prices (#184) are decoded; each card lists the catalogue's
+// records of its type and finish (ISSUES #185/#186).
 //
 // The two carousels are IconScroller instances built by 0x0029af60 with the templates
 // CATEGORY_MASTER/CATEGORY_ICON and MINI_MASTER/PARTS_ICON.  The selected item's name and price
@@ -1546,6 +1547,8 @@ void RememberFittedParts(Career::Profile &profile, const Career::OwnedCar &car)
         AddOwnedPart(profile, MakePartKey(0x2, car.rearBumper, false, 0));
     if (car.skirt)
         AddOwnedPart(profile, MakePartKey(0xb, car.skirt, false, 0));
+    if (car.wideBody)
+        AddOwnedPart(profile, MakePartKey(6, car.wideBody, false, 0));
 }
 
 // Show or hide one control of GenericDialog_SMALL.fng.  The shipped labels start fully transparent;
@@ -1593,10 +1596,11 @@ constexpr PartsCardDef kPartsCards[] = {
     {0xf69ac384, 0x3dc6a111, 0xe, false, false, "headlights"},    // 0xe
     {0x2cbb2d1c, 0x663437a9, 0xf, false, false, "taillights"},    // 0xf
     {0xa434a006, 0x2aced725, 0x10, true, false, "exhaust tips"},  // 0x10
+    {0x945e9bc5, 0x945e9bc5, 0x6, false, false, "wide body kits"}, // 6
     {0x24911e04, 0x24911e04, 0, false, true, "carbon fiber"},     // 0x002a7938
 };
 constexpr size_t kPartsCardCount = sizeof(kPartsCards) / sizeof(kPartsCards[0]);
-constexpr size_t kPartsCarbonCard = 9;
+constexpr size_t kPartsCarbonCard = 10;
 
 uint32_t UniversalPartsType(uint8_t partId)
 {
@@ -1745,6 +1749,8 @@ bool FEStartupSequence::OwnedCarHasPart(const Career::OwnedCar &car, const CarPa
         return car.rearBumper == part.style;
     case 0xb: // side skirt
         return car.skirt == part.style;
+    case 6: // wide-body kit (#193)
+        return car.wideBody == part.style;
     default:
         return false;
     }
@@ -1780,6 +1786,9 @@ void FEStartupSequence::PreviewPartsBrowserPart(const CarPart &part)
     case 0xb:
         m_fe->SetPreviewSkirtPart(part.style);
         break;
+    case 6:
+        m_fe->SetPreviewWideBodyPart(part.style);
+        break;
     default:
         break;
     }
@@ -1797,6 +1806,7 @@ void FEStartupSequence::PreviewOwnedParts(const Career::OwnedCar *car)
     m_fe->SetPreviewFrontBumperPart(car ? car->frontBumper : 0);
     m_fe->SetPreviewRearBumperPart(car ? car->rearBumper : 0);
     m_fe->SetPreviewSkirtPart(car ? car->skirt : 0);
+    m_fe->SetPreviewWideBodyPart(car ? car->wideBody : 0);
 }
 
 void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
@@ -1963,6 +1973,10 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
         case 0xb:
             car->skirt = uint8_t(part.style);
             what = "side skirt";
+            break;
+        case 6:
+            car->wideBody = uint8_t(part.style);
+            what = "wide body kit";
             break;
         default:
             break;
@@ -3096,6 +3110,7 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewFrontBumperPart(car.frontBumper);
     m_fe->SetPreviewRearBumperPart(car.rearBumper);
     m_fe->SetPreviewSkirtPart(car.skirt);
+    m_fe->SetPreviewWideBodyPart(car.wideBody);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use

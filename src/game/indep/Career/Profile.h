@@ -40,6 +40,9 @@ struct OwnedCar {
     uint8_t frontBumper = 0;
     uint8_t rearBumper = 0;
     uint8_t skirt = 0;
+    // Wide-body kit fitted by the Body Shop (ISSUES #193): the catalogue's KITW number, 1..4;
+    // 0 keeps the stock KIT00 shell.  The kit replaces the whole shell and both door skins.
+    uint8_t wideBody = 0;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

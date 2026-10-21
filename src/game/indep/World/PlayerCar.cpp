@@ -74,6 +74,28 @@ bool IsInstalledPanel(const std::string &n, const PlayerCar::InstalledParts &par
     return false;
 }
 
+// A wide-body kit (#193) replaces the whole KIT00 shell, not one panel.  The KITW BODY_A..D and
+// DOOR_LEFT/RIGHT_A..C names follow the same LOD convention as every other car solid (the triangle
+// counts fall A > B > C > D), so only the A level is drawn.  The door panel/sill names are cut to
+// 27 characters and have no LOD letter; their single solid is the outer skin.
+bool IsWideBodyPanel(const std::string &n, int kit)
+{
+    char tag[32];
+    snprintf(tag, sizeof(tag), "_KITW%02d_", kit);
+    if (!Contains(n, tag))
+        return false;
+    if (Contains(n, "_BODY_"))
+        return EndsWith(n, "_A");
+    if (Contains(n, "_DOOR_LEFT_") || Contains(n, "_DOOR_RIGHT_"))
+        return EndsWith(n, "_A");
+    return Contains(n, "_DOOR_PANEL_") || Contains(n, "_DOOR_SILL_");
+}
+
+bool IsReplacedStockWideBody(const std::string &n)
+{
+    return Contains(n, "_KIT00_BODY_") || Contains(n, "_KIT00_DOOR_");
+}
+
 // The stock panel that an installed style replaces.  The hood's underside (KIT00_HOOD_UNDER) is a
 // separate panel: one-piece hoods keep it, while the split styles 21-25 bring KIT<NN>_HOOD_UNDER.
 bool IsReplacedStockPanel(const std::string &n, const PlayerCar::InstalledParts &parts, bool splitHood,
@@ -270,6 +292,8 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
         parts.rearBumper = atoi(bumper);
     if (const char *skirt = getenv("NFSU2_PART_SKIRT"))
         parts.skirt = atoi(skirt);
+    if (const char *wide = getenv("NFSU2_PART_WIDEBODY"))
+        parts.wideBody = atoi(wide);
     if (parts.roof || parts.exhaust || parts.engine || parts.spoiler)
         printf("[Parts] installed roof %d%s%s%s exhaust %d engine %d\n", parts.roof,
                parts.roofDual ? " dual" : "", parts.roofOffset ? " offset" : "", parts.roofCarbon ? " carbon" : "",
@@ -279,9 +303,9 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
     if (parts.hood || parts.headlight || parts.taillight)
         printf("[Parts] installed hood %d%s headlight %d taillight %d\n", parts.hood,
                parts.hoodCarbon ? " carbon" : "", parts.headlight, parts.taillight);
-    if (parts.frontBumper || parts.rearBumper || parts.skirt)
-        printf("[Parts] installed front bumper %d rear bumper %d skirt %d\n", parts.frontBumper,
-               parts.rearBumper, parts.skirt);
+    if (parts.frontBumper || parts.rearBumper || parts.skirt || parts.wideBody)
+        printf("[Parts] installed front bumper %d rear bumper %d skirt %d wide body %d\n",
+               parts.frontBumper, parts.rearBumper, parts.skirt, parts.wideBody);
     return parts;
 }
 
@@ -323,6 +347,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         missing(0x1, parts->frontBumper, "front bumper");
         missing(0x2, parts->rearBumper, "rear bumper");
         missing(0xb, parts->skirt, "side skirt");
+        missing(6, parts->wideBody, "wide body");
     }
     // Dev aid: NFSU2_SOLID_DUMP=1 lists every named solid with its header transform and bounds,
     // for finding parts the port has not mounted yet (ISSUES #178).
@@ -375,6 +400,19 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 continue;
             }
         }
+        // A fitted wide-body kit replaces the KIT00 shell and door skins as a set (#193).  Only the
+        // A LOD of each KITW panel is drawn, exactly like the stock KIT00 shell.
+        if (parts && m_bodyStyles.Has(6, parts->wideBody) && IsWideBodyPanel(n, parts->wideBody)) {
+            const size_t before = m_model.size();
+            AddFiltered(s, m_model, m_triTex);
+            if (Contains(n, "_BODY_"))
+                body = &s;
+            if (getenv("NFSU2_PART_DEBUG"))
+                printf("[Parts] wide body panel %s: %zu triangles\n", n.c_str(), m_model.size() - before);
+            continue;
+        }
+        if (parts && m_bodyStyles.Has(6, parts->wideBody) && IsReplacedStockWideBody(n))
+            continue;
         // Body panels from this car's own file (#188/#190): the shop's hoods, headlights,
         // taillights, bumpers and skirts are all present as <CAR>_... solids, so select the
         // installed style here.

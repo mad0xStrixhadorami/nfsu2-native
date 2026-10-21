@@ -92,5 +92,6 @@ int main()
     assert(styles.Has(9, 1) && styles.Has(0xe, 1) && styles.Has(0xf, 1));
     assert(!styles.Has(9, 2) && !styles.Has(0xe, 2) && !styles.Has(0xf, 2));
     assert(!styles.Has(9, 19) && !styles.Has(9, 23)); // KIT hood unders are not STYLE hoods
+    assert(styles.Has(6, 1) && !styles.Has(6, 2));    // KITW wide-body shell (#193)
     return 0;
 }

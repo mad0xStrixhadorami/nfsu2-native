@@ -401,6 +401,7 @@ bool BodyStyleSet::Has(int partId, int style) const
     case 9: mask = hood; break;
     case 0xe: mask = headlight; break;
     case 0xf: mask = taillight; break;
+    case 6: mask = wideBody; break;
     default: return false;
     }
     return (mask & (1u << style)) != 0;
@@ -429,6 +430,9 @@ BodyStyleSet FindBodyStyles(const std::vector<NamedSolid> &solids)
         style = TwoDigitStyle(n, "_STYLE", "_BRAKELIGHT");
         if (style > 0)
             out.taillight |= 1u << style;
+        style = TwoDigitStyle(n, "_KITW", "_BODY");
+        if (style > 0)
+            out.wideBody |= 1u << style;
     }
     return out;
 }

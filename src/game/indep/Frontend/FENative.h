@@ -156,6 +156,10 @@ public:
     int PreviewRearBumperPart() const { return m_previewPartRearBumper; }
     void SetPreviewSkirtPart(int kit);
     int PreviewSkirtPart() const { return m_previewPartSkirt; }
+    // Wide-body kit fitted by the Body Shop (#193): 1..4 selects <CAR>_KITW<NN>_BODY_A and the
+    // matching door/panel/sill solids, 0 keeps the stock KIT00 shell.
+    void SetPreviewWideBodyPart(int kit);
+    int PreviewWideBodyPart() const { return m_previewPartWideBody; }
     // The dev environment's NFSU2_PART_* selection overridden by the preview setters, i.e. the
     // parts the currently previewed car should be assembled with.  Both the frontend preview and
     // the race car loader use this so a bought panel shows in the race (#188).
@@ -442,6 +446,7 @@ private:
     int m_previewPartFrontBumper = 0;   // fitted front bumper kit 1..30 (#190)
     int m_previewPartRearBumper = 0;    // fitted rear bumper kit 1..30 (#190)
     int m_previewPartSkirt = 0;         // fitted side skirt kit 1..30 (#190)
+    int m_previewPartWideBody = 0;      // fitted wide-body kit 1..4 (#193)
     SolidMesh::BodyStyleSet m_previewBodyStyles; // body panels present in the previewed car (#192)
     bool m_previewBodyStylesKnown = false;
     uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)

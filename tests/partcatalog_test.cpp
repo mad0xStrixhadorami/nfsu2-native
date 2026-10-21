@@ -141,7 +141,7 @@ std::vector<uint8_t> MakeModelPack()
 {
     std::vector<uint8_t> header(0x40, 0);
     Set32(header, 0x28, 1); // numTypes
-    Set32(header, 0x38, 3); // numParts
+    Set32(header, 0x38, 5); // numParts
 
     std::vector<uint8_t> types;
     Put32(types, bStringHash("SKYLINE"));
@@ -158,8 +158,9 @@ std::vector<uint8_t> MakeModelPack()
     const uint16_t styleNine = name("_STYLE09");
     const uint16_t styleSeven = name("_STYLE07");
     const uint16_t kitSeventeen = name("_KIT17"); // bumper / skirt: the body panels use the kit number
+    const uint16_t kitWideThree = name("_KITW03"); // wide-body shell (#193)
 
-    std::vector<uint8_t> models(4 * 36, 0);
+    std::vector<uint8_t> models(5 * 36, 0);
     models[0] = 1;                // TemplatedNameHashes: the middle string is a _STYLE name
     Set16(models, 2, styleNine);
     models[36] = 0;               // plain model hash: no style number
@@ -167,6 +168,8 @@ std::vector<uint8_t> MakeModelPack()
     Set16(models, 72 + 2, styleSeven);
     models[108] = 1;              // front bumper: the middle string is the kit number (#190)
     Set16(models, 108 + 2, kitSeventeen);
+    models[144] = 1;              // wide-body kit: the middle string is _KITW<NN> (#193)
+    Set16(models, 144 + 2, kitWideThree);
 
     std::vector<uint8_t> parts;
     auto part = [&](uint16_t nameOff, uint16_t model, uint8_t partId) {
@@ -187,6 +190,11 @@ std::vector<uint8_t> MakeModelPack()
     {
         const uint16_t n = name("KIT BUMPER");
         std::vector<uint8_t> p = part(n, 3, 1);
+        parts.insert(parts.end(), p.begin(), p.end());
+    }
+    {
+        const uint16_t n = name("WIDE KIT");
+        std::vector<uint8_t> p = part(n, 4, 6);
         parts.insert(parts.end(), p.begin(), p.end());
     }
 
@@ -338,18 +346,22 @@ int main()
     if (!cars.Parse(modelPack.data(), modelPack.size()))
         return Fail("Parse rejected the per-car pack");
     const std::vector<CarPart> &hoods = cars.Parts(bStringHash("SKYLINE"));
-    if (hoods.size() != 4)
+    if (hoods.size() != 5)
         return Fail("per-car part count");
     if (hoods[0].style != 9 || hoods[1].style != 2 || hoods[2].style != 7)
         return Fail("model-table style must override the pack order");
     // _KIT<NN> is the bumper/skirt geometry number (#190); it lands in the same style field.
     if (hoods[3].partId != 1 || hoods[3].style != 17)
         return Fail("model-table kit number must be the bumper style");
+    // _KITW<NN> is the wide-body shell number (#193); without this it would fall back to the
+    // type-wide ordinal and the shop would hide every kit.
+    if (hoods[4].partId != 6 || hoods[4].style != 3)
+        return Fail("model-table wide-body kit number must be the shell style");
     if (PartCatalog::PriceCategory(hoods[0]) != 0xb)
         return Fail("hood price category");
 
     std::printf("partcatalog_test: ok (%zu spoilers, styles 1..%u; %zu roofs, %zu exhausts; "
-                "hood styles 9/2/7, bumper kit 17)\n",
+                "hood styles 9/2/7, bumper kit 17, wide-body kit 3)\n",
                 parts.size(), unsigned(parts.back().style), roofs.size(), exhausts.size());
     return 0;
 }

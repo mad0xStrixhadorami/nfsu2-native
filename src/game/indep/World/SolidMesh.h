@@ -77,6 +77,7 @@ struct BodyStyleSet {
     uint32_t hood = 0;        // 9:         <CAR>_STYLE<NN>_HOOD[_LEFT|_RIGHT]
     uint32_t headlight = 0;   // 0xe:       <CAR>_STYLE<NN>_HEADLIGHT
     uint32_t taillight = 0;   // 0xf:       <CAR>_STYLE<NN>_BRAKELIGHT
+    uint32_t wideBody = 0;    // 6:         <CAR>_KITW<NN>_BODY_A..D
     bool Has(int partId, int style) const;
 };
 // Apply a row-vector matrix (translation in [12..14]) to a point.

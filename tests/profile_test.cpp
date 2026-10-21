@@ -155,6 +155,7 @@ int main()
     p.cars[0].frontBumper = 2;            // Body Shop bumpers / side skirts (ISSUES #190)
     p.cars[0].rearBumper = 17;
     p.cars[0].skirt = 9;
+    p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
     p.ownedParts = {0x00000c01u, 0x02000701u, 0x00001004u}; // spoiler / roof OFFSET / exhaust (#187)
     p.completedEvents.push_back(0x12345678);
     p.RecordTime(4012, 0, 90000);
@@ -202,6 +203,8 @@ int main()
         return Fail("fitted hood, headlights and taillights must round-trip (v10)");
     if (q.cars[0].frontBumper != 2 || q.cars[0].rearBumper != 17 || q.cars[0].skirt != 9)
         return Fail("fitted bumpers and side skirts must round-trip (v11)");
+    if (q.cars[0].wideBody != 3)
+        return Fail("fitted wide-body kit must round-trip (v12)");
 
     // Version 5: the previous layout still loads; the new per-part block stays zero.
     {
@@ -227,6 +230,8 @@ int main()
         return Fail("v5 save must have the stock hood, headlights and taillights");
     if (v5.cars[0].frontBumper || v5.cars[0].rearBumper || v5.cars[0].skirt)
         return Fail("v5 save must have the stock bumpers and side skirts");
+    if (v5.cars[0].wideBody)
+        return Fail("v5 save must have the stock body shell");
 
     // Version 2: still loads its direction-keyed times and has no scores.
     {
