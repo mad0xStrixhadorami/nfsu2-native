@@ -46,6 +46,22 @@ bool IsInstalledPanel(const std::string &n, const PlayerCar::InstalledParts &par
         if (Contains(n, tag))
             return true;
     }
+    // The bumpers and skirts are kit panels (#190), e.g. SKYLINE_KIT17_FRONT_BUMPER_A.
+    if (parts.frontBumper > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_FRONT_BUMPER", parts.frontBumper);
+        if (Contains(n, tag))
+            return true;
+    }
+    if (parts.rearBumper > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_REAR_BUMPER", parts.rearBumper);
+        if (Contains(n, tag))
+            return true;
+    }
+    if (parts.skirt > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_SKIRT", parts.skirt);
+        if (Contains(n, tag))
+            return true;
+    }
     return false;
 }
 
@@ -59,6 +75,12 @@ bool IsReplacedStockPanel(const std::string &n, const PlayerCar::InstalledParts 
     if (parts.headlight > 0 && Contains(n, "_KIT00_HEADLIGHT"))
         return true;
     if (parts.taillight > 0 && Contains(n, "_KIT00_BRAKELIGHT"))
+        return true;
+    if (parts.frontBumper > 0 && Contains(n, "_KIT00_FRONT_BUMPER"))
+        return true;
+    if (parts.rearBumper > 0 && Contains(n, "_KIT00_REAR_BUMPER"))
+        return true;
+    if (parts.skirt > 0 && Contains(n, "_KIT00_SKIRT"))
         return true;
     return false;
 }
@@ -231,6 +253,13 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
         parts.headlight = atoi(headlight);
     if (const char *taillight = getenv("NFSU2_PART_TAILLIGHT"))
         parts.taillight = atoi(taillight);
+    // Kit-number body panels (#190): bumpers and side skirts are car-file solids too.
+    if (const char *bumper = getenv("NFSU2_PART_FRONT_BUMPER"))
+        parts.frontBumper = atoi(bumper);
+    if (const char *bumper = getenv("NFSU2_PART_REAR_BUMPER"))
+        parts.rearBumper = atoi(bumper);
+    if (const char *skirt = getenv("NFSU2_PART_SKIRT"))
+        parts.skirt = atoi(skirt);
     if (parts.roof || parts.exhaust || parts.engine || parts.spoiler)
         printf("[Parts] installed roof %d%s%s%s exhaust %d engine %d\n", parts.roof,
                parts.roofDual ? " dual" : "", parts.roofOffset ? " offset" : "", parts.roofCarbon ? " carbon" : "",
@@ -240,6 +269,9 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
     if (parts.hood || parts.headlight || parts.taillight)
         printf("[Parts] installed hood %d%s headlight %d taillight %d\n", parts.hood,
                parts.hoodCarbon ? " carbon" : "", parts.headlight, parts.taillight);
+    if (parts.frontBumper || parts.rearBumper || parts.skirt)
+        printf("[Parts] installed front bumper %d rear bumper %d skirt %d\n", parts.frontBumper,
+               parts.rearBumper, parts.skirt);
     return parts;
 }
 
@@ -319,9 +351,12 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 continue;
             }
         }
-        // Body panels from this car's own file (#188): the shop's hoods, headlights and taillights
-        // are all present as <CAR>_STYLE<NN>_... solids, so select the installed style here.
-        if (parts && (parts->hood || parts->headlight || parts->taillight) && IsInstalledPanel(n, *parts)) {
+        // Body panels from this car's own file (#188/#190): the shop's hoods, headlights,
+        // taillights, bumpers and skirts are all present as <CAR>_... solids, so select the
+        // installed style here.
+        if (parts && (parts->hood || parts->headlight || parts->taillight || parts->frontBumper ||
+                      parts->rearBumper || parts->skirt) &&
+            IsInstalledPanel(n, *parts)) {
             if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
                 continue;
             AddFiltered(s, m_model, m_triTex);

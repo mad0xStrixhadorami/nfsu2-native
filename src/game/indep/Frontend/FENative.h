@@ -144,6 +144,14 @@ public:
     int PreviewHeadlightPart() const { return m_previewPartHeadlight; }
     void SetPreviewTaillightPart(int style);
     int PreviewTaillightPart() const { return m_previewPartTaillight; }
+    // Bumpers and side skirts fitted by the Body Shop (#190).  These are the car file's KIT<NN>
+    // panels; the value is the catalogue's kit number, 0 keeps the stock panel.
+    void SetPreviewFrontBumperPart(int kit);
+    int PreviewFrontBumperPart() const { return m_previewPartFrontBumper; }
+    void SetPreviewRearBumperPart(int kit);
+    int PreviewRearBumperPart() const { return m_previewPartRearBumper; }
+    void SetPreviewSkirtPart(int kit);
+    int PreviewSkirtPart() const { return m_previewPartSkirt; }
     // The dev environment's NFSU2_PART_* selection overridden by the preview setters, i.e. the
     // parts the currently previewed car should be assembled with.  Both the frontend preview and
     // the race car loader use this so a bought panel shows in the race (#188).
@@ -427,6 +435,9 @@ private:
     bool m_previewPartHoodCarbon = false;
     int m_previewPartHeadlight = 0;     // fitted headlights 1..14 (#188)
     int m_previewPartTaillight = 0;     // fitted taillights 1..14 (#188)
+    int m_previewPartFrontBumper = 0;   // fitted front bumper kit 1..30 (#190)
+    int m_previewPartRearBumper = 0;    // fitted rear bumper kit 1..30 (#190)
+    int m_previewPartSkirt = 0;         // fitted side skirt kit 1..30 (#190)
     uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)
     uint32_t m_previewRoofSet = PaintCatalog::kGloss;
     uint32_t m_previewEngine = 0; // 0 = stock engine accent colour; else 1..Count(hoses set)

@@ -1533,6 +1533,13 @@ void RememberFittedParts(Career::Profile &profile, const Career::OwnedCar &car)
         AddOwnedPart(profile, MakePartKey(0xe, car.headlight, false, 0));
     if (car.taillight)
         AddOwnedPart(profile, MakePartKey(0xf, car.taillight, false, 0));
+    // Kit-number body panels (#190): front/rear bumper and side skirt kit numbers.
+    if (car.frontBumper)
+        AddOwnedPart(profile, MakePartKey(0x1, car.frontBumper, false, 0));
+    if (car.rearBumper)
+        AddOwnedPart(profile, MakePartKey(0x2, car.rearBumper, false, 0));
+    if (car.skirt)
+        AddOwnedPart(profile, MakePartKey(0xb, car.skirt, false, 0));
 }
 
 // Show or hide one control of GenericDialog_SMALL.fng.  The shipped labels start fully transparent;
@@ -1558,33 +1565,59 @@ void ShowDialogControl(FEPackage *pkg, uint32_t hash, bool visible, bool focused
 }
 } // namespace
 
+// The Body Shop's slot cards, in the original order (the 0x002a7e70 AddOption calls, then the
+// 0x002a7938 Carbon Fiber filter).  partId is the catalogue's shop slot (GLOBALB part id);
+// universal parts live in their own pack (SPOILER / ROOF / EXHAUST) while hoods, lights and the
+// body panels are records of the car model's own type.  The port ships the subset it can mount;
+// the Side Mirrors card (0x20) is paint-only in the catalogue and the Rims card is the wheel shop.
+struct PartsCardDef {
+    uint32_t icon, label;
+    uint8_t partId;
+    bool universal;
+    bool carbon;
+    const char *debug;
+};
+constexpr PartsCardDef kPartsCards[] = {
+    {0x739c4a1b, 0x739c4a1b, 0x1, false, false, "front bumpers"}, // 1 in 0x002a7e70
+    {0x015c767c, 0x015c767c, 0x2, false, false, "rear bumpers"},  // 2
+    {0x4e6c2af9, 0x4e6c2af9, 0xb, false, false, "side skirts"},   // 0xb
+    {0xbb034ea6, 0xbb034ea6, 0xc, true, false, "spoilers"},       // 0xc
+    {0x28f7092, 0x28f7092, 0x9, false, false, "hoods"},           // 9
+    {0x79165861, 0x79165861, 0x7, true, false, "roof scoops"},    // 7
+    {0xf69ac384, 0x3dc6a111, 0xe, false, false, "headlights"},    // 0xe
+    {0x2cbb2d1c, 0x663437a9, 0xf, false, false, "taillights"},    // 0xf
+    {0xa434a006, 0x2aced725, 0x10, true, false, "exhaust tips"},  // 0x10
+    {0x24911e04, 0x24911e04, 0, false, true, "carbon fiber"},     // 0x002a7938
+};
+constexpr size_t kPartsCardCount = sizeof(kPartsCards) / sizeof(kPartsCards[0]);
+constexpr size_t kPartsCarbonCard = 9;
+
+uint32_t UniversalPartsType(uint8_t partId)
+{
+    switch (partId) {
+    case 0xc: return bStringHash("SPOILER");
+    case 7: return bStringHash("ROOF");
+    case 0x10: return bStringHash("EXHAUST");
+    default: return 0;
+    }
+}
+
 // Load the shared parts browser: build the slot cards and the item list, then restore the car's
-// fitted set on the preview (#185/#186).
+// fitted set on the preview (#185/#186/#190).
 void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
 {
-    static const struct {
-        uint32_t icon, label;
-        const char *debug;
-    } kCards[] = {
-        {0xbb034ea6, 0xbb034ea6, "Spoilers"},      // 0xc in 0x002a7e70
-        {0x24911e04, 0x24911e04, "Carbon Fiber"},  // 0x002a7938
-        {0x79165861, 0x79165861, "Roof Scoops"},   // 7 in 0x002a7e70
-        {0xa434a006, 0x2aced725, "Exhaust Tips"},  // 0x10 in 0x002a7e70
-        {0x28f7092, 0x28f7092, "Hoods"},           // 9 in 0x002a7e70
-        {0xf69ac384, 0x3dc6a111, "Headlights"},    // 0xe in 0x002a7e70
-        {0x2cbb2d1c, 0x663437a9, "Taillights"},    // 0xf in 0x002a7e70
-    };
-    constexpr size_t kCardCount = sizeof(kCards) / sizeof(kCards[0]);
-    m_partsCategorySel = std::min(m_partsCategorySel, kCardCount - 1);
+    m_partsCategorySel = std::min(m_partsCategorySel, kPartsCardCount - 1);
     std::vector<FEIconScroller::Def> defs;
-    for (const auto &card : kCards)
+    for (const PartsCardDef &card : kPartsCards)
         defs.push_back({card.icon, card.label, false});
     m_partsCategoryScroller.Setup(pkg, defs, m_partsCategorySel, "CATEGORY_MASTER", "CATEGORY_ICON");
     // Screen title (0x42adb44c): 0x002a6be0 writes 0x796dc449 ("Body Shop") for DAT_0051456c == 0,
     // and the Carbon Fiber card's own title (0x24911e04) while that filter is active.
-    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c,
-                                       m_partsCategorySel == 1 ? 0x24911e04u : 0x796dc449u);
-    printf("[PartsShop] body shop: %s card\n", kCards[m_partsCategorySel].debug);
+    FENativeInterface::SetLanguageHash(
+        pkg, 0x42adb44c,
+        m_partsCategorySel == kPartsCarbonCard ? 0x24911e04u : 0x796dc449u);
+    printf("[PartsShop] body shop: %s card\n", kPartsCards[m_partsCategorySel].debug);
+
     // The item-info group (0x4a1316e9, the parent of PART_NAME and PRICE) ships hidden: the
     // screen's own 0x002a8870 shows it once the item list has a selection (the 0x00259c90 /
     // 0x00259c80 pair on the two scrollbar groups).  The port shows it when the list is populated.
@@ -1600,12 +1633,11 @@ void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
 
 // Rebuild PARTS_ICON for the selected slot card.  The cards are the Body Shop's part slots; the
 // Carbon Fiber card is the original's cross-type filter (0x5e), so it collects the carbon records
-// of every body part the port can mount.  Styles come from the part's model entry (#188), which is
-// authoritative for the universal and per-car parts alike.
+// of every body part the port can mount.  Geometry numbers come from the part's model entry
+// (#188: _STYLE<NN>, #190: _KIT<NN>), which is authoritative for the universal and per-car parts
+// alike.
 void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
 {
-    static const uint32_t kCardIcons[7] = {0xbb034ea6, 0x24911e04, 0x79165861, 0xa434a006,
-                                           0x28f7092, 0xf69ac384, 0x2cbb2d1c};
     static const uint32_t kCarbonTypes[] = {bStringHash("SPOILER"), bStringHash("ROOF"),
                                             bStringHash("EXHAUST")};
     // The hood / headlights / taillights are per-car records: their type is the car model's hash
@@ -1616,7 +1648,8 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
     const uint32_t carType = carModel.empty() ? 0 : bStringHash(carModel.c_str());
 
     m_partsShopItems.clear();
-    if (m_partsCategorySel == 1) {
+    const PartsCardDef &card = kPartsCards[m_partsCategorySel];
+    if (card.carbon) {
         for (uint32_t type : kCarbonTypes) {
             const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
             for (size_t i = 0; i < parts.size(); ++i)
@@ -1631,20 +1664,13 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
                     m_partsShopItems.push_back({carType, uint16_t(i), 0x24911e04});
         }
     } else {
-        uint32_t type = 0;
-        uint8_t partId = 0;
-        switch (m_partsCategorySel) {
-        case 0: type = bStringHash("SPOILER"); break;
-        case 2: type = bStringHash("ROOF"); break;
-        case 3: type = bStringHash("EXHAUST"); break;
-        case 4: type = carType; partId = 9; break;   // hood
-        case 5: type = carType; partId = 0xe; break; // headlights
-        case 6: type = carType; partId = 0xf; break; // taillights
-        }
+        // Universal packs hold only their own slot (part id 0xc/7/0x10); the body panels are
+        // records of the previewed car's type, filtered by part id.
+        const uint32_t type = card.universal ? UniversalPartsType(card.partId) : carType;
         const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
         for (size_t i = 0; i < parts.size(); ++i)
-            if (!parts[i].carbon && parts[i].level > 0 && (!partId || parts[i].partId == partId))
-                m_partsShopItems.push_back({type, uint16_t(i), kCardIcons[m_partsCategorySel]});
+            if (!parts[i].carbon && parts[i].level > 0 && parts[i].partId == card.partId)
+                m_partsShopItems.push_back({type, uint16_t(i), card.icon});
     }
 
     // The original selects the fitted part when the window opens (0x002a8870 -> 0x0029b850);
@@ -1673,10 +1699,8 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
     const char *first = "-";
     if (!m_partsShopItems.empty())
         first = m_fe->Parts().Parts(m_partsShopItems.front().type)[m_partsShopItems.front().index].name.c_str();
-    static const char *kCardDebug[7] = {"painted", "carbon", "roof", "exhaust",
-                                        "hoods", "headlights", "taillights"};
-    printf("[PartsShop] %s: %zu records, first %s, selected %zu\n",
-           kCardDebug[m_partsCategorySel], m_partsShopItems.size(), first, m_partsSel);
+    printf("[PartsShop] %s: %zu records, first %s, selected %zu\n", card.debug,
+           m_partsShopItems.size(), first, m_partsSel);
     PreviewOwnedParts(ShopCar());
     RefreshPartsBrowserInfo(pkg);
 }
@@ -1705,6 +1729,12 @@ bool FEStartupSequence::OwnedCarHasPart(const Career::OwnedCar &car, const CarPa
         return car.headlight == part.style;
     case 0xf: // taillights
         return car.taillight == part.style;
+    case 0x1: // front bumper (kit number, #190)
+        return car.frontBumper == part.style;
+    case 0x2: // rear bumper
+        return car.rearBumper == part.style;
+    case 0xb: // side skirt
+        return car.skirt == part.style;
     default:
         return false;
     }
@@ -1731,6 +1761,15 @@ void FEStartupSequence::PreviewPartsBrowserPart(const CarPart &part)
     case 0xf:
         m_fe->SetPreviewTaillightPart(part.style);
         break;
+    case 0x1:
+        m_fe->SetPreviewFrontBumperPart(part.style);
+        break;
+    case 0x2:
+        m_fe->SetPreviewRearBumperPart(part.style);
+        break;
+    case 0xb:
+        m_fe->SetPreviewSkirtPart(part.style);
+        break;
     default:
         break;
     }
@@ -1745,13 +1784,14 @@ void FEStartupSequence::PreviewOwnedParts(const Career::OwnedCar *car)
     m_fe->SetPreviewHoodPart(car ? car->hood : 0, car && car->hoodCarbon);
     m_fe->SetPreviewHeadlightPart(car ? car->headlight : 0);
     m_fe->SetPreviewTaillightPart(car ? car->taillight : 0);
+    m_fe->SetPreviewFrontBumperPart(car ? car->frontBumper : 0);
+    m_fe->SetPreviewRearBumperPart(car ? car->rearBumper : 0);
+    m_fe->SetPreviewSkirtPart(car ? car->skirt : 0);
 }
 
 void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
 {
-    static const uint32_t kCategoryLabel[7] = {0xbb034ea6, 0x24911e04, 0x79165861, 0x2aced725,
-                                               0x28f7092, 0x3dc6a111, 0x663437a9};
-    FENativeInterface::SetLanguageHash(pkg, 0x6c9e933e, kCategoryLabel[m_partsCategorySel]);
+    FENativeInterface::SetLanguageHash(pkg, 0x6c9e933e, kPartsCards[m_partsCategorySel].label);
     const CarPart *part = SelectedPartsShopPart();
     if (!part) {
         FENativeInterface::SetString(pkg, 0xd28b9316, "-");
@@ -1902,6 +1942,18 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
             car->taillight = uint8_t(part.style);
             what = "taillights";
             break;
+        case 0x1:
+            car->frontBumper = uint8_t(part.style);
+            what = "front bumper";
+            break;
+        case 0x2:
+            car->rearBumper = uint8_t(part.style);
+            what = "rear bumper";
+            break;
+        case 0xb:
+            car->skirt = uint8_t(part.style);
+            what = "side skirt";
+            break;
         default:
             break;
         }
@@ -1943,8 +1995,9 @@ void FEStartupSequence::HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg)
         m_partsCategoryScroller.HandleMessage(msg, 0.0f);
         if (m_partsCategoryScroller.Selected() != m_partsCategorySel) {
             m_partsCategorySel = m_partsCategoryScroller.Selected();
-            FENativeInterface::SetLanguageHash(pkg, 0x42adb44c,
-                                               m_partsCategorySel == 1 ? 0x24911e04u : 0x796dc449u);
+            FENativeInterface::SetLanguageHash(
+                pkg, 0x42adb44c,
+                m_partsCategorySel == kPartsCarbonCard ? 0x24911e04u : 0x796dc449u);
             RefreshPartsBrowserList(pkg);
         }
         return;

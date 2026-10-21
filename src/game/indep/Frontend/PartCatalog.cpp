@@ -43,15 +43,18 @@ uint16_t ReadU16(const uint8_t *p)
 }
 
 // 0x3460a: CarPartModelTable, 36 bytes per entry.  CarPart::GetModelNameHash chains the car's base
-// name, this table's middle string and one of its 8 model-name strings into the solid name; only
-// the middle string carries the style number ("_STYLE<NN>", #188).
+// name, this table's middle string and one of its 8 model-name strings into the solid name; the
+// middle string carries the geometry number.  Hoods, lights and the universal parts use
+// "_STYLE<NN>" (#188); the body panels use the kit number instead, "_KIT<NN>" for front/rear
+// bumpers and side skirts ("<CAR>_KIT17_FRONT_BUMPER_A", #190).  Both are stored in CarPart::style
+// because the shop treats them the same way: the number selects the solid.
 uint16_t ModelStyle(uint16_t modelTable, const uint8_t *models, size_t modelsSize, const uint8_t *strs,
                     size_t strsSize)
 {
     if (modelTable == 0xffff || !models || size_t(modelTable) * kModelEntry + 4 > modelsSize)
         return 0;
     const uint8_t *m = models + size_t(modelTable) * kModelEntry;
-    // +0: TemplatedNameHashes.  When clear the model name is a plain hash, not a _STYLE string.
+    // +0: TemplatedNameHashes.  When clear the model name is a plain hash, not a number string.
     if (m[0] == 0)
         return 0;
     const uint16_t middle = ReadU16(m + 2);
@@ -59,10 +62,15 @@ uint16_t ModelStyle(uint16_t modelTable, const uint8_t *models, size_t modelsSiz
         return 0;
     const char *name = reinterpret_cast<const char *>(strs + size_t(middle) * 4);
     const size_t room = strsSize - size_t(middle) * 4;
-    if (room < 7 || strncmp(name, "_STYLE", 6) != 0)
+    size_t digits = 0;
+    if (strncmp(name, "_STYLE", 6) == 0)
+        digits = 6;
+    else if (strncmp(name, "_KIT", 4) == 0 && 4 < room && name[4] >= '0' && name[4] <= '9')
+        digits = 4;
+    else
         return 0;
     unsigned value = 0;
-    for (size_t i = 6; i < room && name[i] >= '0' && name[i] <= '9'; ++i) {
+    for (size_t i = digits; i < room && name[i] >= '0' && name[i] <= '9'; ++i) {
         value = value * 10 + unsigned(name[i] - '0');
         if (value > 0xffff)
             return 0;

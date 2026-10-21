@@ -34,6 +34,12 @@ struct OwnedCar {
     bool hoodCarbon = false;
     uint8_t headlight = 0;
     uint8_t taillight = 0;
+    // Front/rear bumpers and side skirts fitted by the Body Shop (ISSUES #190).  These records name
+    // their solid with the kit number ("_KIT<NN>") instead of "_STYLE<NN>", so the value is the
+    // catalogue's model-table kit, 1..30; 0 keeps the stock panel.
+    uint8_t frontBumper = 0;
+    uint8_t rearBumper = 0;
+    uint8_t skirt = 0;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

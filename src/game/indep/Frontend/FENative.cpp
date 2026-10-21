@@ -170,6 +170,12 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         installedParts.headlight = m_previewPartHeadlight;
     if (m_previewPartTaillight > 0)
         installedParts.taillight = m_previewPartTaillight;
+    if (m_previewPartFrontBumper > 0)
+        installedParts.frontBumper = m_previewPartFrontBumper;
+    if (m_previewPartRearBumper > 0)
+        installedParts.rearBumper = m_previewPartRearBumper;
+    if (m_previewPartSkirt > 0)
+        installedParts.skirt = m_previewPartSkirt;
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
@@ -578,6 +584,36 @@ void FENativeInterface::SetPreviewTaillightPart(int style)
         SetPreviewCar(m_previewCarName);
 }
 
+void FENativeInterface::SetPreviewFrontBumperPart(int kit)
+{
+    kit = kit > 0 ? kit : 0;
+    if (kit == m_previewPartFrontBumper)
+        return;
+    m_previewPartFrontBumper = kit;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewRearBumperPart(int kit)
+{
+    kit = kit > 0 ? kit : 0;
+    if (kit == m_previewPartRearBumper)
+        return;
+    m_previewPartRearBumper = kit;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
+void FENativeInterface::SetPreviewSkirtPart(int kit)
+{
+    kit = kit > 0 ? kit : 0;
+    if (kit == m_previewPartSkirt)
+        return;
+    m_previewPartSkirt = kit;
+    if (!m_carPreviewTris.empty())
+        SetPreviewCar(m_previewCarName);
+}
+
 // The parts the previewed car is assembled with, for the race loader (#188).  The Body Shop
 // previews a part before it is bought, so reading the setters (not just the environment) keeps
 // the race car identical to the car on the car-select screen.
@@ -612,6 +648,12 @@ PlayerCar::InstalledParts FENativeInterface::InstalledPartsForPreview() const
         parts.headlight = m_previewPartHeadlight;
     if (m_previewPartTaillight > 0)
         parts.taillight = m_previewPartTaillight;
+    if (m_previewPartFrontBumper > 0)
+        parts.frontBumper = m_previewPartFrontBumper;
+    if (m_previewPartRearBumper > 0)
+        parts.rearBumper = m_previewPartRearBumper;
+    if (m_previewPartSkirt > 0)
+        parts.skirt = m_previewPartSkirt;
     return parts;
 }
 

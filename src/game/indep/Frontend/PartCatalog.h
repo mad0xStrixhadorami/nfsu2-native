@@ -11,20 +11,21 @@
 // record's group/level byte carries the price tier (level) that 0x0026b0c8 feeds to the price table.
 //
 // The shop lists a car type's records in pack order, but that order is not the geometry order:
-// the model table (chunk 0x3460a, see CarPart::style) names each record's solid, so the style
-// number comes from there.  Only records without a "_STYLE<NN>" model name fall back to their
-// pack position (#188).  Universal parts are type SPOILER/ROOF/EXHAUST; hoods, headlights and
-// taillights are records of the car model's own type (e.g. "SKYLINE"), filtered by part id.
+// the model table (chunk 0x3460a, see CarPart::style) names each record's solid, so the geometry
+// number comes from there.  Hoods and lights name "_STYLE<NN>"; the body panels (front/rear
+// bumpers, side skirts) name "_KIT<NN>" instead.  Only records without either model name fall back
+// to their pack position (#188/#190).  Universal parts are type SPOILER/ROOF/EXHAUST; the per-car
+// parts are records of the car model's own type (e.g. "SKYLINE"), filtered by part id.
 struct CarPart {
     std::string name;    // the shop label, e.g. "JORGEN", "MYSTIC", "ROCKER 5"
-    uint8_t partId = 0;  // shop slot id (7 roof scoop, 9 hood, 0xc spoiler, 0xe headlights, ...)
+    uint8_t partId = 0;  // shop slot id (1 front bumper, 2 rear bumper, 0xb skirt, ...)
     uint8_t group = 0;   // record byte +5, low 5 bits
     uint8_t level = 0;   // record byte +5, high 3 bits: the price tier (0..4)
     bool carbon = false; // has the CARBONFIBRE attribute (0x721aff7c) set
     uint8_t variant = 0; // roof scoop body: 0 base, 1 OFFSET, 2 DUAL (from the record's name suffix)
-    // The style number the geometry uses (_STYLE%02d).  The model table (0x3460a) names the model
-    // for every record; its middle string is "_STYLE<NN>", which is authoritative (#188).  Records
-    // without one fall back to the 1-based position among the same type, finish and variant.
+    // The geometry number: "_STYLE<NN>" for hoods/lights and the universal parts, "_KIT<NN>" for
+    // front/rear bumpers and side skirts (#188/#190).  Records without one fall back to the 1-based
+    // position among the same type, finish and variant.
     uint16_t style = 0;
 };
 

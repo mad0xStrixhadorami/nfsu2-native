@@ -64,6 +64,11 @@ public:
         int hood = 0;      // 1..28 -> <CAR>_STYLE<NN>_HOOD[_LEFT|_RIGHT]_A
         int headlight = 0; // 1..14 -> <CAR>_STYLE<NN>_HEADLIGHT_LEFT_A / _RIGHT_A
         int taillight = 0; // 1..14 -> <CAR>_STYLE<NN>_BRAKELIGHT_A
+        // Body panels that use the kit number instead (ISSUES #190): the catalogue's model table
+        // names them _KIT<NN>_<PANEL>, and the car file has <CAR>_KIT<NN>_FRONT_BUMPER_A etc.
+        int frontBumper = 0; // 1..30 -> <CAR>_KIT<NN>_FRONT_BUMPER_A
+        int rearBumper = 0;  // 1..30 -> <CAR>_KIT<NN>_REAR_BUMPER_A
+        int skirt = 0;       // 1..30 -> <CAR>_KIT<NN>_SKIRT_A
         bool roofDual = false, roofOffset = false, roofCarbon = false, spoilerCarbon = false;
         bool hoodCarbon = false; // the carbon hood reuses the painted solid (no _CF geometry)
         std::vector<uint8_t> roofGeometry;    // CARS\ROOF\GEOMETRY.BIN
@@ -72,7 +77,8 @@ public:
     };
     // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n>,
     // NFSU2_PART_ENGINE=<n>, NFSU2_PART_SPOILER=<n>[_CF], NFSU2_PART_HOOD=<n>[_CF],
-    // NFSU2_PART_HEADLIGHT=<n> and NFSU2_PART_TAILLIGHT=<n>.  Loads the universal part files
+    // NFSU2_PART_HEADLIGHT=<n>, NFSU2_PART_TAILLIGHT=<n>, NFSU2_PART_FRONT_BUMPER=<kit>,
+    // NFSU2_PART_REAR_BUMPER=<kit> and NFSU2_PART_SKIRT=<kit>.  Loads the universal part files
     // through `read` (game path -> bytes); the car-specific panels need no extra file.
     static InstalledParts InstalledPartsFromEnvironment(
         const std::function<std::vector<uint8_t>(const char *)> &read);
