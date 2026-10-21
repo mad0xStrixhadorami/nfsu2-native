@@ -140,6 +140,7 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     }
     // The stock body as assembled for racing (PlayerCar), drawn with GL when available.
     PlayerCar assembled;
+    m_previewBodyStylesKnown = false;
     m_carPreviewModel.clear();
     PlayerCar::Wheel wheels[4];
     PlayerCar::InstalledParts installedParts = PlayerCar::InstalledPartsFromEnvironment(
@@ -177,6 +178,8 @@ bool FENativeInterface::LoadCarPreview(const char *model)
     if (m_previewPartSkirt > 0)
         installedParts.skirt = m_previewPartSkirt;
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
+        m_previewBodyStyles = assembled.BodyStyles();
+        m_previewBodyStylesKnown = true;
         m_carPreviewModel = assembled.Model();
         m_carPreviewSlots = assembled.TriangleTextures();
         m_carPreviewRims = assembled.TriangleRims();
@@ -582,6 +585,13 @@ void FENativeInterface::SetPreviewTaillightPart(int style)
     m_previewPartTaillight = style;
     if (!m_carPreviewTris.empty())
         SetPreviewCar(m_previewCarName);
+}
+
+bool FENativeInterface::PreviewHasBodyStyle(int partId, int style) const
+{
+    if (!m_previewBodyStylesKnown)
+        return true;
+    return m_previewBodyStyles.Has(partId, style);
 }
 
 void FENativeInterface::SetPreviewFrontBumperPart(int kit)

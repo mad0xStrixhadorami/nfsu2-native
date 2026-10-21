@@ -66,9 +66,23 @@ struct NamedSolid {
         return nullptr;
     }
 };
+// Body-panel styles present in a car's GEOMETRY.BIN (ISSUES.md #192).  The GLOBALB catalogue
+// lists every body-kit design for every car, but a car ships only the panels it can mount: the
+// SKYLINE has 25 of the 30 kits and the COROLLA only 10 of the 14 headlight/taillight styles.
+// A missing style must be hidden from the shop and must never replace the stock panel.
+struct BodyStyleSet {
+    uint32_t frontBumper = 0; // part id 0x1: <CAR>_KIT<NN>_FRONT_BUMPER
+    uint32_t rearBumper = 0;  // 0x2:       <CAR>_KIT<NN>_REAR_BUMPER
+    uint32_t skirt = 0;       // 0xb:       <CAR>_KIT<NN>_SKIRT
+    uint32_t hood = 0;        // 9:         <CAR>_STYLE<NN>_HOOD[_LEFT|_RIGHT]
+    uint32_t headlight = 0;   // 0xe:       <CAR>_STYLE<NN>_HEADLIGHT
+    uint32_t taillight = 0;   // 0xf:       <CAR>_STYLE<NN>_BRAKELIGHT
+    bool Has(int partId, int style) const;
+};
 // Apply a row-vector matrix (translation in [12..14]) to a point.
 Point TransformPoint(const float matrix[16], const Point &p);
 // Apply NamedSolid::transform to a solid-space point.
 Point TransformPoint(const NamedSolid &solid, const Point &p);
 std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size);
+BodyStyleSet FindBodyStyles(const std::vector<NamedSolid> &solids);
 } // namespace SolidMesh

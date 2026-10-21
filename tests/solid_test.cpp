@@ -70,5 +70,27 @@ int main()
     assert(Near(marker->matrix[12], 1.5f) && Near(marker->matrix[13], -2.5f) &&
            Near(marker->matrix[14], 3.5f));
     assert(solids[0].FindMarker(0xbd7cf15e) == nullptr);
+
+    // Body-panel availability (#192): the catalogue lists designs a car may not ship.  The
+    // SKYLINE geometry has KIT01..18,20..22,24..26,29 but no KIT19/23/27/28/30; the COROLLA has
+    // no STYLE01..04 headlights.  Only names actually present may be offered or mounted.
+    std::vector<SolidMesh::NamedSolid> panels;
+    for (const char *name : {"TEST_KIT01_FRONT_BUMPER_", "TEST_KIT01_REAR_BUMPER_A",
+                             "TEST_KIT01_SKIRT_A", "TEST_KIT02_FRONT_BUMPER_",
+                             "TEST_KITW01_BODY_A", "TEST_KIT19_HOOD_UNDER_LE",
+                             "TEST_KIT23_HOOD_UNDER_RI", "TEST_STYLE01_HOOD_LEFT_A",
+                             "TEST_STYLE01_HOOD_RIGHT_", "TEST_STYLE01_HEADLIGHT_LEFT_A",
+                             "TEST_STYLE01_BRAKELIGHT_"}) {
+        SolidMesh::NamedSolid s;
+        s.name = name;
+        panels.push_back(std::move(s));
+    }
+    const SolidMesh::BodyStyleSet styles = SolidMesh::FindBodyStyles(panels);
+    assert(styles.Has(0x1, 1) && styles.Has(0x2, 1) && styles.Has(0xb, 1));
+    assert(styles.Has(0x1, 2) && !styles.Has(0x2, 2));
+    assert(!styles.Has(0x1, 19) && !styles.Has(0x1, 23) && !styles.Has(0x1, 0));
+    assert(styles.Has(9, 1) && styles.Has(0xe, 1) && styles.Has(0xf, 1));
+    assert(!styles.Has(9, 2) && !styles.Has(0xe, 2) && !styles.Has(0xf, 2));
+    assert(!styles.Has(9, 19) && !styles.Has(9, 23)); // KIT hood unders are not STYLE hoods
     return 0;
 }

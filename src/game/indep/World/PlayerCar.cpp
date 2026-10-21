@@ -24,41 +24,50 @@ bool Contains(const std::string &s, const char *part) { return s.find(part) != s
 // right half loses its LOD letter ("<CAR>_STYLE21_HOOD_RIGHT_"); the first solid with that name in
 // the file is the A level.  Matching the "_STYLE<NN>_HOOD" prefix covers the one-piece, left-half
 // and right-half hoods without a per-style table.
-bool IsInstalledPanel(const std::string &n, const PlayerCar::InstalledParts &parts)
+bool IsInstalledPanel(const std::string &n, const PlayerCar::InstalledParts &parts,
+                      const SolidMesh::BodyStyleSet &styles)
 {
+    // A catalogue style the car does not ship is treated as stock (#192): the shop hides those
+    // records, and an old save that still names one must not leave a hole in the body.
+    const int hood = styles.Has(9, parts.hood) ? parts.hood : 0;
+    const int headlight = styles.Has(0xe, parts.headlight) ? parts.headlight : 0;
+    const int taillight = styles.Has(0xf, parts.taillight) ? parts.taillight : 0;
+    const int frontBumper = styles.Has(0x1, parts.frontBumper) ? parts.frontBumper : 0;
+    const int rearBumper = styles.Has(0x2, parts.rearBumper) ? parts.rearBumper : 0;
+    const int skirt = styles.Has(0xb, parts.skirt) ? parts.skirt : 0;
     char tag[32];
-    if (parts.hood > 0) {
-        snprintf(tag, sizeof(tag), "_STYLE%02d_HOOD", parts.hood);
+    if (hood > 0) {
+        snprintf(tag, sizeof(tag), "_STYLE%02d_HOOD", hood);
         if (Contains(n, tag))
             return true;
         // The split hoods (styles 21-25) ship their own underside; the rest reuse KIT00's.
-        snprintf(tag, sizeof(tag), "_KIT%02d_HOOD_UNDER", parts.hood);
+        snprintf(tag, sizeof(tag), "_KIT%02d_HOOD_UNDER", hood);
         if (Contains(n, tag))
             return true;
     }
-    if (parts.headlight > 0) {
-        snprintf(tag, sizeof(tag), "_STYLE%02d_HEADLIGHT", parts.headlight);
+    if (headlight > 0) {
+        snprintf(tag, sizeof(tag), "_STYLE%02d_HEADLIGHT", headlight);
         if (Contains(n, tag))
             return true;
     }
-    if (parts.taillight > 0) {
-        snprintf(tag, sizeof(tag), "_STYLE%02d_BRAKELIGHT", parts.taillight);
+    if (taillight > 0) {
+        snprintf(tag, sizeof(tag), "_STYLE%02d_BRAKELIGHT", taillight);
         if (Contains(n, tag))
             return true;
     }
     // The bumpers and skirts are kit panels (#190), e.g. SKYLINE_KIT17_FRONT_BUMPER_A.
-    if (parts.frontBumper > 0) {
-        snprintf(tag, sizeof(tag), "_KIT%02d_FRONT_BUMPER", parts.frontBumper);
+    if (frontBumper > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_FRONT_BUMPER", frontBumper);
         if (Contains(n, tag))
             return true;
     }
-    if (parts.rearBumper > 0) {
-        snprintf(tag, sizeof(tag), "_KIT%02d_REAR_BUMPER", parts.rearBumper);
+    if (rearBumper > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_REAR_BUMPER", rearBumper);
         if (Contains(n, tag))
             return true;
     }
-    if (parts.skirt > 0) {
-        snprintf(tag, sizeof(tag), "_KIT%02d_SKIRT", parts.skirt);
+    if (skirt > 0) {
+        snprintf(tag, sizeof(tag), "_KIT%02d_SKIRT", skirt);
         if (Contains(n, tag))
             return true;
     }
@@ -67,20 +76,21 @@ bool IsInstalledPanel(const std::string &n, const PlayerCar::InstalledParts &par
 
 // The stock panel that an installed style replaces.  The hood's underside (KIT00_HOOD_UNDER) is a
 // separate panel: one-piece hoods keep it, while the split styles 21-25 bring KIT<NN>_HOOD_UNDER.
-bool IsReplacedStockPanel(const std::string &n, const PlayerCar::InstalledParts &parts, bool splitHood)
+bool IsReplacedStockPanel(const std::string &n, const PlayerCar::InstalledParts &parts, bool splitHood,
+                          const SolidMesh::BodyStyleSet &styles)
 {
-    if (parts.hood > 0 && Contains(n, "_KIT00_HOOD") &&
+    if (styles.Has(9, parts.hood) && Contains(n, "_KIT00_HOOD") &&
         (splitHood || !Contains(n, "HOOD_UNDER")))
         return true;
-    if (parts.headlight > 0 && Contains(n, "_KIT00_HEADLIGHT"))
+    if (styles.Has(0xe, parts.headlight) && Contains(n, "_KIT00_HEADLIGHT"))
         return true;
-    if (parts.taillight > 0 && Contains(n, "_KIT00_BRAKELIGHT"))
+    if (styles.Has(0xf, parts.taillight) && Contains(n, "_KIT00_BRAKELIGHT"))
         return true;
-    if (parts.frontBumper > 0 && Contains(n, "_KIT00_FRONT_BUMPER"))
+    if (styles.Has(0x1, parts.frontBumper) && Contains(n, "_KIT00_FRONT_BUMPER"))
         return true;
-    if (parts.rearBumper > 0 && Contains(n, "_KIT00_REAR_BUMPER"))
+    if (styles.Has(0x2, parts.rearBumper) && Contains(n, "_KIT00_REAR_BUMPER"))
         return true;
-    if (parts.skirt > 0 && Contains(n, "_KIT00_SKIRT"))
+    if (styles.Has(0xb, parts.skirt) && Contains(n, "_KIT00_SKIRT"))
         return true;
     return false;
 }
@@ -287,11 +297,12 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triEngine.clear();
     m_triExhaust.clear();
     std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(geometry.data(), geometry.size());
+    m_bodyStyles = SolidMesh::FindBodyStyles(solids);
     // A split hood (style 21-25 on the roster cars) has its own KIT<NN>_HOOD_UNDER_LE/RI pair, so
     // its stock KIT00 underside must go too (#188).  Detect it from the file rather than hard-coding
     // the style range.
     bool splitHood = false;
-    if (parts && parts->hood > 0) {
+    if (parts && m_bodyStyles.Has(9, parts->hood)) {
         char underTag[32];
         snprintf(underTag, sizeof(underTag), "_KIT%02d_HOOD_UNDER", parts->hood);
         for (const SolidMesh::NamedSolid &s : solids)
@@ -299,6 +310,19 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 splitHood = true;
                 break;
             }
+    }
+    if (parts && getenv("NFSU2_PART_DEBUG")) {
+        auto missing = [&](int partId, int style, const char *name) {
+            if (style > 0 && !m_bodyStyles.Has(partId, style))
+                printf("[Parts] %s style %d is not in this car's geometry; stock panel kept (#192)\n",
+                       name, style);
+        };
+        missing(9, parts->hood, "hood");
+        missing(0xe, parts->headlight, "headlight");
+        missing(0xf, parts->taillight, "taillight");
+        missing(0x1, parts->frontBumper, "front bumper");
+        missing(0x2, parts->rearBumper, "rear bumper");
+        missing(0xb, parts->skirt, "side skirt");
     }
     // Dev aid: NFSU2_SOLID_DUMP=1 lists every named solid with its header transform and bounds,
     // for finding parts the port has not mounted yet (ISSUES #178).
@@ -356,7 +380,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // installed style here.
         if (parts && (parts->hood || parts->headlight || parts->taillight || parts->frontBumper ||
                       parts->rearBumper || parts->skirt) &&
-            IsInstalledPanel(n, *parts)) {
+            IsInstalledPanel(n, *parts, m_bodyStyles)) {
             if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
                 continue;
             AddFiltered(s, m_model, m_triTex);
@@ -365,7 +389,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             continue;
         }
         // The installed style replaces its stock panel; the hood underside stays (see the helper).
-        if (parts && IsReplacedStockPanel(n, *parts, splitHood))
+        if (parts && IsReplacedStockPanel(n, *parts, splitHood, m_bodyStyles))
             continue;
         if (traffic) {
             if (!Contains(n, "_BODY_") && !Contains(n, "_TIRE_"))

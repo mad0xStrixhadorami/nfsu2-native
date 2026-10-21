@@ -108,6 +108,9 @@ public:
     const std::vector<uint8_t> &TriangleExhausts() const { return m_triExhaust; }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
+    // Body-panel styles actually present in the loaded car file (#192).  The shop hides catalogue
+    // designs a car does not ship and LoadModel keeps the stock panel when a fitted style is absent.
+    const SolidMesh::BodyStyleSet &BodyStyles() const { return m_bodyStyles; }
 
     void Place(float x, float y, float z, float yaw);
     // throttle/brake/steer in [-1, 1]; dt in seconds. walls: collide with steep world triangles
@@ -133,6 +136,7 @@ public:
                                                  m_triCaliper = other.m_triCaliper, m_triMirror = other.m_triMirror,
                                                  m_triSpoiler = other.m_triSpoiler, m_triRoof = other.m_triRoof,
                                                  m_triEngine = other.m_triEngine, m_triExhaust = other.m_triExhaust,
+                                                 m_bodyStyles = other.m_bodyStyles,
                                                  m_rideHeight = other.m_rideHeight,
                                                  m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
 
@@ -148,6 +152,7 @@ private:
     std::vector<uint8_t> m_triRoof;
     std::vector<uint8_t> m_triEngine;
     std::vector<uint8_t> m_triExhaust;
+    SolidMesh::BodyStyleSet m_bodyStyles;
     float m_x = 0, m_y = 0, m_z = 0, m_yaw = 0;
     float m_pitch = 0, m_roll = 0;
     float m_speed = 0; // m/s along the heading

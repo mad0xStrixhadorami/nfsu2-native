@@ -146,6 +146,10 @@ public:
     int PreviewTaillightPart() const { return m_previewPartTaillight; }
     // Bumpers and side skirts fitted by the Body Shop (#190).  These are the car file's KIT<NN>
     // panels; the value is the catalogue's kit number, 0 keeps the stock panel.
+    // True if the previewed car's GEOMETRY.BIN contains a panel for this catalogue part id/style
+    // (#192).  Body cards hide designs the car does not ship; before the first preview load the
+    // answer is optimistic so an unloaded preview never empties the shop.
+    bool PreviewHasBodyStyle(int partId, int style) const;
     void SetPreviewFrontBumperPart(int kit);
     int PreviewFrontBumperPart() const { return m_previewPartFrontBumper; }
     void SetPreviewRearBumperPart(int kit);
@@ -438,6 +442,8 @@ private:
     int m_previewPartFrontBumper = 0;   // fitted front bumper kit 1..30 (#190)
     int m_previewPartRearBumper = 0;    // fitted rear bumper kit 1..30 (#190)
     int m_previewPartSkirt = 0;         // fitted side skirt kit 1..30 (#190)
+    SolidMesh::BodyStyleSet m_previewBodyStyles; // body panels present in the previewed car (#192)
+    bool m_previewBodyStylesKnown = false;
     uint32_t m_previewRoof = 0; // 0 = body colour; else 1..Count(gloss set)
     uint32_t m_previewRoofSet = PaintCatalog::kGloss;
     uint32_t m_previewEngine = 0; // 0 = stock engine accent colour; else 1..Count(hoses set)

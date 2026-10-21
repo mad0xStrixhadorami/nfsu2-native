@@ -369,6 +369,70 @@ std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size)
     return out;
 }
 
+namespace {
+
+// The two-digit style in a name such as SKYLINE_STYLE02_HOOD_LEFT_A or
+// SKYLINE_KIT17_FRONT_BUMPER_A.  The suffix check keeps KIT00_HOOD_UNDER out of the hood set.
+int TwoDigitStyle(const std::string &name, const char *prefix, const char *suffix)
+{
+    const size_t at = name.find(prefix);
+    if (at == std::string::npos)
+        return -1;
+    const size_t digits = at + std::strlen(prefix);
+    if (digits + 2 > name.size() || name[digits] < '0' || name[digits] > '9' ||
+        name[digits + 1] < '0' || name[digits + 1] > '9')
+        return -1;
+    if (name.find(suffix, digits + 2) == std::string::npos)
+        return -1;
+    return (name[digits] - '0') * 10 + (name[digits + 1] - '0');
+}
+
+} // namespace
+
+bool BodyStyleSet::Has(int partId, int style) const
+{
+    if (style < 1 || style > 31)
+        return false;
+    uint32_t mask = 0;
+    switch (partId) {
+    case 0x1: mask = frontBumper; break;
+    case 0x2: mask = rearBumper; break;
+    case 0xb: mask = skirt; break;
+    case 9: mask = hood; break;
+    case 0xe: mask = headlight; break;
+    case 0xf: mask = taillight; break;
+    default: return false;
+    }
+    return (mask & (1u << style)) != 0;
+}
+
+BodyStyleSet FindBodyStyles(const std::vector<NamedSolid> &solids)
+{
+    BodyStyleSet out;
+    for (const NamedSolid &s : solids) {
+        const std::string &n = s.name;
+        int style = TwoDigitStyle(n, "_KIT", "_FRONT_BUMPER");
+        if (style > 0)
+            out.frontBumper |= 1u << style;
+        style = TwoDigitStyle(n, "_KIT", "_REAR_BUMPER");
+        if (style > 0)
+            out.rearBumper |= 1u << style;
+        style = TwoDigitStyle(n, "_KIT", "_SKIRT");
+        if (style > 0)
+            out.skirt |= 1u << style;
+        style = TwoDigitStyle(n, "_STYLE", "_HOOD");
+        if (style > 0)
+            out.hood |= 1u << style;
+        style = TwoDigitStyle(n, "_STYLE", "_HEADLIGHT");
+        if (style > 0)
+            out.headlight |= 1u << style;
+        style = TwoDigitStyle(n, "_STYLE", "_BRAKELIGHT");
+        if (style > 0)
+            out.taillight |= 1u << style;
+    }
+    return out;
+}
+
 Point TransformPoint(const float matrix[16], const Point &p)
 {
     const float *m = matrix;

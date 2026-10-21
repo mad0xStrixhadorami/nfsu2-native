@@ -1318,6 +1318,12 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewHeadlightPart(0);
         if (!getenv("NFSU2_PART_TAILLIGHT"))
             m_fe->SetPreviewTaillightPart(0);
+        if (!getenv("NFSU2_PART_FRONT_BUMPER"))
+            m_fe->SetPreviewFrontBumperPart(0);
+        if (!getenv("NFSU2_PART_REAR_BUMPER"))
+            m_fe->SetPreviewRearBumperPart(0);
+        if (!getenv("NFSU2_PART_SKIRT"))
+            m_fe->SetPreviewSkirtPart(0);
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -1660,16 +1666,20 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
         if (carType) {
             const std::vector<CarPart> &parts = m_fe->Parts().Parts(carType);
             for (size_t i = 0; i < parts.size(); ++i)
-                if (parts[i].carbon && parts[i].level > 0 && parts[i].partId == 9)
+                if (parts[i].carbon && parts[i].level > 0 && parts[i].partId == 9 &&
+                    m_fe->PreviewHasBodyStyle(9, parts[i].style))
                     m_partsShopItems.push_back({carType, uint16_t(i), 0x24911e04});
         }
     } else {
         // Universal packs hold only their own slot (part id 0xc/7/0x10); the body panels are
-        // records of the previewed car's type, filtered by part id.
+        // records of the previewed car's type, filtered by part id.  A car ships only some of the
+        // catalogue designs (#192: 25 of 30 kits on the SKYLINE, 10 of 14 Corolla lights), so hide
+        // the styles its GEOMETRY.BIN has no solid for instead of selling a no-op panel.
         const uint32_t type = card.universal ? UniversalPartsType(card.partId) : carType;
         const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
         for (size_t i = 0; i < parts.size(); ++i)
-            if (!parts[i].carbon && parts[i].level > 0 && parts[i].partId == card.partId)
+            if (!parts[i].carbon && parts[i].level > 0 && parts[i].partId == card.partId &&
+                (card.universal || m_fe->PreviewHasBodyStyle(card.partId, parts[i].style)))
                 m_partsShopItems.push_back({type, uint16_t(i), card.icon});
     }
 
@@ -3083,6 +3093,9 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewHoodPart(car.hood, car.hoodCarbon);
     m_fe->SetPreviewHeadlightPart(car.headlight);
     m_fe->SetPreviewTaillightPart(car.taillight);
+    m_fe->SetPreviewFrontBumperPart(car.frontBumper);
+    m_fe->SetPreviewRearBumperPart(car.rearBumper);
+    m_fe->SetPreviewSkirtPart(car.skirt);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use
