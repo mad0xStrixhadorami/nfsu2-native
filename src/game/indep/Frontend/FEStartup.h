@@ -171,8 +171,9 @@ private:
     // UI_GenericParts_Browser.fng (factory 0x002a50c0, ctor 0x002a50f8, refresh 0x002a6be0): the
     // Body Shop.  CATEGORY_MASTER/CATEGORY_ICON is the part-slot carousel (0x002a76e8 in
     // 0x002a7e70), MINI_MASTER/PARTS_ICON the item carousel; the selected item's name and price go
-    // into the package's own PART_NAME (0xd28b9316) and PRICE (0x380b632) strings.  The port wires
-    // up the Spoilers and Carbon Fiber slots only (ISSUES #185).
+    // into the package's own PART_NAME (0xd28b9316) and PRICE (0x380b632) strings.  Every slot
+    // card the port can mount is wired up: front/rear bumpers, side skirts, spoilers, hoods, roof
+    // scoops, headlights, taillights, exhaust tips, wide-body kits and Carbon Fiber (#185-#193).
     void HandlePartsBrowserLoaded(FEPackage *pkg);
     void HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg);
     void RefreshPartsBrowserList(FEPackage *pkg);
@@ -193,6 +194,11 @@ private:
     // GenericDialog_SMALL.fng (0x0025fc70/0x00260958): the shop's "not enough bank" prompt, which
     // 0x002a7278 opens when the career balance is below the part's price (ISSUES #189).
     void ShowMessageDialog(uint32_t messageLabel);
+    // The same one-button prompt with a port-written message.  The split-screen flow is the only
+    // user (#194): the original starts a two-player race there, which the port has no second
+    // viewport or player for.  The game's own "Not Available" text cannot be borrowed because the
+    // language bank keys it by an internal label hash, not by bStringHash of the visible string.
+    void ShowMessageDialogText(const char *text);
     void HandleDialogLoaded(FEPackage *pkg);
     bool CloseMessageDialog();
     FEPackage *m_dialogPackage = nullptr;   // pushed over the shop while the prompt is up

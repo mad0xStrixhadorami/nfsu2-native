@@ -663,6 +663,14 @@ void FEStartupSequence::Tick(uint32_t nowMs)
                 ApplyOwnedCarPreview(*car);
             NavigateTo(active->GetName(), "UI_ChooseCustomizeCategory.fng");
         }
+        else if ((pressed & FENativeInterface::kPadAccept) && m_raceMode == 4) {
+            // Split-screen: the original's car select Accept starts a two-player race (0x001f32f8
+            // dispatches on 0x506b50).  The port renders one viewport and has one player, so the
+            // press would be a silent dead end; say so with the #189 prompt (ISSUES #194).  Back
+            // still returns to the mode select.
+            printf("[Menu] Split-screen is not available in the native build\n");
+            ShowMessageDialogText("Split-screen is not available in the native build");
+        }
         else if ((pressed & FENativeInterface::kPadAccept) &&
                  (m_raceMode == 2 || m_raceMode == 0 || m_raceMode == 8 || m_raceMode == 1)) {
             if (m_raceMode == 8) {
@@ -1852,6 +1860,11 @@ Career::OwnedCar *FEStartupSequence::ShopCar()
 
 void FEStartupSequence::ShowMessageDialog(uint32_t messageLabel)
 {
+    ShowMessageDialogText(m_fe->LanguageText(messageLabel).c_str());
+}
+
+void FEStartupSequence::ShowMessageDialogText(const char *text)
+{
     if (m_dialogPackage)
         return;
     FEPackage *pkg = m_engine->PushPackage("genericdialog_small.fng", 0, 0xff);
@@ -1860,10 +1873,9 @@ void FEStartupSequence::ShowMessageDialog(uint32_t messageLabel)
         return;
     }
     m_dialogPackage = pkg;
-    const std::string text = m_fe->LanguageText(messageLabel);
     // The package ships the memory-card prompt; the caller's label replaces it.  0x00292888 sets
     // the same centred text object from the label 0x00260b40 stored.
-    FENativeInterface::SetString(pkg, kDialogMessage, text.c_str());
+    FENativeInterface::SetString(pkg, kDialogMessage, text);
     // 0x00260170 selects the one-button form: the manager shows the centred "Yes" and drops the
     // Yes/No pair the two-button form uses.  Hide the pair together with its backing bars.
     ShowDialogControl(pkg, kDialogYesLeft, false);
@@ -1872,7 +1884,7 @@ void FEStartupSequence::ShowMessageDialog(uint32_t messageLabel)
     ShowDialogControl(pkg, kDialogNoBar, false);
     ShowDialogControl(pkg, kDialogYesCentre, true, true);
     ShowDialogControl(pkg, kDialogYesCentreBar, true);
-    printf("[Dialog] %s\n", text.c_str());
+    printf("[Dialog] %s\n", text);
 }
 
 void FEStartupSequence::HandleDialogLoaded(FEPackage *pkg)
