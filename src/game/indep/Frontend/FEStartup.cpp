@@ -4196,6 +4196,20 @@ void FEStartupSequence::RefreshBuyParts(FEPackage *pkg)
         FENativeInterface::SetCenter(cursor, x, kPartRowY[m_buySel - m_buyTop] - kPartRowY[0] - 63.0f);
     }
     UpdateBuyPartsStats(pkg);
+    // The scroll bar: 688a1551 is the 8.5 x 49.6 track between the arrows and 3fbb7a4e the 16 x 16 knob,
+    // which slides along it with the window's position in the list.
+    if (FEObject *track = pkg->FindObjectByHash(0x688a1551))
+        if (FEObject *knob = pkg->FindObjectByHash(0x3fbb7a4e)) {
+            float tx, ty, tw, th, kx, ky, kw, kh;
+            FENativeInterface::GetCenter(track, tx, ty);
+            FENativeInterface::GetSize(track, tw, th);
+            FENativeInterface::GetCenter(knob, kx, ky);
+            FENativeInterface::GetSize(knob, kw, kh);
+            const float span = th - kh;
+            const float frac = count > kPartRows ? float(m_buyTop) / float(count - kPartRows) : 0.0f;
+            FENativeInterface::SetCenter(knob, kx, ty - th * 0.5f + kh * 0.5f + span * frac);
+            FENativeInterface::SetObjectVisible(knob, count > kPartRows);
+        }
     // Scroll arrows: up when rows are above the window, down when below.
     FENativeInterface::SetAlpha(pkg, 0x444969fd, m_buyTop > 0 ? 255 : 0);
     FENativeInterface::SetAlpha(pkg, 0x444969fe, m_buyTop + kPartRows < count ? 255 : 0);
