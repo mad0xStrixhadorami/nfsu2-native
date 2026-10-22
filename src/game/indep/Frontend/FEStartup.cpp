@@ -3961,6 +3961,8 @@ void FEStartupSequence::RefreshPerformancePackage(FEPackage *pkg)
         const bool available = part && PerfPartAvailable(uint16_t(part->id));
         FENativeInterface::SetVisible(pkg, priceObj, available);
         FENativeInterface::SetVisible(pkg, iconObj, part && !available);
+        if (part && !available)
+            FENativeInterface::SetAlpha(pkg, iconObj, 255); // the checkmark ships at alpha 0
         if (part) {
             FENativeInterface::SetLanguageHash(pkg, nameObj, part->nameHash);
             char price[24];
