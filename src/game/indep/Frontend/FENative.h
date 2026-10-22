@@ -17,6 +17,7 @@
 #include "game/indep/Frontend/PartCatalog.h"
 #include "game/indep/Frontend/PerfPackages.h"
 #include "game/indep/Frontend/PerfModel.h"
+#include "game/indep/Frontend/TuneSystem.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -198,9 +199,16 @@ public:
     const PartCatalog &Parts() const { return m_parts; }
     const PerfPackages &PerfParts() const { return m_perf; }
     static void ReadCarPerformance(const uint8_t *record, PlayerCar::Performance &out);
-    std::vector<uint8_t> TunedCarRecord(const std::string &folder, const std::vector<uint16_t> &parts) const;
+    std::vector<uint8_t> TunedCarRecord(const std::string &folder, const std::vector<uint16_t> &parts,
+                                        const std::vector<uint8_t> &tune = {}) const;
+    const Tune::Table &TuneTable() const { return m_tuneTable; }
+    // The stock record and the part-tuned 0x2b0-byte frame a tuning session starts from (empty if unknown).
+    bool TuneInputs(const std::string &folder, const std::vector<uint16_t> &parts, const uint8_t *&record,
+                    std::vector<uint8_t> &frame) const;
     // The performance parts fitted to the car on show (the career car's OwnedCar::perfParts).
     void SetPreviewPerfParts(const std::vector<uint16_t> &parts) { m_previewPerfParts = parts; }
+    void SetPreviewTune(const std::vector<uint8_t> &tune) { m_previewTune = tune; }
+    const std::vector<uint8_t> &PreviewTune() const { return m_previewTune; }
     const std::vector<uint16_t> &PreviewPerfParts() const { return m_previewPerfParts; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
@@ -421,7 +429,9 @@ private:
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     PaintCatalog m_paint;                          // GLOBALB chunk 0x80034602 GLOSS set (#167)
     std::vector<uint16_t> m_previewPerfParts;
+    std::vector<uint8_t> m_previewTune;
     bool m_textInputMode = false;
+    Tune::Table m_tuneTable;                       // chunk 0x34a1a slider definitions (#207)
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)
     std::vector<PreviewTriangle> m_carPreviewTris;

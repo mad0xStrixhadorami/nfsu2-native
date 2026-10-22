@@ -1,0 +1,532 @@
+#include "game/indep/Frontend/TuneSystem.h"
+
+#include <algorithm>
+#include <cstring>
+
+namespace Tune {
+
+namespace {
+
+constexpr uint32_t kTuneChunk = 0x34a1a;
+constexpr size_t kEntrySize = 24;
+constexpr float kNoUi = -99.99f;       // DAT_005637b4 / b8: "no display range in the table"
+constexpr float kMinSpan = 0.01f;      // DAT_005637bc / c0
+constexpr float kBig = 100000.0f;      // DAT_00568c18 / 1c: the initial {min, max} = {+100000, -100000}
+constexpr float kBigBase = 10000000.0f; // DAT_005637c4 / c8
+
+uint32_t U32(const uint8_t *p)
+{
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+}
+float F32(const uint8_t *p)
+{
+    float v;
+    memcpy(&v, p, 4);
+    return v;
+}
+float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// A field's reference partner for 0x00320500: the mirrored axle fields.
+void Pair(int field, int &a, int &b)
+{
+    switch (field) {
+    case 0:
+    case 4:
+        a = 0, b = 4;
+        return;
+    case 2:
+    case 6:
+        a = 2, b = 6;
+        return;
+    case 3:
+    case 7:
+        a = 3, b = 7;
+        return;
+    case 0x15:
+    case 0x16:
+        a = 0x15, b = 0x16;
+        return;
+    default:
+        a = field, b = -1;
+    }
+}
+
+// 0x00321cb8 (the part that matters for the supported fields): the lowering is shown in cm or
+// inches (metres in the data).
+float UnitScale(int field, bool metric, bool toDisplay)
+{
+    if (field != 3 && field != 7)
+        return 1.0f;
+    if (metric)
+        return toDisplay ? 100.0f : 0.01f;
+    return toDisplay ? 39.37f : 0.0254f;
+}
+
+} // namespace
+
+bool Table::Parse(const uint8_t *container, size_t size)
+{
+    m_entries.clear();
+    for (size_t off = 0; off + 8 <= size;) {
+        const uint32_t id = U32(container + off);
+        const size_t len = U32(container + off + 4);
+        if (off + 8 + len > size)
+            break;
+        if (id == kTuneChunk) {
+            const uint8_t *data = container + off + 8;
+            for (size_t r = 0; r + kEntrySize <= len; r += kEntrySize) {
+                Entry e;
+                e.part = U32(data + r);
+                e.level = data[r + 4];
+                e.field = data[r + 5];
+                e.mode = data[r + 6];
+                e.min = F32(data + r + 8);
+                e.max = F32(data + r + 12);
+                e.uiLo = F32(data + r + 16);
+                e.uiHi = F32(data + r + 20);
+                m_entries.push_back(e);
+            }
+        }
+        off += 8 + len;
+    }
+    return !m_entries.empty();
+}
+
+const Entry *Table::Active(int field, const std::vector<uint16_t> &installed) const
+{
+    const Entry *best = nullptr;
+    for (const Entry &e : m_entries) {
+        if (e.field != field)
+            continue;
+        if (std::find(installed.begin(), installed.end(), uint16_t(e.part)) == installed.end())
+            continue;
+        if (!best || best->level < e.level)
+            best = &e;
+    }
+    return best;
+}
+
+Session::Session(const Table &table, const uint8_t *record, const std::vector<uint8_t> &workFrame,
+                 const std::vector<uint16_t> &installed)
+    : m_table(table), m_record(record, record + 0x890), m_work(workFrame), m_installed(installed),
+      m_setting(kSettingSize, 100), m_ref(kSettingSize, 0.0f)
+{
+    m_work.resize(0x2b0, 0);
+    m_part = m_work; // the part-tuned frame every Apply starts from
+    CaptureRefs();
+}
+
+bool Session::Supported(int field)
+{
+    switch (field) {
+    case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
+    case 0x12: case 0x13: case 0x14: case 0x15: case 0x16:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool Session::FieldActive(int field) const
+{
+    return Supported(field) && m_table.Active(field, m_installed) != nullptr;
+}
+
+float Session::RecM(size_t mem) const
+{
+    return F32(m_record.data() + mem + 8);
+}
+
+float *Session::WorkPtr(int field, int sub)
+{
+    size_t off = 0;
+    switch (field) {
+    case 3: off = 0x18 + size_t(sub) * 0x30; break;
+    case 7: off = 0x78 + size_t(sub) * 0x30; break;
+    case 0: off = 0x174; break;
+    case 1: off = 0x178 + size_t(sub) * 4; break;
+    case 2: off = 0x180; break;
+    case 4: off = 0x194; break;
+    case 5: off = 0x198 + size_t(sub) * 4; break;
+    case 6: off = 0x1a0; break;
+    case 8: off = 0x270; break;
+    case 9: off = 0x1b8 + size_t(sub) * 4; break;
+    case 0x12: off = 0x27c; break;
+    case 0x13: off = sub == 0 ? 0xdc : 0xe0; break;
+    case 0x14: off = sub == 0 ? 0xfc : 0x100; break;
+    case 0x15: off = 0x264; break;
+    case 0x16: off = 0x268; break;
+    default: return nullptr;
+    }
+    return reinterpret_cast<float *>(m_work.data() + off);
+}
+
+const float *Session::WorkPtr(int field, int sub) const
+{
+    return const_cast<Session *>(this)->WorkPtr(field, sub);
+}
+
+// 0x00320e20: the working copy's value (the mean of the two axle entries for the mirrored fields).
+float Session::ReadValue(int field, int sub) const
+{
+    switch (field) {
+    case 1: case 5: case 0x13: case 0x14:
+        return (*WorkPtr(field, 0) + *WorkPtr(field, 1)) * 0.5f;
+    case 3: case 7: {
+        // 0x00320e20: the stock wheel height minus the working copy's (the lowering).
+        const size_t off = field == 3 ? 0x18 : 0x78;
+        return F32(m_record.data() + 0x118 + off + 0 * 0x30) - *WorkPtr(field, 0);
+    }
+    default:
+        return *WorkPtr(field, sub);
+    }
+}
+
+void Session::CaptureRefs()
+{
+    std::fill(m_ref.begin(), m_ref.end(), 0.0f);
+    for (int f = 0; f < 0x17; ++f)
+        if (FieldActive(f))
+            m_ref[size_t(f)] = ReadValue(f, 0);
+}
+
+// 0x00321118: the active table entry moves the bounds (mode 0/1 absolute, 2/3 fraction of the span,
+// 4 clamp).
+void Session::AdjustByEntry(int field, float &lo, float &hi) const
+{
+    const Entry *e = m_table.Active(field, m_installed);
+    if (!e)
+        return;
+    const float span = hi - lo;
+    if (e->mode == 2 || e->mode == 3) {
+        const float nlo = lo + e->min * span;
+        hi = hi + e->max * span;
+        lo = nlo;
+    } else if (e->mode < 2) {
+        lo = lo + e->min;
+        hi = hi + e->max;
+    } else if (e->mode == 4) {
+        lo = std::max(lo, e->min);
+        hi = std::max(e->max, hi);
+    }
+}
+
+// 0x00320670 (and its axle helpers 0x00320c40 / 0x00320a88).
+bool Session::Bounds(int field, int sub, bool average, float &lo, float &hi) const
+{
+    float l = kBig, h = -kBig;
+    auto take = [&](float v) {
+        l = std::min(l, v);
+        h = std::max(h, v);
+    };
+    switch (field) {
+    case 0: case 4:
+        for (size_t m : {0x284u, 0x2a4u, 0x6d4u, 0x6f4u})
+            take(RecM(m));
+        break;
+    case 2: case 6:
+        for (size_t m : {0x290u, 0x2b0u, 0x6e0u, 0x700u})
+            take(RecM(m));
+        break;
+    case 8:
+        take(RecM(0x380));
+        take(RecM(0x6cc));
+        break;
+    case 9:
+        take(RecM(0x2c8));
+        take(RecM(0x4e8));
+        break;
+    case 0x15: case 0x16:
+        take(RecM(0x374));
+        take(RecM(0x374) + RecM(0x6b0) + RecM(0x6a0));
+        take(RecM(0x378));
+        take(RecM(0x378) + RecM(0x6b4) + RecM(0x6a4));
+        break;
+    case 0x12:
+        l = 0.0f;
+        h = 1.0f;
+        break;
+    case 3: case 7: {
+        // The pair of lowering limits at 0x714 / 0x718, negated, always including zero.
+        const float a = -RecM(0x714), b = -RecM(0x718);
+        l = std::min(std::min(a, b), 0.0f);
+        h = std::max(std::max(a, b), 0.0f);
+        break;
+    }
+    case 1: case 5: {
+        // 0x00320c40: per axle {stock, upgrade} pairs for field 1 at 0x288 / 0x6d8 and for field 5
+        // at 0x2a8 / 0x6f8, each moved by its own table entry.
+        float e[8];
+        for (int i = 0; i < 2; ++i) {
+            e[i] = RecM(0x288 + size_t(i) * 4);
+            e[4 + i] = RecM(0x6d8 + size_t(i) * 4);
+            AdjustByEntry(1, e[i], e[4 + i]);
+            e[2 + i] = RecM(0x2a8 + size_t(i) * 4);
+            e[6 + i] = RecM(0x6f8 + size_t(i) * 4);
+            AdjustByEntry(5, e[2 + i], e[6 + i]);
+        }
+        const int u = field == 1 ? 0 : 1;
+        if (!average) {
+            lo = e[u * 2 + sub];
+            hi = e[4 + u * 2 + sub];
+        } else {
+            lo = (e[u * 2] + e[u * 2 + 1]) * 0.5f;
+            hi = (e[4 + u * 2] + e[4 + u * 2 + 1]) * 0.5f;
+        }
+        return true;
+    }
+    case 0x13: case 0x14: {
+        // 0x00320a88: tyre pairs at 0x1ec / 0x65c, 0x1f0 / 0x660 (field 0x13) and 0x20c / 0x67c,
+        // 0x210 / 0x680 (field 0x14).
+        float d[8];
+        d[0] = RecM(0x1ec); d[4] = RecM(0x65c);
+        AdjustByEntry(0x13, d[0], d[4]);
+        d[1] = RecM(0x1f0); d[5] = RecM(0x660);
+        AdjustByEntry(0x13, d[1], d[5]);
+        d[2] = RecM(0x20c); d[6] = RecM(0x67c);
+        AdjustByEntry(0x14, d[2], d[6]);
+        d[3] = RecM(0x210); d[7] = RecM(0x680);
+        AdjustByEntry(0x14, d[3], d[7]);
+        const int u = field != 0x13;
+        if (!average) {
+            lo = d[u * 2 + sub];
+            hi = d[4 + u * 2 + sub];
+        } else {
+            lo = (d[u * 2] + d[u * 2 + 1]) * 0.5f;
+            hi = (d[4 + u * 2] + d[4 + u * 2 + 1]) * 0.5f;
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+    AdjustByEntry(field, l, h);
+    lo = l;
+    hi = h;
+    return true;
+}
+
+// 0x00320500: the reference a slider range is built around - the larger of a mirrored pair's
+// references (the smaller for the sign-flipped fields).
+float Session::Base(int field, int sub) const
+{
+    (void)sub;
+    int a, b;
+    Pair(field, a, b);
+    const float sign = Sign(field);
+    float v = sign <= 0.0f ? kBigBase : -kBigBase;
+    for (int f : {a, b}) {
+        if (f == -1)
+            continue;
+        const float r = m_ref[Index(f, 0)];
+        v = sign <= 0.0f ? std::min(v, r) : std::max(v, r);
+    }
+    return v;
+}
+
+// 0x003201f0 (physical, no display conversion).
+bool Session::SliderRange(int field, int sub, float &lo, float &hi) const
+{
+    const Entry *e = m_table.Active(field, m_installed);
+    if (!e)
+        return false;
+    float b0, b1;
+    if (!Bounds(field, sub, true, b0, b1))
+        return false;
+    const float base = Base(field, sub);
+    const float span = b1 - b0;
+    switch (e->mode) {
+    case 2:
+        if (Sign(field) > 0.0f) {
+            lo = b0;
+            hi = std::min(b1, base + e->max * span);
+        } else {
+            lo = std::max(b0, base - e->max * span);
+            hi = b1;
+        }
+        break;
+    case 3:
+        lo = std::max(b0, base + e->min * span);
+        hi = std::min(b1, base + e->max * span);
+        break;
+    case 0:
+        if (Sign(field) > 0.0f) {
+            lo = b0;
+            hi = std::min(b1, base + e->max);
+        } else {
+            lo = std::max(b0, base - e->max);
+            hi = b1;
+        }
+        break;
+    case 1:
+        lo = std::max(b0, base + e->min);
+        hi = std::min(b1, base + e->max);
+        break;
+    case 4:
+        lo = e->min;
+        hi = e->max;
+        break;
+    default:
+        lo = b0;
+        hi = b1;
+    }
+    if (lo == hi)
+        hi = lo + kMinSpan;
+    return true;
+}
+
+// 0x00320030: flag 1 gives the display range (the table's when it has one).
+bool Session::DisplayRange(int field, int sub, float &lo, float &hi) const
+{
+    const Entry *e = m_table.Active(field, m_installed);
+    if (!e)
+        return false;
+    if (!Bounds(field, sub, true, lo, hi))
+        return false;
+    lo *= UnitScale(field, m_metric, true);
+    hi *= UnitScale(field, m_metric, true);
+    if (e->uiLo != kNoUi)
+        lo = e->uiLo;
+    if (e->uiHi != kNoUi)
+        hi = e->uiHi;
+    if (hi < lo)
+        std::swap(lo, hi);
+    if (lo == hi)
+        hi = lo + kMinSpan;
+    return true;
+}
+
+float Session::ToDisplay(float physical, int field) const
+{
+    float r0, r1, r2, r3;
+    if (!Bounds(field, 0, false, r0, r1) || !DisplayRange(field, 0, r2, r3))
+        return physical;
+    if (r0 == r1)
+        r1 = r0 + kMinSpan;
+    const float c = Clamp(physical, std::min(r0, r1), std::max(r0, r1));
+    return r2 + (c - r0) / (r1 - r0) * (r3 - r2);
+}
+
+bool Session::SliderRangeDisplay(int field, int sub, float &lo, float &hi) const
+{
+    float pl, ph;
+    if (!SliderRange(field, sub, pl, ph))
+        return false;
+    lo = ToDisplay(pl, field);
+    hi = ToDisplay(ph, field);
+    if (hi < lo)
+        std::swap(lo, hi);
+    if (lo == hi)
+        hi = lo + kMinSpan;
+    return true;
+}
+
+float Session::Step(int field) const
+{
+    float lo, hi;
+    return SliderRangeDisplay(field, 0, lo, hi) ? (hi - lo) / 30.0f : 0.0f;
+}
+
+float Session::ToPhysical(float display, int field) const
+{
+    float r0, r1, r2, r3;
+    if (!Bounds(field, 0, false, r0, r1) || !DisplayRange(field, 0, r2, r3))
+        return display;
+    if (r0 == r1)
+        r1 = r0 + kMinSpan;
+    const float c = Clamp(display, std::min(r2, r3), std::max(r2, r3));
+    return r0 + (c - r2) / (r3 - r2) * (r1 - r0);
+}
+
+// 0x003211f8: the physical value goes into the working copy.
+void Session::WritePhysical(int field, int sub, float value)
+{
+    switch (field) {
+    case 1: case 5: case 0x13: case 0x14: {
+        float al, ah;
+        Bounds(field, 0, true, al, ah);
+        if (ah == al)
+            ah = al + kMinSpan;
+        const float v = Clamp(value, std::min(al, ah), std::max(al, ah));
+        for (int i = 0; i < 2; ++i) {
+            float lo, hi;
+            Bounds(field, i, false, lo, hi);
+            *WorkPtr(field, i) = lo + (v - al) / (ah - al) * (hi - lo);
+        }
+        break;
+    }
+    case 9:
+        *WorkPtr(9, 0) = value;
+        *WorkPtr(9, 1) = value;
+        break;
+    case 3: case 7: {
+        // 0x003211f8: the two wheels of the axle = stock height minus the lowering.
+        const size_t off = field == 3 ? 0x18 : 0x78;
+        for (int i = 0; i < 2; ++i)
+            *WorkPtr(field, i) = F32(m_record.data() + 0x118 + off + size_t(i) * 0x30) - value;
+        break;
+    }
+    default:
+        if (float *p = WorkPtr(field, sub))
+            *p = value;
+    }
+}
+
+float Session::Display(int field, int sub) const
+{
+    float lo, hi;
+    if (!SliderRange(field, sub, lo, hi))
+        return 0.0f;
+    const float pos = (float(Byte(field, sub)) - 100.0f) * 0.01f; // 0x0031f5e0
+    const float physical = Ref(field, sub) + Clamp(pos, -1.0f, 1.0f) * (hi - lo);
+    return ToDisplay(physical, field);
+}
+
+void Session::SetDisplay(int field, int sub, float display)
+{
+    float lo, hi;
+    if (!SliderRange(field, sub, lo, hi))
+        return;
+    const float physical = ToPhysical(display, field);
+    const float v = Clamp(physical, lo, hi);               // 0x0031fa50
+    const float pos = (v - Ref(field, sub)) / (hi - lo);
+    const int stored = int(pos * 100.0f + 100.5f);         // 0x0031f658
+    Byte(field, sub) = uint8_t(std::max(0, std::min(200, stored)));
+    WritePhysical(field, sub, v);
+}
+
+void Session::Reset(int field, int sub)
+{
+    Byte(field, sub) = 100;
+}
+
+void Session::ResetAll()
+{
+    std::fill(m_setting.begin(), m_setting.end(), uint8_t(100));
+}
+
+void Session::LoadSetting(const std::vector<uint8_t> &bytes)
+{
+    if (bytes.size() == kSettingSize)
+        m_setting = bytes;
+}
+
+// 0x0031fbe0: every active field's value = clamp(reference + position * span).
+void Session::Apply()
+{
+    m_work = m_part;
+    for (int f = 0; f < 0x17; ++f) {
+        if (!FieldActive(f))
+            continue;
+        float lo, hi;
+        if (!SliderRange(f, 0, lo, hi))
+            continue;
+        const float pos = Clamp((float(Byte(f, 0)) - 100.0f) * 0.01f, -1.0f, 1.0f);
+        const float v = Clamp(Ref(f, 0) + pos * (hi - lo), lo, hi);
+        WritePhysical(f, 0, v);
+    }
+}
+
+} // namespace Tune

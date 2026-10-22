@@ -383,6 +383,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCardMenuLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0) {
+        HandleSlidersLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -545,7 +549,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
             HandleCustomizeCategoryMessage(msg, pkg);
         return;
     }
-    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0)
+    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -782,6 +787,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCardMenuMessage(kMsgPadAccept, top);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCardMenuMessage(kMsgPadBack, top);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_PerformanceTuning_Sliders.fng") == 0) {
+        if (pressed & FENativeInterface::kPadUp)
+            HandleSlidersMessage(kMsgPadUp, top);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleSlidersMessage(kMsgPadDown, top);
+        else if (pressed & FENativeInterface::kPadLeft)
+            HandleSlidersMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleSlidersMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadLTrigger)
+            HandleSlidersMessage(kMsgPadLTrigger, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleSlidersMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -1485,6 +1506,7 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
         if (!getenv("NFSU2_PART_WIDEBODY"))
             m_fe->SetPreviewWideBodyPart(0);
         m_fe->SetPreviewPerfParts({}); // a Quick Race car is stock (#200)
+        m_fe->SetPreviewTune({});
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -3394,6 +3416,7 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewSkirtPart(car.skirt);
     m_fe->SetPreviewWideBodyPart(car.wideBody);
     m_fe->SetPreviewPerfParts(car.perfParts);
+    m_fe->SetPreviewTune(car.tune);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use
@@ -4550,8 +4573,17 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
             {0x214db7cf, 0x7ed554d1, "Aerodynamics tuning"}, {0xd6dc23ee, 0x6741bf48, "Tires & Brakes tuning"},
             {0x502abeed, 0x135bdd07, "ECU tuning"}, {0x06ef789c, 0x5ae08536, "Turbo tuning"},
             {0x9701bde4, 0x135c04da, "Nitrous tuning"}};
-        for (const auto &m : kMaster)
-            cards.push_back({m.icon, m.label, notPorted(m.name)});
+        int cardId = 0;
+        for (const auto &m : kMaster) {
+            if (cardId < 4) // Suspension / Drivetrain / Aerodynamics / Tires & Brakes (0x002c3e90)
+                cards.push_back({m.icon, m.label, [this, pkg, cardId]() {
+                                     m_tuneCard = cardId;
+                                     NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Sliders.fng");
+                                 }});
+            else
+                cards.push_back({m.icon, m.label, notPorted(m.name)});
+            ++cardId;
+        }
     }
     std::vector<FEIconScroller::Def> defs;
     m_cardActions.clear();
@@ -4588,6 +4620,181 @@ void FEStartupSequence::HandleCardMenuMessage(uint32_t msg, FEPackage *pkg)
         const size_t sel = m_cardScroller.Selected();
         if (sel < m_cardActions.size() && m_cardActions[sel])
             m_cardActions[sel]();
+    }
+}
+
+// UI_PerformanceTuning_Sliders.fng (ISSUES #214): the tuning sliders of the master menu's first four
+// cards (the class `0x002c3f68` builds the rows per card, DAT_005161f8 = the card id):
+//   0 Suspension     fields 3, 7 (Low / High), 0, 4, 1, 5, 2, 6 (Soft / Hard), 8 (Less / More)
+//   1 Drivetrain     fields 10..15 (gears, not ported), 9 (Top Speed / Acceleration)
+//   2 Aerodynamics   fields 0x15, 0x16 (Weak / Strong)
+//   3 Tires & Brakes fields 0x13, 0x14 (Weak / Strong), 0x12 (Rear / Front)
+// A row exists when the field is unlocked by an installed part (Tune::Session::FieldActive).  The
+// value is shown with "%2.2f" (0x00567c10) and a press of Left / Right moves it a thirtieth of the
+// slider's display span (0x002c1e30); Reset puts the slider back to 100 (neutral).  The row
+// pool is the package's own (one group + name / value / two end-label strings per row, the
+// widget's slider bars are not drawn).  Leaving writes the 41 slider bytes to the car and saves.
+namespace {
+struct TuneRowDef {
+    int field;
+    uint32_t left, right; // the end labels
+};
+const uint32_t kTuneFieldName[25] = {
+    0xfe22b6a2, 0xefdb2567, 0xb6d444b4, 0x0b161ec3, 0x93b7d1a3, 0x87c86448, 0xff0cbfd5, 0x534e99e4, 0x2430e6be,
+    0x6a71e798, 0x7d822b64, 0x7d822b65, 0x7d822b66, 0x7d822b67, 0x7d822b68, 0x7d822b69, 0x55c60293, 0xfbbdd223,
+    0x2308f06c, 0x3988faef, 0xe4eebd70, 0xd99fc2e4, 0x21d83e05, 0xc8b8fbf1, 0xfe82fde0};
+std::vector<TuneRowDef> TuneRowsForCard(int card)
+{
+    constexpr uint32_t kLow = 0x26033125, kHigh = 0xe66708f3, kSoft = 0xe66d2a8f, kHard = 0xe666e852,
+                       kLess = 0xe6692b0a, kMore = 0xe669e1c6, kWeak = 0xe66f30db, kStrong = 0x36c30e70,
+                       kRear = 0x001c0cc9, kFront = 0x02cbdc28, kTop = 0xcebfaa36, kAccel = 0x95a7073d;
+    switch (card) {
+    case 0:
+        return {{3, kLow, kHigh}, {7, kLow, kHigh}, {0, kSoft, kHard}, {4, kSoft, kHard}, {1, kSoft, kHard},
+                {5, kSoft, kHard}, {2, kSoft, kHard}, {6, kSoft, kHard}, {8, kLess, kMore}};
+    case 1:
+        return {{9, kTop, kAccel}};
+    case 2:
+        return {{0x15, kWeak, kStrong}, {0x16, kWeak, kStrong}};
+    case 3:
+        return {{0x13, kWeak, kStrong}, {0x14, kWeak, kStrong}, {0x12, kRear, kFront}};
+    default:
+        return {};
+    }
+}
+constexpr size_t kTuneVisibleRows = 6;
+constexpr float kTuneRowY0 = -50.0f, kTuneRowStep = 44.0f;
+} // namespace
+
+void FEStartupSequence::HandleSlidersLoaded(FEPackage *pkg)
+{
+    m_tuneRows.clear();
+    m_tuneSel = m_tuneTop = 0;
+    m_tuneSession.reset();
+    // Dev aid: NFSU2_TUNE_TEST=<card> opens the screen standalone with an in-memory Skyline carrying
+    // every level-3 performance package (use NFSU2_MEMCARD on a scratch directory).
+    if (const char *card = getenv("NFSU2_TUNE_TEST")) {
+        m_tuneCard = atoi(card);
+        if (!m_profile.valid || m_profile.cars.empty()) {
+            m_profile.valid = true;
+            m_profile.cars.push_back({"SKYLINE", 0});
+            m_profile.currentCar = 0;
+        }
+        Career::OwnedCar &car = m_profile.cars[size_t(m_profile.currentCar)];
+        if (car.perfParts.empty())
+            for (size_t i = 0; i < m_fe->PerfParts().Count(); ++i)
+                if (m_fe->PerfParts().At(i).level == 3)
+                    for (const PerfPart &part : m_fe->PerfParts().At(i).parts)
+                        car.perfParts.push_back(uint16_t(part.id));
+    }
+    Career::OwnedCar *car = ShopCar();
+    const uint8_t *record = nullptr;
+    std::vector<uint8_t> frame;
+    if (car && m_fe->TuneInputs(car->model, car->perfParts, record, frame)) {
+        m_tuneSession = std::make_unique<Tune::Session>(m_fe->TuneTable(), record, frame, car->perfParts);
+        m_tuneSession->SetMetric(m_speedoUnits != 0);
+        if (car->tune.size() == Tune::kSettingSize)
+            m_tuneSession->LoadSetting(car->tune);
+        for (const TuneRowDef &def : TuneRowsForCard(m_tuneCard))
+            if (m_tuneSession->FieldActive(def.field))
+                m_tuneRows.push_back({def.field, def.left, def.right});
+    }
+    printf("[Tuning] sliders card %d: %zu rows\n", m_tuneCard, m_tuneRows.size());
+    RefreshSliders(pkg);
+}
+
+void FEStartupSequence::RefreshSliders(FEPackage *pkg)
+{
+    const size_t count = m_tuneRows.size();
+    if (m_tuneSel >= count)
+        m_tuneSel = count ? count - 1 : 0;
+    if (m_tuneSel < m_tuneTop)
+        m_tuneTop = m_tuneSel;
+    if (m_tuneSel >= m_tuneTop + kTuneVisibleRows)
+        m_tuneTop = m_tuneSel + 1 - kTuneVisibleRows;
+    // The package ships nine row groups (66e29936..3e) and the name / value / end-label strings.
+    for (size_t slot = 0; slot < 9; ++slot) {
+        const uint32_t group = 0x66e29936u + uint32_t(slot);
+        const uint32_t nameObj = 0xb2980ba8u + uint32_t(slot), dataObj = 0x9b483b01u + uint32_t(slot);
+        const uint32_t leftObj = 0x8e435402u + uint32_t(slot), rightObj = 0x8e435843u + uint32_t(slot);
+        const bool used = slot < kTuneVisibleRows && m_tuneTop + slot < count;
+        for (uint32_t obj : {group, nameObj, dataObj, leftObj, rightObj})
+            FENativeInterface::SetVisible(pkg, obj, used);
+        if (!used)
+            continue;
+        const size_t index = m_tuneTop + slot;
+        const TuneRow &row = m_tuneRows[index];
+        const float y = kTuneRowY0 + kTuneRowStep * float(slot);
+        const bool selected = index == m_tuneSel;
+        const uint8_t alpha = selected ? 255 : 170;
+        if (row.field == 3 || row.field == 7) { // 0x002c2480: "Front Lowering (cm)" / "(in)"
+            const std::string title = m_fe->LanguageText(kTuneFieldName[row.field]) + " (" +
+                                      m_fe->LanguageText(m_speedoUnits != 0 ? 0x5e1f61eeu : 0x6382ece0u) + ")";
+            FENativeInterface::SetString(pkg, nameObj, title.c_str());
+        } else {
+            FENativeInterface::SetLanguageHash(pkg, nameObj, kTuneFieldName[row.field]);
+        }
+        FENativeInterface::SetLanguageHash(pkg, leftObj, row.left);
+        FENativeInterface::SetLanguageHash(pkg, rightObj, row.right);
+        char value[32];
+        snprintf(value, sizeof(value), "%2.2f", m_tuneSession ? m_tuneSession->Display(row.field, 0) : 0.0f);
+        FENativeInterface::SetString(pkg, dataObj, value);
+        const struct { uint32_t obj; float x; } place[] = {{group, -4.0f}, {nameObj, -290.0f}, {leftObj, -95.0f},
+                                                              {dataObj, 100.0f}, {rightObj, 215.0f}};
+        for (const auto &pl : place)
+            if (FEObject *o = pkg->FindObjectByHash(pl.obj)) {
+                FENativeInterface::SetCenter(o, pl.x, y);
+                if (pl.obj != group)
+                    FENativeInterface::SetAlpha(pkg, pl.obj, alpha);
+            }
+    }
+}
+
+void FEStartupSequence::AdjustSlider(FEPackage *pkg, int dir)
+{
+    if (!m_tuneSession || m_tuneSel >= m_tuneRows.size())
+        return;
+    const int field = m_tuneRows[m_tuneSel].field;
+    const float step = m_tuneSession->Step(field);
+    m_tuneSession->SetDisplay(field, 0, m_tuneSession->Display(field, 0) + float(dir) * step);
+    RefreshSliders(pkg);
+}
+
+void FEStartupSequence::FinishSliders(FEPackage *pkg)
+{
+    (void)pkg;
+    if (Career::OwnedCar *car = ShopCar(); car && m_tuneSession) {
+        car->tune = m_tuneSession->Setting();
+        m_fe->SetPreviewTune(car->tune);
+        if (!Career::SaveCareer(m_profile))
+            printf("[Tuning] the tune is kept but the save failed\n");
+        printf("[Tuning] tune saved for %s\n", car->model.c_str());
+    }
+    m_tuneSession.reset();
+}
+
+void FEStartupSequence::HandleSlidersMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadUp && m_tuneSel > 0) {
+        --m_tuneSel;
+        RefreshSliders(pkg);
+    } else if (msg == kMsgPadDown && m_tuneSel + 1 < m_tuneRows.size()) {
+        ++m_tuneSel;
+        RefreshSliders(pkg);
+    } else if (msg == kMsgPadLeft) {
+        AdjustSlider(pkg, -1);
+    } else if (msg == kMsgPadRight) {
+        AdjustSlider(pkg, +1);
+    } else if (msg == kMsgPadLTrigger) { // "Reset to default"
+        if (m_tuneSession && m_tuneSel < m_tuneRows.size()) {
+            const int field = m_tuneRows[m_tuneSel].field;
+            m_tuneSession->Reset(field);
+            m_tuneSession->SetDisplay(field, 0, m_tuneSession->Display(field, 0));
+            RefreshSliders(pkg);
+        }
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        FinishSliders(pkg);
+        PopScreen();
     }
 }
 

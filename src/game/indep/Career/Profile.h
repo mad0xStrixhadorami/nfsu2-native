@@ -47,6 +47,9 @@ struct OwnedCar {
     // from the 0x34a15 table (PerfPackages).  The original keeps them in the car's installed-part
     // set (0x0031a548 on the shop manager's car, +0xc40).
     std::vector<uint16_t> perfParts;
+    // The tuning slider bytes of the car (Performance Tuning, ISSUES #214): 41 bytes, 100 = neutral;
+    // empty = never tuned.
+    std::vector<uint8_t> tune;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

@@ -28,6 +28,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Frontend/PerfModel.h"
+#include "game/indep/Frontend/TuneSystem.h"
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -107,6 +108,47 @@ static int PerfModelDiscTest(const ZipFileSystem &fs)
     memcpy(&mass0, stock.data() + 0x228, 4);
     memcpy(&mass1, tuned.data() + 0x228, 4);
     check(mass1 < mass0, "(parts lighten the car)");
+    // The tuning engine on the real data (ISSUES #207/#210/#211).
+    Tune::Table tuneTable;
+    for (size_t off = 0; off + 8 <= globalB.size();) {
+        uint32_t id, size;
+        memcpy(&id, &globalB[off], 4);
+        memcpy(&size, &globalB[off + 4], 4);
+        if (off + 8 + size > globalB.size())
+            break;
+        if (id == 0x80034a10)
+            tuneTable.Parse(&globalB[off + 8], size);
+        off += 8 + size;
+    }
+    check(tuneTable.Count() == 62, "(62 tuning entries)");
+    {
+        std::vector<uint16_t> parts = level3;
+        std::vector<uint8_t> frame(tuned.begin() + PerfModel::kFrameOffset,
+                                   tuned.begin() + PerfModel::kFrameOffset + PerfModel::kFrameSize);
+        Tune::Session session(tuneTable, skyline, frame, parts);
+        for (int f = 0; f < Tune::kFields; ++f) {
+            if (!session.FieldActive(f))
+                continue;
+            float bl, bh, sl, sh, dl, dh;
+            session.Bounds(f, 0, true, bl, bh);
+            session.SliderRange(f, 0, sl, sh);
+            session.DisplayRange(f, 0, dl, dh);
+            if (getenv("NFSU2_TUNE_DEBUG"))
+                printf("  [tune] field %2d bounds %.4f..%.4f slider %.4f..%.4f display %.2f..%.2f default shows %.3f\n", f,
+                       bl, bh, sl, sh, dl, dh, session.Display(f, 0));
+            check(sl <= sh && bl <= bh, "(tune ranges ordered)");
+            if (getenv("NFSU2_TUNE_DEBUG") && (f == 3 || f == 0)) {
+                float lo2, hi2;
+                session.SliderRangeDisplay(f, 0, lo2, hi2);
+                printf("  [tune]   field %d display slider %.3f..%.3f step %.4f\n", f, lo2, hi2, session.Step(f));
+                for (int i = 0; i < 4; ++i) {
+                    session.SetDisplay(f, 0, session.Display(f, 0) + session.Step(f));
+                    printf("  [tune]   +step -> byte %d shows %.3f\n", session.Byte(f, 0), session.Display(f, 0));
+                }
+                session.Reset(f, 0);
+            }
+        }
+    }
     return failures;
 }
 
@@ -749,7 +791,7 @@ int main(int argc, char **argv)
         // The career car's fitted performance parts tune a copy of the record (ISSUES #200).
         std::vector<uint8_t> tunedRecord;
         if (!fe.PreviewPerfParts().empty())
-            tunedRecord = fe.TunedCarRecord(fe.PreviewCarName(), fe.PreviewPerfParts());
+            tunedRecord = fe.TunedCarRecord(fe.PreviewCarName(), fe.PreviewPerfParts(), fe.PreviewTune());
         if (!tunedRecord.empty()) {
             FENativeInterface::ReadCarPerformance(tunedRecord.data(), perf);
             car.SetPerformance(perf.Valid() ? perf : PlayerCar::Performance());

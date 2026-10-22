@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -189,6 +190,11 @@ public:
     void OnTextInput(const char *utf8);
     bool KeyboardActive() const { return m_kbActive; }
 private:
+    void HandleSlidersLoaded(FEPackage *pkg);
+    void HandleSlidersMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshSliders(FEPackage *pkg);
+    void AdjustSlider(FEPackage *pkg, int dir);
+    void FinishSliders(FEPackage *pkg);
     void HandleCardMenuLoaded(FEPackage *pkg);
     void HandleCardMenuMessage(uint32_t msg, FEPackage *pkg);
     void HandleBuyPartsLoaded(FEPackage *pkg);
@@ -284,6 +290,14 @@ private:
     FEIconScroller m_cardScroller;                  // the tuning shop's card menus (#206)
     std::vector<FEObject *> m_cardMenuCards;
     std::vector<std::function<void()>> m_cardActions;
+    struct TuneRow {
+        int field;
+        uint32_t left, right;
+    };
+    std::unique_ptr<Tune::Session> m_tuneSession;   // the open tuning screen's session (#214)
+    std::vector<TuneRow> m_tuneRows;
+    size_t m_tuneSel = 0, m_tuneTop = 0;
+    int m_tuneCard = 0;                             // 0 Suspension, 1 Drivetrain, 2 Aerodynamics, 3 Tires & Brakes
     bool m_profileSub = false; // the Profile Manager's Create / Delete screen (0x0023cd50)
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
     size_t m_buySel = 0, m_buyTop = 0;

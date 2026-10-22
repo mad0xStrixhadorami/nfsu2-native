@@ -374,15 +374,38 @@ void FENativeInterface::ReadCarPerformance(const uint8_t *r, PlayerCar::Performa
 // The car record with the installed performance parts applied (ISSUES #200); empty when the car
 // is unknown.
 std::vector<uint8_t> FENativeInterface::TunedCarRecord(const std::string &folder,
-                                                       const std::vector<uint16_t> &parts) const
+                                                       const std::vector<uint16_t> &parts,
+                                                       const std::vector<uint8_t> &tune) const
 {
     std::vector<uint8_t> tuned;
     auto it = m_carTable.find(folder);
     if (it != m_carTable.end() && it->second.raw.size() == PerfModel::kRecordSize) {
         tuned = it->second.raw;
         PerfModel::Apply(tuned.data(), tuned.size(), m_perf, parts);
+        // The tuning sliders (ISSUES #214) refine the part-tuned frame.
+        if (tune.size() == Tune::kSettingSize && !parts.empty()) {
+            std::vector<uint8_t> frame(tuned.begin() + PerfModel::kFrameOffset,
+                                       tuned.begin() + PerfModel::kFrameOffset + PerfModel::kFrameSize);
+            Tune::Session session(m_tuneTable, it->second.raw.data(), frame, parts);
+            session.LoadSetting(tune);
+            session.Apply();
+            std::copy(session.Frame().begin(), session.Frame().end(), tuned.begin() + PerfModel::kFrameOffset);
+        }
     }
     return tuned;
+}
+
+bool FENativeInterface::TuneInputs(const std::string &folder, const std::vector<uint16_t> &parts,
+                                   const uint8_t *&record, std::vector<uint8_t> &frame) const
+{
+    auto it = m_carTable.find(folder);
+    if (it == m_carTable.end() || it->second.raw.size() != PerfModel::kRecordSize)
+        return false;
+    std::vector<uint8_t> tuned = it->second.raw;
+    PerfModel::Apply(tuned.data(), tuned.size(), m_perf, parts);
+    record = it->second.raw.data();
+    frame.assign(tuned.begin() + PerfModel::kFrameOffset, tuned.begin() + PerfModel::kFrameOffset + PerfModel::kFrameSize);
+    return true;
 }
 
 // Car-select stat bars (UI_QRCarSelect: "accel_*", "top_speed_*", "handling_*" slider widgets set
@@ -399,6 +422,8 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::ve
     std::string key = m_previewCarName;
     for (uint16_t id : m_previewPerfParts)
         key += "," + std::to_string(id);
+    for (uint8_t b : m_previewTune)
+        key += "." + std::to_string(b);
     if (!force && m_statBarsCar == key)
         return;
     m_statBarsCar = key;
@@ -413,7 +438,7 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::ve
         if (parts.empty()) {
             ok = CarPerformance(m_previewCarName, p);
         } else {
-            const std::vector<uint8_t> tuned = TunedCarRecord(m_previewCarName, parts);
+            const std::vector<uint8_t> tuned = TunedCarRecord(m_previewCarName, parts, parts == m_previewPerfParts ? m_previewTune : std::vector<uint8_t>());
             if (!tuned.empty()) {
                 ReadCarPerformance(tuned.data(), p);
                 ok = p.Valid();
@@ -1056,6 +1081,7 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             m_parts.ParsePrices(c->Data(), c->size);
             if (m_perf.Parse(c->Data(), c->size))
                 printf("[Parts] %zu performance packages\n", m_perf.Count());
+            m_tuneTable.Parse(c->Data(), c->size);
         } else if (c->id == 0x80034602) { // repacked car part database: paint + shop parts
             m_paint.Parse(c->Data(), c->size);
             m_parts.Parse(c->Data(), c->size);
