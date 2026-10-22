@@ -27,6 +27,7 @@
 #include "Speed/Indep/Src/FEng/FEString.h"
 #include "game/indep/Frontend/FENative.h"
 #include "game/indep/Frontend/FEStartup.h"
+#include "game/indep/Frontend/PerfModel.h"
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -43,6 +44,71 @@
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
 #include "platform/linux/PlatformFile.h"
+
+static std::vector<uint8_t> ReadGameFile(const ZipFileSystem &fs, const char *gamePath);
+
+// The performance model on the real disc data (ISSUES #200): the stock Skyline record and the packages
+// must give the figures recorded there (peak torque 299 Nm stock, rising with parts, mass falling).
+static int PerfModelDiscTest(const ZipFileSystem &fs)
+{
+    std::vector<uint8_t> globalB = ReadGameFile(fs, "GLOBAL\\GLOBALB.LZC");
+    if (globalB.empty())
+        return 1;
+    const uint8_t *cars = nullptr;
+    size_t carsSize = 0;
+    PerfPackages packages;
+    for (size_t off = 0; off + 8 <= globalB.size();) {
+        uint32_t id, size;
+        memcpy(&id, &globalB[off], 4);
+        memcpy(&size, &globalB[off + 4], 4);
+        if (off + 8 + size > globalB.size())
+            break;
+        if (id == 0x34600) {
+            cars = &globalB[off + 8];
+            carsSize = size;
+        } else if (id == 0x80034a10) {
+            packages.Parse(&globalB[off + 8], size);
+        }
+        off += 8 + size;
+    }
+    int failures = 0;
+    auto check = [&](bool ok, const char *what) {
+        printf("  %-24s %s\n", what, ok ? "ok" : "FAIL");
+        failures += !ok;
+    };
+    check(packages.Count() == 30, "(30 perf packages)");
+    const uint8_t *skyline = nullptr;
+    for (size_t k = 0; cars && (k + 1) * PerfModel::kRecordSize <= carsSize; ++k)
+        if (strcmp(reinterpret_cast<const char *>(cars + k * PerfModel::kRecordSize + 8), "SKYLINE") == 0)
+            skyline = cars + k * PerfModel::kRecordSize;
+    check(skyline != nullptr, "(Skyline record)");
+    if (!skyline)
+        return failures;
+    auto peak = [](const std::vector<uint8_t> &rec) {
+        PlayerCar::Performance p;
+        FENativeInterface::ReadCarPerformance(rec.data(), p);
+        float best = 0;
+        for (float t : p.torque)
+            best = std::max(best, t);
+        return best * 1000.0f; // N*m
+    };
+    std::vector<uint8_t> stock(skyline, skyline + PerfModel::kRecordSize);
+    PerfModel::Apply(stock.data(), stock.size(), PerfPackages(), {});
+    check(std::fabs(peak(stock) - 299.0f) < 1.5f, "(stock Skyline 299 Nm)");
+    std::vector<uint16_t> level3;
+    for (size_t i = 0; i < packages.Count(); ++i)
+        if (packages.At(i).level == 3)
+            for (const PerfPart &part : packages.At(i).parts)
+                level3.push_back(uint16_t(part.id));
+    std::vector<uint8_t> tuned(skyline, skyline + PerfModel::kRecordSize);
+    PerfModel::Apply(tuned.data(), tuned.size(), packages, level3);
+    check(std::fabs(peak(tuned) - 409.0f) < 2.0f, "(level 3 Skyline 409 Nm)");
+    float mass0, mass1;
+    memcpy(&mass0, stock.data() + 0x228, 4);
+    memcpy(&mass1, tuned.data() + 0x228, 4);
+    check(mass1 < mass0, "(parts lighten the car)");
+    return failures;
+}
 
 static int SelfTest(const ZipFileSystem &fs)
 {
@@ -67,7 +133,7 @@ static int SelfTest(const ZipFileSystem &fs)
     ZipFile f;
     bool missingOk = !fs.Open("NOT\\A\\REAL\\FILE.BIN", f);
     printf("  %-24s %s\n", "(missing file)", missingOk ? "ok" : "FAIL");
-    return failures + !missingOk;
+    return failures + !missingOk + PerfModelDiscTest(fs);
 }
 
 // Read a whole file from the disc archive, decompressing it if it is compressed.
