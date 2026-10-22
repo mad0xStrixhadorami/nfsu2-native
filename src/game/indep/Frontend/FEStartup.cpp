@@ -13,6 +13,7 @@
 #include "game/indep/World/CarMaterial.h"
 #include "game/indep/Frontend/FENative.h"
 #include "Speed/Indep/Src/FEng/FEGroup.h"
+#include "Speed/Indep/Src/FEng/FEImage.h"
 
 namespace {
 
@@ -399,6 +400,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleMemcardLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ProfileManager.fng") == 0) {
+        HandleProfileManagerLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_OptionsMain.fng") == 0) {
         HandleOptionsMainLoaded(pkg);
         return;
@@ -569,6 +574,14 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
             msg != kMsgPadAccept && msg != kMsgPadBack)
             HandleMemcardMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_ProfileManager.fng") == 0) {
+        // The cards read the pad in Tick(); only the header refresh and the scroll animation need
+        // the FEng messages.
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack && msg != kMsgButtonPressed)
+            HandleProfileManagerMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_Options.fng") == 0) {
@@ -759,6 +772,17 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleStartCareerMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleStartCareerMessage(kMsgPadBack, active);
+        return;
+    }
+    // UI_ProfileManager.fng (#195): the three cards are plain objects, so the pad is read here.
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_ProfileManager.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleProfileManagerMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleProfileManagerMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            ProfileManagerAccept();
         return;
     }
     // Memory-card screens (MC_Main.fng / MC_List.fng): their rows are plain objects (no FEng
@@ -3455,6 +3479,25 @@ void FEStartupSequence::ChooseMemcardFile()
     m_memcardPick = m_memcardFiles[size_t(m_memcardSel)].name;
     m_memcardListOpen = false;
     printf("[Memcard] selected %s -> %s\n", m_memcardPick.c_str(), m_memcardNext.c_str());
+    // The Profile Manager's Load card (#195): swap the loaded profile and stay on the manager, so
+    // its name field and Save card follow the new profile.
+    if (m_memcardFromProfileManager) {
+        m_memcardFromProfileManager = false;
+        if (Career::LoadCareer(m_profile, m_memcardPick)) {
+            m_careerExists = true;
+            if (const Career::OwnedCar *car = m_profile.CurrentCar())
+                ApplyOwnedCarPreview(*car);
+            printf("[Profile] loaded %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
+                   m_profile.respect);
+        } else {
+            printf("[Profile] %s could not be read\n", m_memcardPick.c_str());
+        }
+        if (FEPackage *list = m_engine->GetPackageList()->FindPackage("MC_List.fng"))
+            m_engine->UnloadPackage(list);
+        if (FEPackage *mgr = m_engine->GetPackageList()->FindPackage("UI_ProfileManager.fng"))
+            FENativeInterface::SetString(mgr, 0x47ff4e7c, m_profile.valid ? m_profile.name.c_str() : "");
+        return;
+    }
     // Anything but the New Career flow wants that save loaded (Career Garage opens it).
     if (m_memcardNext != "UI_QRCarSelect.fng" && Career::LoadCareer(m_profile, m_memcardPick)) {
         m_careerExists = true;
@@ -3515,7 +3558,139 @@ void FEStartupSequence::HandleMemcardMessage(uint32_t msg, FEPackage *pkg)
         OpenMemcardList();
 }
 
+// UI_ProfileManager.fng (factory 0x0023c968, ctor 0x0023c9a0, options 0x0023cbb8): the main menu's
+// Profile Manager.  0x0023cbb8 builds three option objects at runtime with
+// FUN_0029ae78(obj, icon, label, 0) and hands each one to IconScroller::AddOption (0x0029cd38):
+//   (0x228b7e32, 0x1c8ace) = "Save", (0x56026748, 0x4af2e79e) = "Profile",
+//   (0x2287e063, 0x18ecff) = "Load".
+// The .fng ships no option objects - only the 126x62 card art 687fda31 (with the df422345 quad
+// over it) - so the port clones that art once per card and drives the same IconScroller the other
+// menus use.  0x0023ca08 greys the Save card when there is no profile to write
+// (FUN_00273600(0x4f12a8) == 0) and shows the profile's name.
+void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
+{
+    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0xbcb18f38); // "Profile Manager"
+    static const struct {
+        uint32_t icon, label;
+    } kCards[] = {{0x228b7e32, 0x1c8ace}, {0x56026748, 0x4af2e79e}, {0x2287e063, 0x18ecff}};
+    std::vector<FEIconScroller::Def> defs;
+    defs.push_back({kCards[0].icon, kCards[0].label, !m_profile.valid});
+    defs.push_back({kCards[1].icon, kCards[1].label});
+    defs.push_back({kCards[2].icon, kCards[2].label});
+
+    m_profileCards.clear();
+    FEObject *art = pkg->FindObjectByHash(0x687fda31);
+    float centerX = 41.0f, centerY = 7.0f, cardW = 126.0f, cardH = 62.0f;
+    FEImageData artData{};
+    FEImage *artImage = art && art->Type == FE_Image ? static_cast<FEImage *>(art) : nullptr;
+    if (artImage && artImage->GetImageData()) {
+        artData = *artImage->GetImageData();
+        FENativeInterface::GetCenter(art, centerX, centerY);
+        FENativeInterface::GetSize(art, cardW, cardH);
+        // The art is a child of the screen frame (8d7e0c53); the clones are top-level, so the
+        // frame's own translation has to be added to land them on the same spot.
+        if (FEObject *frame = pkg->FindObjectByHash(0x8d7e0c53)) {
+            float fx = 0.0f, fy = 0.0f;
+            FENativeInterface::GetCenter(frame, fx, fy);
+            centerX += fx;
+            centerY += fy;
+        }
+        FENativeInterface::SetObjectVisible(art, false); // the template; every card is a clone
+        if (FEObject *glow = pkg->FindObjectByHash(0xdf422345))
+            FENativeInterface::SetObjectVisible(glow, false);
+    }
+    for (size_t i = 0; art && i < defs.size(); ++i) {
+        // FEObject's copy ctor zeroes the transform data (FEObject.cpp:82), and an FEImage's zero
+        // UV rect draws nothing, so the art data is copied over before the transform is set.
+        FEImage *card = static_cast<FEImage *>(art->Clone(false));
+        FEImageData *data = card ? card->GetImageData() : nullptr;
+        if (!data) {
+            delete card;
+            break;
+        }
+        *data = artData;
+        data->Col.r = data->Col.g = data->Col.b = data->Col.a = 255;
+        data->Pos = FEVector3(centerX, centerY, 0.0f);
+        data->Size = FEVector3(cardW, cardH, 1.0f);
+        char cardName[24];
+        snprintf(cardName, sizeof(cardName), "PROFILE_CARD_%zu", i + 1);
+        card->SetName(cardName);
+        pkg->AddObject(card);
+        m_profileCards.push_back(card);
+    }
+    if (m_profileCards.size() == defs.size()) {
+        // Dev aid: NFSU2_PROFILE_CARD_TEX=<hex> forces one texture on the three cards, so the
+        // layout can be checked when the card icons themselves are missing.
+        if (const char *tex = getenv("NFSU2_PROFILE_CARD_TEX")) {
+            const uint32_t hash = uint32_t(strtoul(tex, nullptr, 16));
+            for (FEObject *card : m_profileCards)
+                FENativeInterface::SetTextureHash(card, hash);
+        }
+        if (const char *pos = getenv("NFSU2_PROFILE_CARD_POS")) {
+            sscanf(pos, "%f,%f", &centerX, &centerY);
+        }
+        m_profileScroller.SetupObjects(pkg, defs, m_profileCards, 0, "OPTION_MASTER");
+        m_profileScroller.SetLayoutCenter(centerX, centerY);
+    } else {
+        printf("[Profile] card art 687fda31 missing; the manager has no cards\n");
+    }
+    // The card's own scripts relabel 47ff4e7c with the current profile's name (0x0023ca08).
+    FENativeInterface::SetString(pkg, 0x47ff4e7c, m_profile.valid ? m_profile.name.c_str() : "");
+    printf("[Profile] manager: %zu cards (Save%s, Profile, Load), profile %s\n", m_profileCards.size(),
+           m_profile.valid ? "" : " disabled", m_profile.valid ? m_profile.name.c_str() : "none");
+}
+
+void FEStartupSequence::HandleProfileManagerMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (!pkg)
+        return;
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_profileScroller.HandleMessage(msg, 0.0f);
+        printf("[Profile] card %zu\n", m_profileScroller.Selected());
+    } else if (msg == kMsgInitComplete || msg == kMsgScreenTick) {
+        m_profileScroller.HandleMessage(msg, TickSeconds());
+    }
+}
+
+// Accept on the highlighted card.  0x0023cbb8's options dispatch through the three vtables
+// 0x46ad10 / 0x46acb0 / 0x46acf8; the "Profile" one pushes the 0x0023cd50 screen (title
+// 0x4af2e79e = "Profile") whose two options are "Create" and "Delete".
+void FEStartupSequence::ProfileManagerAccept()
+{
+    const size_t sel = m_profileScroller.Selected();
+    if (sel == 0) {
+        // "Save": write the profile that is loaded (0x00273600(0x4f12a8) != 0).
+        if (!m_profile.valid) {
+            ShowMessageDialogText("There is no profile to save");
+            return;
+        }
+        if (Career::SaveCareer(m_profile)) {
+            m_careerExists = true;
+            printf("[Profile] saved %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
+                   m_profile.respect);
+        } else {
+            ShowMessageDialogText("The memory card could not be written");
+        }
+    } else if (sel == 1) {
+        // "Profile" -> Create / Delete.  Both need the name-entry screen (FENG key grid) and the
+        // original's overwrite prompt, neither of which is ported (ISSUES #195).
+        printf("[Profile] create/delete are not available in the native build\n");
+        ShowMessageDialogText("Profile creation and deletion are not available in the native build");
+    } else {
+        // "Load": pick a save off the card through the career flow's own MC_List.fng.
+        if (!Career::CareerExists()) {
+            ShowMessageDialogText("There are no profiles on the memory card");
+            return;
+        }
+        m_memcardNext = "UI_ProfileManager.fng";
+        m_memcardFromProfileManager = true;
+        m_memcardPick = m_profile.valid ? m_profile.name : std::string();
+        OpenMemcardList();
+    }
+}
+
 // 0x001e71f0 / 0x00259328: a new career starts with an empty profile and the starting cash/respect;
+
 // the save is written at once (UG2 does the same, then asks for a name and a starter car).
 void FEStartupSequence::BeginCareer()
 {

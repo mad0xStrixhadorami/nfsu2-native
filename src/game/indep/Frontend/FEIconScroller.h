@@ -31,6 +31,10 @@ public:
     void SetupObjects(FEPackage *pkg, const std::vector<Def> &defs,
                       const std::vector<FEObject *> &slots, size_t defaultSelection,
                       const char *masterName = "OPTION_MASTER");
+    // The row anchor the scroller centres the selected option on.  IconScroller::IconScroller
+    // (0x0029c9c8) reads it from the screen's option master; the Profile Manager has no master
+    // (its cards are built at runtime), so its caller supplies the row centre instead (#195).
+    void SetLayoutCenter(float x, float y);
     // Left/Right scroll, INITCOMPLETE header refresh, screen-tick animation. dtSeconds for ticks.
     void HandleMessage(uint32_t msg, float dtSeconds);
     // Start edge fades once the menu's intro animation has finished (0x0029dcb0 -> 0x0029d038).

@@ -328,6 +328,15 @@ private:
     int m_memcardSel = 0;
     std::string m_memcardPick;   // the chosen save (empty = none)
     bool m_memcardListOpen = false; // MC_List.fng is pushed over MC_Main.fng
+    bool m_memcardFromProfileManager = false; // MC_List.fng was opened by the Profile Manager (#195)
+    // UI_ProfileManager.fng (ctor 0x0023c9a0, options 0x0023cbb8): the main menu's three cards
+    // (Save / Profile / Load) plus the current profile name.  The cards are built at runtime by the
+    // original, so the port clones the package's card art per option (#195).
+    void HandleProfileManagerLoaded(FEPackage *pkg);
+    void HandleProfileManagerMessage(uint32_t msg, FEPackage *pkg);
+    void ProfileManagerAccept();
+    FEIconScroller m_profileScroller;
+    std::vector<FEObject *> m_profileCards; // the cloned card images bound to m_profileScroller
     void HandleOptionsMainLoaded(FEPackage *pkg);
     void HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg);
     void HandleOptionsLoaded(FEPackage *pkg);

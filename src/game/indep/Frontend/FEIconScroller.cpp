@@ -120,6 +120,16 @@ void FEIconScroller::AllowFade()
     Position();
 }
 
+void FEIconScroller::SetLayoutCenter(float x, float y)
+{
+    m_xCenter = x;
+    m_yCenter = y;
+    if (m_options.empty())
+        return;
+    m_scrollPos = m_scrollTarget = -m_options[m_selected].xPos;
+    Position();
+}
+
 void FEIconScroller::HandleMessage(uint32_t msg, float dt)
 {
     if (m_options.empty())
