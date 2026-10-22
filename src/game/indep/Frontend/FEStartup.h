@@ -168,6 +168,8 @@ private:
     // per car (#169), but the port's single-mesh car has no model for them to tint.
     void HandleCustomizeCategoryLoaded(FEPackage *pkg);
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
+    void HandlePerformanceCategoryLoaded(FEPackage *pkg);
+    void HandlePerformanceCategoryMessage(uint32_t msg, FEPackage *pkg);
     // UI_GenericParts_Browser.fng (factory 0x002a50c0, ctor 0x002a50f8, refresh 0x002a6be0): the
     // Body Shop.  CATEGORY_MASTER/CATEGORY_ICON is the part-slot carousel (0x002a76e8 in
     // 0x002a7e70), MINI_MASTER/PARTS_ICON the item carousel; the selected item's name and price go
@@ -225,6 +227,7 @@ private:
     void ApplyPaint(size_t part, uint32_t set, uint32_t index);
     bool PopScreen(); // back to the package saved by NavigateTo
     static constexpr size_t kPaintPartCount = 9; // 0x002bcff8 card order
+    size_t m_performanceCategorySel = 0;
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
     // Body Shop state (#185): the selected part-slot card and the item selection inside it.
     FEIconScroller m_partsCategoryScroller; // CATEGORY_MASTER / CATEGORY_ICON

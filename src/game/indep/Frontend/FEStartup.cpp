@@ -360,6 +360,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCustomizeCategoryLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChoosePerformanceCategory.fng") == 0) {
+        HandlePerformanceCategoryLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -520,6 +524,11 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         // Pad messages are taken from the pad in Tick(); keep FEng's copies out of the scroller.
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
             HandleCustomizeCategoryMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_ChoosePerformanceCategory.fng") == 0) {
+        if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandlePerformanceCategoryMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
@@ -714,6 +723,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_ChoosePerformanceCategory.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandlePerformanceCategoryMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandlePerformanceCategoryMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandlePerformanceCategoryMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandlePerformanceCategoryMessage(kMsgPadBack, active);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -1456,7 +1477,7 @@ void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
     };
     std::vector<FEIconScroller::Def> defs;
     for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
-        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 2});
+        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 1 && i != 2});
     printf("[Customize] category picker: %zu options (body parts, paint)\n", defs.size());
     m_scroller.Setup(pkg, defs, m_customizeCategorySel);
 }
@@ -1492,7 +1513,61 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
             NavigateTo(pkg->GetName(), "UI_GenericParts_Browser.fng");
             return;
         }
+        if (m_customizeCategorySel == 1) {
+            NavigateTo(pkg->GetName(), "UI_ChoosePerformanceCategory.fng");
+            return;
+        }
         printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
+    }
+}
+
+// UI_ChoosePerformanceCategory.fng (factory 0x002b5d70, ctor 0x002b5da8, AddOptions 0x002b64c8):
+// "Change Performance Parts".  0x002b64c8 calls 0x002b6358(screen, partId, icon, label) nine
+// times, in the order below; each adds a card (vtable 0x477c90, part id at +0x58) greyed when no
+// level of that part is unlocked (0x002b57a0 -> 0x002719d8, the career unlock query; all
+// unlocked here, as with NFSU2_UNLOCK_ALL).  The package's own title is kept.  The follow-on
+// screens (UI_ChoosePerformancePackage / UI_BuyPerformanceParts) are not ported (ISSUES #196).
+void FEStartupSequence::HandlePerformanceCategoryLoaded(FEPackage *pkg)
+{
+    static const struct {
+        uint32_t partId, tex, label;
+    } kCards[] = {
+        {3, 0xc15c94e6, 0x026eea5e}, {7, 0x502abeed, 0xa7884765}, {1, 0x01a29ffa, 0x73ad2f72},
+        {5, 0x178475e7, 0x9c34c75f}, {2, 0x9701bde4, 0xa7886f38}, {8, 0x06e8e477, 0xabca6aef},
+        {6, 0xbaa23a28, 0xaa8959ad}, {0, 0xea57d2c4, 0x758d5e3c}, {4, 0x06ef789c, 0xabd0ff14},
+    };
+    std::vector<FEIconScroller::Def> defs;
+    for (const auto &c : kCards)
+        defs.push_back({c.tex, c.label, false});
+    printf("[Customize] performance parts: %zu categories\n", defs.size());
+    m_scroller.Setup(pkg, defs, m_performanceCategorySel);
+}
+
+void FEStartupSequence::HandlePerformanceCategoryMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_scroller.Empty() || m_scroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_scroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_scroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_scroller.HandleMessage(msg, 0.0f);
+        m_performanceCategorySel = m_scroller.Selected();
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        m_performanceCategorySel = m_scroller.Selected();
+        printf("[Customize] performance category %zu is not ported yet\n", m_performanceCategorySel);
     }
 }
 
