@@ -137,7 +137,7 @@ static int PerfModelDiscTest(const ZipFileSystem &fs)
                 printf("  [tune] field %2d bounds %.4f..%.4f slider %.4f..%.4f display %.2f..%.2f default shows %.3f\n", f,
                        bl, bh, sl, sh, dl, dh, session.Display(f, 0));
             check(sl <= sh && bl <= bh, "(tune ranges ordered)");
-            if (getenv("NFSU2_TUNE_DEBUG") && (f == 3 || f == 0)) {
+            if (getenv("NFSU2_TUNE_DEBUG") && (f == 3 || f == 0 || f == 10 || f == 11)) {
                 float lo2, hi2;
                 session.SliderRangeDisplay(f, 0, lo2, hi2);
                 printf("  [tune]   field %d display slider %.3f..%.3f step %.4f\n", f, lo2, hi2, session.Step(f));

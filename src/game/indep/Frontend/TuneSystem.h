@@ -5,7 +5,7 @@
 
 // UG2's performance tuning (the sliders of UI_PerformanceTuning_*, ISSUES #207 / #210 / #211): a port
 // of the range / value engine around 0x0031f2a0 .. 0x00322xxx for the fields whose pieces are
-// decoded (0, 1, 2, 4, 5, 6, 8, 9, 0x12..0x16: suspension, brake balance, tyres, aerodynamics).
+// decoded (0-9, 10-15 the gears, 0x12-0x16: suspension, drivetrain, brake balance, tyres, aerodynamics).
 // A tuning session holds the car's stock record, the part-tuned working copy (PerfModel frame) and
 // one byte per slider (100 = neutral, 0..200 = position -1..+1).  Offsets named "mem" are the
 // executable's record offsets (file offset + 8); "frame" offsets are PerfModel's (record + 0x118).
@@ -88,6 +88,9 @@ private:
     float ToDisplay(float physical, int field) const;
     float ToPhysical(float display, int field) const;
     void CaptureRefs();
+    float RatioToSpeed(float x) const;                          // 0x00321de8 (an involution)
+    float SpeedScale() const { return m_metric ? 3.6f : 2.237f; } // m/s -> km/h or mph
+    float Reorder(float value, int field, float arr[8]);        // 0x003218e0
 
     const Table &m_table;
     std::vector<uint8_t> m_record;

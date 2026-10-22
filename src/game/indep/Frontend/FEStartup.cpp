@@ -4626,7 +4626,7 @@ void FEStartupSequence::HandleCardMenuMessage(uint32_t msg, FEPackage *pkg)
 // UI_PerformanceTuning_Sliders.fng (ISSUES #214): the tuning sliders of the master menu's first four
 // cards (the class `0x002c3f68` builds the rows per card, DAT_005161f8 = the card id):
 //   0 Suspension     fields 3, 7 (Low / High), 0, 4, 1, 5, 2, 6 (Soft / Hard), 8 (Less / More)
-//   1 Drivetrain     fields 10..15 (gears, not ported), 9 (Top Speed / Acceleration)
+//   1 Drivetrain     fields 10..15 (the gears, shown as the speed at the redline), 9 (Top Speed / Acceleration)
 //   2 Aerodynamics   fields 0x15, 0x16 (Weak / Strong)
 //   3 Tires & Brakes fields 0x13, 0x14 (Weak / Strong), 0x12 (Rear / Front)
 // A row exists when the field is unlocked by an installed part (Tune::Session::FieldActive).  The
@@ -4653,7 +4653,7 @@ std::vector<TuneRowDef> TuneRowsForCard(int card)
         return {{3, kLow, kHigh}, {7, kLow, kHigh}, {0, kSoft, kHard}, {4, kSoft, kHard}, {1, kSoft, kHard},
                 {5, kSoft, kHard}, {2, kSoft, kHard}, {6, kSoft, kHard}, {8, kLess, kMore}};
     case 1:
-        return {{9, kTop, kAccel}};
+        return {{10, 0, 0}, {11, 0, 0}, {12, 0, 0}, {13, 0, 0}, {14, 0, 0}, {15, 0, 0}, {9, kTop, kAccel}};
     case 2:
         return {{0x15, kWeak, kStrong}, {0x16, kWeak, kStrong}};
     case 3:
@@ -4727,17 +4727,27 @@ void FEStartupSequence::RefreshSliders(FEPackage *pkg)
         const float y = kTuneRowY0 + kTuneRowStep * float(slot);
         const bool selected = index == m_tuneSel;
         const uint8_t alpha = selected ? 255 : 170;
-        if (row.field == 3 || row.field == 7) { // 0x002c2480: "Front Lowering (cm)" / "(in)"
-            const std::string title = m_fe->LanguageText(kTuneFieldName[row.field]) + " (" +
-                                      m_fe->LanguageText(m_speedoUnits != 0 ? 0x5e1f61eeu : 0x6382ece0u) + ")";
+        if (row.field == 3 || row.field == 7 || row.field == 10) { // 0x002c2480: unit suffix
+            const bool length = row.field != 10;
+            const std::string title =
+                m_fe->LanguageText(kTuneFieldName[row.field]) + " (" +
+                m_fe->LanguageText(length ? (m_speedoUnits != 0 ? 0x5e1f61eeu : 0x6382ece0u)
+                                          : (m_speedoUnits != 0 ? 0xcbbc8bf8u : 0x8569ab44u)) + ")";
             FENativeInterface::SetString(pkg, nameObj, title.c_str());
         } else {
             FENativeInterface::SetLanguageHash(pkg, nameObj, kTuneFieldName[row.field]);
         }
-        FENativeInterface::SetLanguageHash(pkg, leftObj, row.left);
-        FENativeInterface::SetLanguageHash(pkg, rightObj, row.right);
+        if (row.left) {
+            FENativeInterface::SetLanguageHash(pkg, leftObj, row.left);
+            FENativeInterface::SetLanguageHash(pkg, rightObj, row.right);
+        } else {
+            FENativeInterface::SetString(pkg, leftObj, "");
+            FENativeInterface::SetString(pkg, rightObj, "");
+        }
         char value[32];
-        snprintf(value, sizeof(value), "%2.2f", m_tuneSession ? m_tuneSession->Display(row.field, 0) : 0.0f);
+        // 0x00567c08 / 0x00567c10: one decimal for the gear speeds, two for everything else.
+        snprintf(value, sizeof(value), row.field >= 10 && row.field <= 15 ? "%2.1f" : "%2.2f",
+                 m_tuneSession ? m_tuneSession->Display(row.field, 0) : 0.0f);
         FENativeInterface::SetString(pkg, dataObj, value);
         const struct { uint32_t obj; float x; } place[] = {{group, -4.0f}, {nameObj, -290.0f}, {leftObj, -95.0f},
                                                               {dataObj, 100.0f}, {rightObj, 215.0f}};

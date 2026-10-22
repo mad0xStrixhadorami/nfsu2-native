@@ -122,6 +122,7 @@ bool Session::Supported(int field)
 {
     switch (field) {
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
+    case 10: case 11: case 12: case 13: case 14: case 15:
     case 0x12: case 0x13: case 0x14: case 0x15: case 0x16:
         return true;
     default:
@@ -131,7 +132,14 @@ bool Session::Supported(int field)
 
 bool Session::FieldActive(int field) const
 {
-    return Supported(field) && m_table.Active(field, m_installed) != nullptr;
+    if (!Supported(field) || m_table.Active(field, m_installed) == nullptr)
+        return false;
+    if (field >= 10 && field <= 15) { // 0x0031faf8: only the gears the car has
+        int count;
+        memcpy(&count, m_part.data() + 0x1c8, 4);
+        return field - 8 < count + 2;
+    }
+    return true;
 }
 
 float Session::RecM(size_t mem) const
@@ -153,6 +161,7 @@ float *Session::WorkPtr(int field, int sub)
     case 6: off = 0x1a0; break;
     case 8: off = 0x270; break;
     case 9: off = 0x1b8 + size_t(sub) * 4; break;
+    case 10: case 11: case 12: case 13: case 14: case 15: off = 0x1b0 + size_t(field) * 4; break;
     case 0x12: off = 0x27c; break;
     case 0x13: off = sub == 0 ? 0xdc : 0xe0; break;
     case 0x14: off = sub == 0 ? 0xfc : 0x100; break;
@@ -248,6 +257,11 @@ bool Session::Bounds(int field, int sub, bool average, float &lo, float &hi) con
         l = 0.0f;
         h = 1.0f;
         break;
+    case 10: case 11: case 12: case 13: case 14: case 15:
+        // 0x00320670: the ratios for 250 mph and 2.5 mph (111.7568 / 1.1175681 m/s); no table adjust.
+        lo = RatioToSpeed(111.7568f);
+        hi = RatioToSpeed(1.1175681f);
+        return true;
     case 3: case 7: {
         // The pair of lowering limits at 0x714 / 0x718, negated, always including zero.
         const float a = -RecM(0x714), b = -RecM(0x718);
@@ -385,6 +399,12 @@ bool Session::DisplayRange(int field, int sub, float &lo, float &hi) const
         return false;
     if (!Bounds(field, sub, true, lo, hi))
         return false;
+    if (field >= 10 && field <= 15) { // the speeds of the bounds' ratios
+        const float a = RatioToSpeed(lo) * SpeedScale(), b = RatioToSpeed(hi) * SpeedScale();
+        lo = std::min(a, b);
+        hi = std::max(a, b);
+        return true;
+    }
     lo *= UnitScale(field, m_metric, true);
     hi *= UnitScale(field, m_metric, true);
     if (e->uiLo != kNoUi)
@@ -398,8 +418,69 @@ bool Session::DisplayRange(int field, int sub, float &lo, float &hi) const
     return true;
 }
 
+// 0x00321de8: ratio <-> speed at the redline for the car's drive split and final drive.
+float Session::RatioToSpeed(float x) const
+{
+    auto work = [&](size_t off) { return F32(m_work.data() + off); };
+    const float split = work(0x1c0);
+    float radius = 0.0f;
+    if (0.2f <= split) {
+        radius = split <= 0.8f ? split * work(0x80) + (1.0f - split) * work(0x50) : work(0x80);
+    } else {
+        radius = work(0x50);
+    }
+    const float omega = work(0x1f4) * 0.10471968f;
+    if (x == 0.0f)
+        return 0.0f;
+    return (omega / work(0x1b8)) * (radius / x);
+}
+
+// 0x003218e0: set a gear ratio inside its slider range and push the neighbours so the ratios stay
+// at least 0.05 apart; returns the part of the move that could not be done.
+float Session::Reorder(float value, int field, float arr[8])
+{
+    float lo, hi;
+    SliderRange(field, 0, lo, hi);
+    float clamped = std::max(value, lo);
+    clamped = std::min(clamped, hi);
+    float delta = value - arr[field - 8];
+    if (delta == 0.0f)
+        return 0.0f;
+    int dir = 0;
+    if (delta <= 0.0f || field < 0xb) {
+        if (delta < 0.0f)
+            dir = field < 0xf ? 1 : 0;
+    } else {
+        dir = -1;
+    }
+    float excess = value - clamped;
+    if (dir != 0) {
+        const int nf = field + dir;
+        float want = clamped - 0.05f;
+        const float neighbour = arr[nf - 8];
+        if (neighbour <= want || nf <= field) {
+            const float above = clamped + 0.05f;
+            want = neighbour;
+            if (neighbour < above && nf < field)
+                want = std::max(neighbour, above);
+        } else {
+            want = std::min(neighbour, want);
+        }
+        if (want == neighbour) {
+            arr[field - 8] = value - excess;
+            return excess;
+        }
+        excess += Reorder(want, nf, arr);
+    }
+    arr[field - 8] = value - excess;
+    return excess;
+}
+
 float Session::ToDisplay(float physical, int field) const
 {
+    if (field >= 10 && field <= 15) // the gears show the speed at the redline
+        return RatioToSpeed(physical) * SpeedScale();
+
     float r0, r1, r2, r3;
     if (!Bounds(field, 0, false, r0, r1) || !DisplayRange(field, 0, r2, r3))
         return physical;
@@ -431,6 +512,11 @@ float Session::Step(int field) const
 
 float Session::ToPhysical(float display, int field) const
 {
+    if (field >= 10 && field <= 15) {
+        float lo, hi;
+        Bounds(field, 0, false, lo, hi);
+        return Clamp(RatioToSpeed(display / SpeedScale()), std::min(lo, hi), std::max(lo, hi));
+    }
     float r0, r1, r2, r3;
     if (!Bounds(field, 0, false, r0, r1) || !DisplayRange(field, 0, r2, r3))
         return display;
@@ -461,6 +547,21 @@ void Session::WritePhysical(int field, int sub, float value)
         *WorkPtr(9, 0) = value;
         *WorkPtr(9, 1) = value;
         break;
+    case 10: case 11: case 12: case 13: case 14: case 15: {
+        // 0x00321a60: reorder the six ratios around the changed one, zero the gears the car lacks.
+        float arr[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        for (int f = 10; f < 16; ++f)
+            arr[f - 8] = *WorkPtr(f, 0);
+        Reorder(value, field, arr);
+        int count;
+        memcpy(&count, m_work.data() + 0x1c8, 4);
+        for (int i = count + 2; i < 8; ++i)
+            if (i >= 0)
+                arr[i] = 0.0f;
+        for (int f = 10; f < 16; ++f)
+            *WorkPtr(f, 0) = arr[f - 8];
+        break;
+    }
     case 3: case 7: {
         // 0x003211f8: the two wheels of the axle = stock height minus the lowering.
         const size_t off = field == 3 ? 0x18 : 0x78;
@@ -495,6 +596,16 @@ void Session::SetDisplay(int field, int sub, float display)
     const int stored = int(pos * 100.0f + 100.5f);         // 0x0031f658
     Byte(field, sub) = uint8_t(std::max(0, std::min(200, stored)));
     WritePhysical(field, sub, v);
+    if (field >= 10 && field <= 15) { // 0x0031f8d8: every gear's slider follows the ratios as written
+        for (int g = 10; g < 16; ++g) {
+            float glo, ghi;
+            if (!FieldActive(g) || !SliderRange(g, 0, glo, ghi))
+                continue;
+            const float actual = Clamp(ReadValue(g, 0), glo, ghi);
+            const int b = int(((actual - Ref(g, 0)) / (ghi - glo)) * 100.0f + 100.5f);
+            Byte(g, 0) = uint8_t(std::max(0, std::min(200, b)));
+        }
+    }
 }
 
 void Session::Reset(int field, int sub)
