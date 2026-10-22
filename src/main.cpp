@@ -669,11 +669,27 @@ int main(int argc, char **argv)
         }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
-        car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
+        // The career car's fitted performance parts tune a copy of the record (ISSUES #200).
+        std::vector<uint8_t> tunedRecord;
+        if (!fe.PreviewPerfParts().empty())
+            tunedRecord = fe.TunedCarRecord(fe.PreviewCarName(), fe.PreviewPerfParts());
+        if (!tunedRecord.empty()) {
+            FENativeInterface::ReadCarPerformance(tunedRecord.data(), perf);
+            car.SetPerformance(perf.Valid() ? perf : PlayerCar::Performance());
+            PlayerCar::Performance stock;
+            fe.CarPerformance(fe.PreviewCarName(), stock);
+            float t0, v0, t1, v1;
+            PlayerCar::Simulate(stock, 0.32f, t0, v0);
+            PlayerCar::Simulate(perf, 0.32f, t1, v1);
+            printf("[PerfShop] %zu parts fitted: 0-100 %.2f -> %.2f s, top speed %.0f -> %.0f km/h, mass %.3f -> %.3f\n",
+                   fe.PreviewPerfParts().size(), t0, t1, v0 * 3.6f, v1 * 3.6f, stock.mass, perf.mass);
+        } else {
+            car.SetPerformance(fe.CarPerformance(fe.PreviewCarName(), perf) ? perf : PlayerCar::Performance());
+        }
         // The ported UG2 vehicle physics (ISSUES #129) drive the player car; NFSU2_PHYSICS=arcade
         // selects the old stand-in model.
         if (const char *ph = getenv("NFSU2_PHYSICS"); !ph || strcmp(ph, "arcade")) {
-            const uint8_t *rec = fe.CarRecordData(fe.PreviewCarName());
+            const uint8_t *rec = tunedRecord.empty() ? fe.CarRecordData(fe.PreviewCarName()) : tunedRecord.data();
             printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
         }
         // The Body Shop preview selection (#188), falling back to the dev environment.
@@ -981,6 +997,23 @@ int main(int argc, char **argv)
             printf("[CarTest] %-12s %.2f t  %d gears  %4.0f/%4.0f rpm  peak %.0f Nm  0-100 %.1f s  top %.0f km/h\n",
                    name.c_str(), p.mass, p.numGears, p.redline, p.maxRpm,
                    1000 * *std::max_element(p.torque, p.torque + 9), t100, vmax * 3.6f);
+            // NFSU2_CAR_TEST_LEVEL=n also prints the car with every level-n performance package fitted (#200).
+            if (const char *lv = getenv("NFSU2_CAR_TEST_LEVEL")) {
+                std::vector<uint16_t> parts;
+                for (size_t i = 0; i < fe.PerfParts().Count(); ++i)
+                    if (fe.PerfParts().At(i).level == uint32_t(atoi(lv)) &&
+                        (!getenv("NFSU2_CAR_TEST_CAT") || fe.PerfParts().At(i).category == uint32_t(atoi(getenv("NFSU2_CAR_TEST_CAT")))))
+                        for (const PerfPart &pp : fe.PerfParts().At(i).parts)
+                            parts.push_back(uint16_t(pp.id));
+                const std::vector<uint8_t> tuned = fe.TunedCarRecord(name, parts);
+                PlayerCar::Performance tp;
+                FENativeInterface::ReadCarPerformance(tuned.data(), tp);
+                float tt100, tvmax;
+                PlayerCar::Simulate(tp, fe.CarWheels(name, w) ? w[0].radius : 0.32f, tt100, tvmax);
+                printf("[CarTest]   +L%s parts: %.2f t  %d gears  %4.0f/%4.0f rpm  peak %.0f Nm  0-100 %.1f s  top %.0f km/h\n",
+                       lv, tp.mass, tp.numGears, tp.redline, tp.maxRpm,
+                       1000 * *std::max_element(tp.torque, tp.torque + 9), tt100, tvmax * 3.6f);
+            }
         }
     if (const char *region = getenv("NFSU2_WORLD"))
         enterWorld(region);

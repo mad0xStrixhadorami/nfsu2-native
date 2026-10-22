@@ -16,6 +16,7 @@
 #include "game/indep/Frontend/PaintCatalog.h"
 #include "game/indep/Frontend/PartCatalog.h"
 #include "game/indep/Frontend/PerfPackages.h"
+#include "game/indep/Frontend/PerfModel.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -193,6 +194,11 @@ public:
     // GLOBALB's shop part records (spoilers, roof scoops, ...) and their price tiers (#184).
     const PartCatalog &Parts() const { return m_parts; }
     const PerfPackages &PerfParts() const { return m_perf; }
+    static void ReadCarPerformance(const uint8_t *record, PlayerCar::Performance &out);
+    std::vector<uint8_t> TunedCarRecord(const std::string &folder, const std::vector<uint16_t> &parts) const;
+    // The performance parts fitted to the car on show (the career car's OwnedCar::perfParts).
+    void SetPreviewPerfParts(const std::vector<uint16_t> &parts) { m_previewPerfParts = parts; }
+    const std::vector<uint16_t> &PreviewPerfParts() const { return m_previewPerfParts; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
     {
@@ -247,7 +253,7 @@ public:
     const uint8_t *CarRecordData(const std::string &folder) const
     {
         auto it = m_carTable.find(folder);
-        return it != m_carTable.end() && it->second.raw.size() == 0x890 ? it->second.raw.data() : nullptr;
+        return it != m_carTable.end() && it->second.stock.size() == 0x890 ? it->second.stock.data() : nullptr;
     }
     // Database record index of a car folder = UG2's car type (-1 if unknown).
     int CarTypeIndex(const std::string &folder) const
@@ -364,7 +370,8 @@ private:
         bool traffic = false; // chunk field +0x84c == 2: service/traffic vehicle, not selectable
         PlayerCar::Wheel wheels[4] = {};
         PlayerCar::Performance perf;
-        std::vector<uint8_t> raw; // the 0x890-byte record
+        std::vector<uint8_t> raw;   // the 0x890-byte record as stored
+        std::vector<uint8_t> stock; // raw with the stock performance model applied (PerfModel)
     };
 
     Affine LocalTransform(const FEObject *obj) const;
@@ -409,6 +416,7 @@ private:
     std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     PaintCatalog m_paint;                          // GLOBALB chunk 0x80034602 GLOSS set (#167)
+    std::vector<uint16_t> m_previewPerfParts;
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)
     std::vector<PreviewTriangle> m_carPreviewTris;

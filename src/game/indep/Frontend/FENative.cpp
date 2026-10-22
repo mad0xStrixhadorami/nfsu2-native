@@ -355,6 +355,36 @@ void FENativeInterface::RenderCarPreviewOverlay()
         DrawCarPreviewLabel(pkg);
 }
 
+// The engine/chassis block of a car record (see PlayerCar::Performance).  Also reads a tuned copy
+// of the record (PerfModel::Apply), which keeps the same layout.
+void FENativeInterface::ReadCarPerformance(const uint8_t *r, PlayerCar::Performance &pf)
+{
+    auto f = [r](size_t off) { float v; memcpy(&v, r + off, 4); return v; };
+    pf = PlayerCar::Performance();
+    pf.mass = f(0x228), pf.efficiency = f(0x2c8), pf.finalDrive = f(0x2d0), pf.reverse = f(0x2e8);
+    for (int gi = 0; gi < 6; ++gi)
+        if ((pf.gears[gi] = f(0x2f0 + gi * 4)) > 0)
+            pf.numGears = gi + 1;
+    pf.idleRpm = f(0x308), pf.redline = f(0x30c), pf.maxRpm = f(0x310);
+    for (int ti = 0; ti < 9; ++ti)
+        pf.torque[ti] = f(0x318 + ti * 4);
+    pf.aero = f(0x378), pf.grip = f(0x388), pf.rolling = f(0x3c8), pf.limiter = f(0x3a8);
+}
+
+// The car record with the installed performance parts applied (ISSUES #200); empty when the car
+// is unknown.
+std::vector<uint8_t> FENativeInterface::TunedCarRecord(const std::string &folder,
+                                                       const std::vector<uint16_t> &parts) const
+{
+    std::vector<uint8_t> tuned;
+    auto it = m_carTable.find(folder);
+    if (it != m_carTable.end() && it->second.raw.size() == PerfModel::kRecordSize) {
+        tuned = it->second.raw;
+        PerfModel::Apply(tuned.data(), tuned.size(), m_perf, parts);
+    }
+    return tuned;
+}
+
 // Car-select stat bars (UI_QRCarSelect: "accel_*", "top_speed_*", "handling_*" slider widgets set
 // up by 0x001f4130, drawn by 0x002614e0). UG2 feeds them 0..1 values from its car physics model
 // (0x0031ce90 / 0x0031cdd8 / 0x0031d060, not ported); here they come from the database drivetrain:
@@ -961,18 +991,12 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                 rec.manufacturer = manuf;
                 rec.traffic = *reinterpret_cast<const uint32_t *>(r + 0x84c) == 2;
                 rec.raw.assign(r, r + kCarRecord);
-                { // engine/chassis, stock tuning level (see PlayerCar::Performance)
-                    PlayerCar::Performance &pf = rec.perf;
-                    auto f = [r](size_t off) { float v; memcpy(&v, r + off, 4); return v; };
-                    pf.mass = f(0x228), pf.efficiency = f(0x2c8), pf.finalDrive = f(0x2d0), pf.reverse = f(0x2e8);
-                    for (int gi = 0; gi < 6; ++gi)
-                        if ((pf.gears[gi] = f(0x2f0 + gi * 4)) > 0)
-                            pf.numGears = gi + 1;
-                    pf.idleRpm = f(0x308), pf.redline = f(0x30c), pf.maxRpm = f(0x310);
-                    for (int ti = 0; ti < 9; ++ti)
-                        pf.torque[ti] = f(0x318 + ti * 4);
-                    pf.aero = f(0x378), pf.grip = f(0x388), pf.rolling = f(0x3c8), pf.limiter = f(0x3a8);
-                }
+                // The original never uses the stored block as is: 0x0031b520 builds a tuned copy for
+                // every car, parts or not (#200).  NFSU2_PERF_MODEL=off keeps the stored figures.
+                rec.stock = rec.raw;
+                if (const char *pm = getenv("NFSU2_PERF_MODEL"); !pm || strcmp(pm, "off"))
+                    PerfModel::Apply(rec.stock.data(), rec.stock.size(), PerfPackages(), {});
+                ReadCarPerformance(rec.stock.data(), rec.perf); // engine/chassis, stock tuning level
                 for (int w = 0; w < 4; ++w) { // wheels: 0x30-byte records from +0x128
                     const uint8_t *wr = r + 0x128 + w * 0x30;
                     memcpy(&rec.wheels[w].x, wr, 12);

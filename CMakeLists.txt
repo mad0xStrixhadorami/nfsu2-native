@@ -58,6 +58,9 @@ add_test(NAME partcatalog COMMAND partcatalog_test)
 add_executable(perfpackages_test tests/perfpackages_test.cpp src/game/indep/Frontend/PerfPackages.cpp)
 target_include_directories(perfpackages_test PRIVATE src)
 add_test(NAME perfpackages COMMAND perfpackages_test)
+add_executable(perfmodel_test tests/perfmodel_test.cpp src/game/indep/Frontend/PerfModel.cpp src/game/indep/Frontend/PerfPackages.cpp)
+target_include_directories(perfmodel_test PRIVATE src)
+add_test(NAME perfmodel COMMAND perfmodel_test)
 
 # Solid-header transform: the stock spoiler's mount matrix (#175).
 add_executable(solid_test tests/solid_test.cpp src/game/indep/World/SolidMesh.cpp)

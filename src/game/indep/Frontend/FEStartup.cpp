@@ -1418,6 +1418,7 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewSkirtPart(0);
         if (!getenv("NFSU2_PART_WIDEBODY"))
             m_fe->SetPreviewWideBodyPart(0);
+        m_fe->SetPreviewPerfParts({}); // a Quick Race car is stock (#200)
     }
     m_carFilterState = 1; // DAT_00566764 default: Stock Cars
     ApplyCarFilterLabel(pkg);
@@ -3269,6 +3270,7 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewRearBumperPart(car.rearBumper);
     m_fe->SetPreviewSkirtPart(car.skirt);
     m_fe->SetPreviewWideBodyPart(car.wideBody);
+    m_fe->SetPreviewPerfParts(car.perfParts);
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use
@@ -3908,6 +3910,7 @@ void FEStartupSequence::BuyPerformancePackage(FEPackage *pkg)
                                      car->perfParts.end());
     for (const PerfPart &part : pp->parts)
         car->perfParts.push_back(uint16_t(part.id));
+    m_fe->SetPreviewPerfParts(car->perfParts);
     printf("[PerfShop] fitted package %u/%u for $%d (saving $%d); bank $%d\n", m_perfCategory,
            m_perfCardLevel[sel], total, saving, m_profile.money);
     if (!Career::SaveCareer(m_profile))
@@ -4048,6 +4051,7 @@ void FEStartupSequence::BuySelectedPerfPart(FEPackage *pkg)
     m_profile.money -= int(part.price);
     AddOwnedPart(m_profile, 0x80000000u | part.id);
     car->perfParts.push_back(uint16_t(part.id));
+    m_fe->SetPreviewPerfParts(car->perfParts);
     printf("[PerfShop] fitted part %u for $%u; bank $%d\n", part.id, part.price, m_profile.money);
     if (!Career::SaveCareer(m_profile))
         printf("[PerfShop] the part is fitted but the save failed\n");
