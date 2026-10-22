@@ -3579,25 +3579,15 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
     defs.push_back({kCards[2].icon, kCards[2].label});
 
     m_profileCards.clear();
-    FEObject *art = pkg->FindObjectByHash(0x687fda31);
-    float centerX = 41.0f, centerY = 7.0f, cardW = 126.0f, cardH = 62.0f;
+    FEObject *art = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"));
+    float centerX = 0.0f, centerY = -149.0f, cardW = 118.0f, cardH = 59.0f;
     FEImageData artData{};
     FEImage *artImage = art && art->Type == FE_Image ? static_cast<FEImage *>(art) : nullptr;
     if (artImage && artImage->GetImageData()) {
         artData = *artImage->GetImageData();
         FENativeInterface::GetCenter(art, centerX, centerY);
         FENativeInterface::GetSize(art, cardW, cardH);
-        // The art is a child of the screen frame (8d7e0c53); the clones are top-level, so the
-        // frame's own translation has to be added to land them on the same spot.
-        if (FEObject *frame = pkg->FindObjectByHash(0x8d7e0c53)) {
-            float fx = 0.0f, fy = 0.0f;
-            FENativeInterface::GetCenter(frame, fx, fy);
-            centerX += fx;
-            centerY += fy;
-        }
         FENativeInterface::SetObjectVisible(art, false); // the template; every card is a clone
-        if (FEObject *glow = pkg->FindObjectByHash(0xdf422345))
-            FENativeInterface::SetObjectVisible(glow, false);
     }
     for (size_t i = 0; art && i < defs.size(); ++i) {
         // FEObject's copy ctor zeroes the transform data (FEObject.cpp:82), and an FEImage's zero
@@ -3632,7 +3622,7 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
         m_profileScroller.SetupObjects(pkg, defs, m_profileCards, 0, "OPTION_MASTER");
         m_profileScroller.SetLayoutCenter(centerX, centerY);
     } else {
-        printf("[Profile] card art 687fda31 missing; the manager has no cards\n");
+        printf("[Profile] OPTION_MASTER missing; the manager has no cards\n");
     }
     // The card's own scripts relabel 47ff4e7c with the current profile's name (0x0023ca08).
     FENativeInterface::SetString(pkg, 0x47ff4e7c, m_profile.valid ? m_profile.name.c_str() : "");
