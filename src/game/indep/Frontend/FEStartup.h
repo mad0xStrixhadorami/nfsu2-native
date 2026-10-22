@@ -177,6 +177,7 @@ private:
     void HandleBuyPartsLoaded(FEPackage *pkg);
     void HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg);
     void RefreshBuyParts(FEPackage *pkg);
+    void UpdateBuyPartsStats(FEPackage *pkg);
     void BuySelectedPerfPart(FEPackage *pkg);
     bool PerfPartAvailable(uint16_t id);
     void PerfPackagePrice(const PerfPackage &pkg, int &total, int &saving);

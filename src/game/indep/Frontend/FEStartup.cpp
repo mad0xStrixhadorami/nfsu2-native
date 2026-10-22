@@ -3733,6 +3733,8 @@ std::vector<FEObject *> CloneOptionCards(FEPackage *pkg, size_t count, const cha
 // car type 0x7fc8d0d0) and the "discount" row shows the saving.
 void FEStartupSequence::HandlePerformancePackageLoaded(FEPackage *pkg)
 {
+    if (const char *cat = getenv("NFSU2_PERF_CATEGORY")) // dev aid: open a given category
+        m_perfCategory = uint32_t(atoi(cat));
     // Dev aid: NFSU2_PERF_TEST=<money> opens the shop with an in-memory career owning a Skyline
     // (for screens launched with NFSU2_PACKAGE, which have no loaded profile).
     if (const char *money = getenv("NFSU2_PERF_TEST")) {
@@ -3964,6 +3966,34 @@ void FEStartupSequence::HandlePerformancePackageMessage(uint32_t msg, FEPackage 
     }
 }
 
+// Peak torque (N*m) and peak power (kW) of the car with the given performance parts fitted:
+// 0x0031d438 / 0x0031d2e0 scan the tuned torque spline from idle to the limit in 50 rpm steps.
+struct PerfPeaks {
+    float torqueNm = 0.0f, powerKw = 0.0f;
+};
+PerfPeaks ComputePerfPeaks(const FENativeInterface &fe, const std::string &car, const std::vector<uint16_t> &parts)
+{
+    PerfPeaks peaks;
+    PlayerCar::Performance p;
+    if (parts.empty()) {
+        if (!fe.CarPerformance(car, p))
+            return peaks;
+    } else {
+        const std::vector<uint8_t> tuned = fe.TunedCarRecord(car, parts);
+        if (tuned.empty())
+            return peaks;
+        FENativeInterface::ReadCarPerformance(tuned.data(), p);
+    }
+    if (!p.Valid())
+        return peaks;
+    for (float rpm = p.idleRpm; rpm < p.maxRpm; rpm += 50.0f) {
+        const float torque = PlayerCar::Torque(p, rpm); // kN*m
+        peaks.torqueNm = std::max(peaks.torqueNm, torque * 1000.0f);
+        peaks.powerKw = std::max(peaks.powerKw, torque * rpm * 0.10471976f); // kN*m * rad/s
+    }
+    return peaks;
+}
+
 // UI_BuyPerformanceParts.fng (factory 0x002b7f18, ctor 0x002b7f50, list 0x002b88f0, refresh
 // 0x002b8690): "Performance Individual Parts" (ISSUES #199).  0x002b88f0 adds one row per part of
 // the category's three packages that 0x002b5760 offers for sale; the list is the EA array scroller
@@ -3982,6 +4012,8 @@ constexpr size_t kPartRows = 4;
 
 void FEStartupSequence::HandleBuyPartsLoaded(FEPackage *pkg)
 {
+    if (const char *cat = getenv("NFSU2_PERF_CATEGORY")) // dev aid: open a given category
+        m_perfCategory = uint32_t(atoi(cat));
     if (const char *money = getenv("NFSU2_PERF_TEST")) { // dev aid, see HandlePerformancePackageLoaded
         if (!m_profile.valid || m_profile.cars.empty()) {
             m_profile.valid = true;
@@ -3998,13 +4030,6 @@ void FEStartupSequence::HandleBuyPartsLoaded(FEPackage *pkg)
             for (const PerfPart &part : pp->parts)
                 if (PerfPartAvailable(uint16_t(part.id)))
                     m_buyParts.push_back(&part);
-    // The stat panel: heading, the two rows and their bars.
-    for (uint32_t obj : {0xf601f2d4u, 0x38be24ceu, 0x38be24efu, 0x6bb32446u, 0x18531358u})
-        FENativeInterface::SetVisible(pkg, obj, false);
-    for (const char *name : {"TORQUE_BACKING", "TORQUE_LEFT_CAP", "TORQUE_CURRENT_BAR", "TORQUE_PREVIEW_BAR",
-                             "HORSEPOWER_BACKING", "HORSEPOWER_LEFT_CAP", "HORSEPOWER_CURRENT_BAR",
-                             "HORSEPOWER_PREVIEW_BAR"})
-        FENativeInterface::SetVisible(pkg, bStringHash(name), false);
     printf("[PerfShop] individual parts: category %u, %zu for sale\n", m_perfCategory, m_buyParts.size());
     RefreshBuyParts(pkg);
 }
@@ -4043,9 +4068,68 @@ void FEStartupSequence::RefreshBuyParts(FEPackage *pkg)
         FENativeInterface::GetCenter(cursor, x, y);
         FENativeInterface::SetCenter(cursor, x, kPartRowY[m_buySel - m_buyTop] - kPartRowY[0] - 63.0f);
     }
+    UpdateBuyPartsStats(pkg);
     // Scroll arrows: up when rows are above the window, down when below.
     FENativeInterface::SetAlpha(pkg, 0x444969fd, m_buyTop > 0 ? 255 : 0);
     FENativeInterface::SetAlpha(pkg, 0x444969fe, m_buyTop + kPartRows < count ? 255 : 0);
+}
+
+// The "Performance Stats" panel (0x002b8690): the torque and power the highlighted part adds,
+// as a number (ft-lbs / Nm and bhp / kW, by the speedometer units) and as current / preview bars.
+void FEStartupSequence::UpdateBuyPartsStats(FEPackage *pkg)
+{
+    const Career::OwnedCar *car = ShopCar();
+    const bool selected = m_buySel < m_buyParts.size() && car;
+    for (uint32_t obj : {0xf601f2d4u, 0x38be24ceu, 0x38be24efu, 0x6bb32446u, 0x18531358u})
+        FENativeInterface::SetVisible(pkg, obj, selected);
+    for (const char *name : {"TORQUE_BACKING", "TORQUE_LEFT_CAP", "TORQUE_CURRENT_BAR", "TORQUE_PREVIEW_BAR",
+                             "HORSEPOWER_BACKING", "HORSEPOWER_LEFT_CAP", "HORSEPOWER_CURRENT_BAR",
+                             "HORSEPOWER_PREVIEW_BAR"})
+        FENativeInterface::SetVisible(pkg, bStringHash(name), selected);
+    if (!selected)
+        return;
+    std::vector<uint16_t> after = car->perfParts;
+    after.push_back(uint16_t(m_buyParts[m_buySel]->id));
+    const PerfPeaks now = ComputePerfPeaks(*m_fe, car->model, car->perfParts);
+    const PerfPeaks next = ComputePerfPeaks(*m_fe, car->model, after);
+    const bool metric = m_speedoUnits != 0;
+    // 0x002b8690: torque in ft-lbs (x0.7376) or Nm, power in bhp or kW; the same "%2.2f %s" format.
+    const float torque = (next.torqueNm - now.torqueNm) * (metric ? 1.0f : 0.7375621f);
+    const float power = (next.powerKw - now.powerKw) * (metric ? 1.0f : 1.3410221f);
+    char text[48];
+    snprintf(text, sizeof(text), "%2.2f %s", torque,
+             m_fe->LanguageText(metric ? 0x5b81d613u : 0xacb8dff3u).c_str());
+    FENativeInterface::SetString(pkg, 0x18531358, text);
+    snprintf(text, sizeof(text), "%2.2f %s", power, m_fe->LanguageText(metric ? 0x5b81d5bau : 0xcbbc6512u).c_str());
+    FENativeInterface::SetString(pkg, 0x6bb32446, text);
+    // Bars: the stat bars' track (46 units in, 164 long); the full scale is a stand-in (the
+    // original's constants are runtime data).
+    constexpr float kInset = 46.0f, kTrack = 164.0f;
+    auto bar = [&](const char *base, float current, float preview, float full) {
+        const std::string name = base;
+        FEObject *backing = pkg->FindObjectByHash(bStringHash((name + "_BACKING").c_str()));
+        FEObject *cur = pkg->FindObjectByHash(bStringHash((name + "_CURRENT_BAR").c_str()));
+        FEObject *prev = pkg->FindObjectByHash(bStringHash((name + "_PREVIEW_BAR").c_str()));
+        if (!backing || !cur || !prev)
+            return;
+        float bx, by, bw, bh, cx, cy, cw, ch, px, py, pw, ph;
+        FENativeInterface::GetCenter(backing, bx, by);
+        FENativeInterface::GetSize(backing, bw, bh);
+        FENativeInterface::GetCenter(cur, cx, cy);
+        FENativeInterface::GetSize(cur, cw, ch);
+        FENativeInterface::GetCenter(prev, px, py);
+        FENativeInterface::GetSize(prev, pw, ph);
+        const float left = bx - bw * 0.5f + kInset;
+        const float v = std::clamp(current / full, 0.03f, 1.0f);
+        const float pv = std::clamp(preview / full, v, 1.0f);
+        FENativeInterface::SetSize(cur, kTrack * v, ch);
+        FENativeInterface::SetCenter(cur, left + 4.0f + kTrack * v * 0.5f, cy);
+        FENativeInterface::SetObjectVisible(prev, pv > v + 0.002f);
+        FENativeInterface::SetSize(prev, kTrack * (pv - v), ph);
+        FENativeInterface::SetCenter(prev, left + 4.0f + kTrack * (v + pv) * 0.5f, py);
+    };
+    bar("TORQUE", now.torqueNm, next.torqueNm, 700.0f);
+    bar("HORSEPOWER", now.powerKw, next.powerKw, 450.0f);
 }
 
 void FEStartupSequence::BuySelectedPerfPart(FEPackage *pkg)
