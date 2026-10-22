@@ -14,6 +14,7 @@
 #include "game/indep/Frontend/FENative.h"
 #include "Speed/Indep/Src/FEng/FEGroup.h"
 #include "Speed/Indep/Src/FEng/FEImage.h"
+#include "Speed/Indep/Src/FEng/FEString.h"
 
 namespace {
 
@@ -372,6 +373,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleBuyPartsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_VirtualKeyboard.fng") == 0) {
+        HandleKeyboardLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -534,7 +539,7 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
             HandleCustomizeCategoryMessage(msg, pkg);
         return;
     }
-    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0)
+    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_ChoosePerformancePackage.fng") == 0) {
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
@@ -738,6 +743,24 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_VirtualKeyboard.fng") == 0) {
+        if (pressed & FENativeInterface::kPadUp)
+            HandleKeyboardMessage(kMsgPadUp, top);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleKeyboardMessage(kMsgPadDown, top);
+        else if (pressed & FENativeInterface::kPadLeft)
+            HandleKeyboardMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleKeyboardMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadStart)
+            KeyboardFinish(top, true);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleKeyboardMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleKeyboardMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -4172,6 +4195,204 @@ void FEStartupSequence::HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg)
     }
 }
 
+// UI_VirtualKeyboard.fng (factory 0x001fb528, ISSUES #204): the name-entry screen.  The package is
+// the PS2 on-screen keyboard: 0x5dfa6642 is the text field, the keys are strings over grey key
+// backings (rows 0..3 at y -70 / -29 / 8 / 48, SPACE at y 89, BACK / DONE / CAPS / SHIFT among
+// them).  The class highlights keys itself (no FEng responses ship), so the port keeps its own
+// cursor: the selected key's label is drawn larger.  The pad moves the cursor and types; the
+// window's keyboard types too (SDL_TEXTINPUT) and Enter finishes.  Letters are upper case
+// (CAPS flips, SHIFT flips the next key), a name holds up to 15 characters.
+void FEStartupSequence::OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done)
+{
+    m_kbText = initial;
+    m_kbDone = std::move(done);
+    m_kbCaps = true;
+    m_kbShift = false;
+    m_kbSel = 0;
+    m_kbActive = true;
+    m_fe->SetTextInputMode(true);
+    m_engine->QueuePackagePush("UI_VirtualKeyboard.fng", 0xff);
+}
+
+namespace {
+std::string WideToAscii(const i16 *w)
+{
+    std::string out;
+    for (; w && *w; ++w)
+        out.push_back(*w < 128 ? char(*w) : '?');
+    return out;
+}
+} // namespace
+
+void FEStartupSequence::HandleKeyboardLoaded(FEPackage *pkg)
+{
+    // Dev aid: NFSU2_PACKAGE=UI_VirtualKeyboard.fng opens it standalone.
+    if (!m_kbActive) {
+        m_kbActive = true;
+        m_fe->SetTextInputMode(true);
+    }
+    m_kbKeys.clear();
+    static const uint32_t kNotKeys[] = {0x47ff4e7c, 0x5dfa6642, 0x42adb44c, 0x0880ac4c, 0x64aff8d3};
+    std::function<void(FEObject *)> collect = [&](FEObject *o) {
+        for (; o; o = o->GetNext()) {
+            if (o->Type == FE_Group) {
+                collect(static_cast<FEGroup *>(o)->GetFirstChild());
+                continue;
+            }
+            if (o->Type != FE_String)
+                continue;
+            bool skip = false;
+            for (uint32_t h : kNotKeys)
+                skip = skip || o->NameHash == h;
+            float x, y;
+            FENativeInterface::GetCenter(o, x, y);
+            if (skip || y < -80.0f || y > 100.0f)
+                continue;
+            const std::string text = WideToAscii(static_cast<FEString *>(o)->GetString());
+            if (text.empty() || text.size() > 5)
+                continue;
+            KbKey key;
+            key.obj = o;
+            key.label = text;
+            key.x = x;
+            key.y = y;
+            m_kbKeys.push_back(key);
+        }
+    };
+    collect(pkg->GetFirstObject());
+    // Reading order: rows top to bottom, keys left to right.
+    std::sort(m_kbKeys.begin(), m_kbKeys.end(), [](const KbKey &a, const KbKey &b) {
+        if (std::fabs(a.y - b.y) > 12.0f)
+            return a.y < b.y;
+        return a.x < b.x;
+    });
+    // Start on "A" (the home row) rather than the first key.
+    for (size_t i = 0; i < m_kbKeys.size(); ++i)
+        if (m_kbKeys[i].label == "Q") {
+            m_kbSel = i;
+            break;
+        }
+    printf("[Keyboard] %zu keys\n", m_kbKeys.size());
+    KeyboardRefresh(pkg);
+}
+
+void FEStartupSequence::KeyboardRefresh(FEPackage *pkg)
+{
+    FENativeInterface::SetString(pkg, 0x5dfa6642, (m_kbText + "_").c_str());
+    for (size_t i = 0; i < m_kbKeys.size(); ++i) {
+        const bool selected = i == m_kbSel;
+        const bool latched = (m_kbKeys[i].label == "CAPS" && m_kbCaps) || (m_kbKeys[i].label == "SHIFT" && m_kbShift);
+        FENativeInterface::SetSize(m_kbKeys[i].obj, selected ? 1.15f : (latched ? 1.0f : 0.8f), selected ? 1.15f : (latched ? 1.0f : 0.8f));
+    }
+}
+
+void FEStartupSequence::OnTextInput(const char *utf8)
+{
+    if (!m_kbActive || !utf8)
+        return;
+    for (const char *c = utf8; *c; ++c) {
+        const unsigned char ch = static_cast<unsigned char>(*c);
+        if (m_kbText.size() >= 15 || ch < 32 || ch > 126)
+            continue;
+        if (!(isalnum(ch) || ch == ' ' || ch == '-' || ch == '_' || ch == '.'))
+            continue;
+        m_kbText.push_back(char(toupper(ch)));
+    }
+    if (FEPackage *pkg = m_engine->GetPackageList()->FindPackage("UI_VirtualKeyboard.fng"))
+        KeyboardRefresh(pkg);
+}
+
+void FEStartupSequence::KeyboardPress(FEPackage *pkg)
+{
+    if (m_kbSel >= m_kbKeys.size())
+        return;
+    const std::string &label = m_kbKeys[m_kbSel].label;
+    if (getenv("NFSU2_KB_DEBUG"))
+        printf("[Keyboard] press '%s' (text '%s')\n", label.c_str(), m_kbText.c_str());
+    if (label == "DONE") {
+        KeyboardFinish(pkg, true);
+        return;
+    }
+    if (label == "BACK") {
+        if (!m_kbText.empty())
+            m_kbText.pop_back();
+    } else if (label == "CAPS") {
+        m_kbCaps = !m_kbCaps;
+    } else if (label == "SHIFT") {
+        m_kbShift = !m_kbShift;
+    } else if (label == "<" || label == ">") {
+        // the cursor keys of the original edit inside the text; the port appends only
+    } else if (m_kbText.size() < 15) {
+        char ch = label == "SPACE" ? ' ' : label[0];
+        if (isalpha(static_cast<unsigned char>(ch))) {
+            const bool upper = m_kbCaps != m_kbShift;
+            ch = char(upper ? toupper(ch) : tolower(ch));
+        }
+        m_kbText.push_back(ch);
+        m_kbShift = false;
+    }
+    KeyboardRefresh(pkg);
+}
+
+void FEStartupSequence::KeyboardFinish(FEPackage *pkg, bool accepted)
+{
+    std::string text = m_kbText;
+    // Trim trailing spaces; an empty name is a cancel.
+    while (!text.empty() && text.back() == ' ')
+        text.pop_back();
+    m_kbActive = false;
+    m_fe->SetTextInputMode(false);
+    auto done = std::move(m_kbDone);
+    m_kbDone = nullptr;
+    m_engine->UnloadPackage(pkg);
+    printf("[Keyboard] %s '%s'\n", accepted && !text.empty() ? "done" : "cancelled", text.c_str());
+    if (accepted && !text.empty() && done)
+        done(text);
+}
+
+void FEStartupSequence::HandleKeyboardMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_kbKeys.empty())
+        return;
+    const KbKey &cur = m_kbKeys[m_kbSel];
+    auto nearest = [&](float dy) {
+        // The key in the adjacent row whose x is closest.
+        size_t best = m_kbSel;
+        float bestDist = 1e9f;
+        for (size_t i = 0; i < m_kbKeys.size(); ++i) {
+            const float rowDy = m_kbKeys[i].y - cur.y;
+            if (dy * rowDy < 8.0f)
+                continue; // wrong direction or the same row
+            const float score = std::fabs(rowDy) * 4.0f + std::fabs(m_kbKeys[i].x - cur.x);
+            if (score < bestDist) {
+                bestDist = score;
+                best = i;
+            }
+        }
+        return best;
+    };
+    if (msg == kMsgPadLeft) {
+        if (m_kbSel > 0 && std::fabs(m_kbKeys[m_kbSel - 1].y - cur.y) < 12.0f)
+            --m_kbSel;
+    } else if (msg == kMsgPadRight) {
+        if (m_kbSel + 1 < m_kbKeys.size() && std::fabs(m_kbKeys[m_kbSel + 1].y - cur.y) < 12.0f)
+            ++m_kbSel;
+    } else if (msg == kMsgPadUp) {
+        m_kbSel = nearest(-1.0f);
+    } else if (msg == kMsgPadDown) {
+        m_kbSel = nearest(1.0f);
+    } else if (msg == kMsgPadAccept) {
+        KeyboardPress(pkg);
+        return;
+    } else if (msg == kMsgPadBack) {
+        if (m_kbText.empty())
+            KeyboardFinish(pkg, false);
+        else
+            m_kbText.pop_back();
+    }
+    KeyboardRefresh(pkg);
+}
+
 // UI_ProfileManager.fng (factory 0x0023c968, ctor 0x0023c9a0, options 0x0023cbb8): the main menu's
 // Profile Manager.  0x0023cbb8 builds three option objects at runtime with
 // FUN_0029ae78(obj, icon, label, 0) and hands each one to IconScroller::AddOption (0x0029cd38):
@@ -4248,10 +4469,30 @@ void FEStartupSequence::ProfileManagerAccept()
             ShowMessageDialogText("The memory card could not be written");
         }
     } else if (sel == 1) {
-        // "Profile" -> Create / Delete.  Both need the name-entry screen (FENG key grid) and the
-        // original's overwrite prompt, neither of which is ported (ISSUES #195).
-        printf("[Profile] create/delete are not available in the native build\n");
-        ShowMessageDialogText("Profile creation and deletion are not available in the native build");
+        // "Profile" -> Create / Delete (ISSUES #195 / #204).
+        // "Profile" -> Create: name the profile with the keyboard (Delete is not ported).
+        OpenKeyboard("", [this](const std::string &name) {
+            const std::string file = Career::MemoryCard::SanitizeName(name);
+            for (const Career::CardFile &f : Career::MemoryCard::Get().List())
+                if (f.name == file) {
+                    ShowMessageDialogText("A profile with that name already exists");
+                    return;
+                }
+            m_profile = Career::Profile();
+            m_profile.valid = true;
+            m_profile.name = name;
+            m_profile.cars.clear();
+            m_profile.currentCar = 0;
+            if (!Career::SaveCareer(m_profile)) {
+                ShowMessageDialogText("The memory card could not be written");
+                return;
+            }
+            m_careerExists = true;
+            printf("[Profile] created %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
+                   m_profile.respect);
+            if (FEPackage *mgr = m_engine->GetPackageList()->FindPackage("UI_ProfileManager.fng"))
+                FENativeInterface::SetString(mgr, 0x47ff4e7c, m_profile.name.c_str());
+        });
     } else {
         // "Load": pick a save off the card through the career flow's own MC_List.fng.
         if (!Career::CareerExists()) {

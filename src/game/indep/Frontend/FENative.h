@@ -74,6 +74,9 @@ public:
     // 0x00259e48 / 0x00292f20 (FEngSetMovieName): set the movie a FE_Movie object plays.
     void SetMovieName(FEPackage *pkg, uint32_t objHash, const char *name);
     void SetSimulatedPadMask(u32 mask) { m_simulatedPadMask = mask; }
+    // While a text-entry screen is up the letter keys type instead of driving the pad (WASD, Q, E, Space).
+    void SetTextInputMode(bool on) { m_textInputMode = on; }
+    bool TextInputMode() const { return m_textInputMode; }
     void CycleCarPreview(int direction); // Stand-in for the car-select vehicle carousel.
     // Load a specific car as the car-select/race preview (career mode restores the saved car).
     bool SetPreviewCar(const std::string &model);
@@ -418,6 +421,7 @@ private:
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     PaintCatalog m_paint;                          // GLOBALB chunk 0x80034602 GLOSS set (#167)
     std::vector<uint16_t> m_previewPerfParts;
+    bool m_textInputMode = false;
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)
     std::vector<PreviewTriangle> m_carPreviewTris;

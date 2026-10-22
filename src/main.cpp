@@ -194,6 +194,7 @@ int main(int argc, char **argv)
     }
     FEngine *engine = new FEngine();
     fe.AttachEngine(engine);
+    SDL_StartTextInput();
     fe.SetFileReader([fs](const char *path) { return ReadGameFile(*fs, path); });
 
     std::vector<uint8_t> globalB, frontB, perfTuningB;
@@ -1031,9 +1032,12 @@ int main(int argc, char **argv)
 
     for (bool running = true; running;) {
         SDL_Event ev;
-        while (SDL_PollEvent(&ev))
+        while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F10)) // Esc is Back
                 running = false;
+            if (ev.type == SDL_TEXTINPUT && startup.KeyboardActive()) // the name-entry keyboard (#204)
+                startup.OnTextInput(ev.text.text);
+        }
         if (!musicStarted && musicVolume > 0 && (inWorld || startup.IsFinished())) {
             musicStarted = true;
             if (music.Open(*fs, "SOUND\\PFDATA\\MUSICSFX.MUS"))

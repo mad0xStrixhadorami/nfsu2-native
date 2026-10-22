@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,19 @@ private:
     void HandlePerformancePackageMessage(uint32_t msg, FEPackage *pkg);
     void RefreshPerformancePackage(FEPackage *pkg);
     void BuyPerformancePackage(FEPackage *pkg);
+    // The virtual keyboard (UI_VirtualKeyboard.fng, ISSUES #204): OpenKeyboard pushes it over the
+    // current screen; `done` receives the text when DONE / Enter is chosen.
+    void OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done);
+    void HandleKeyboardLoaded(FEPackage *pkg);
+    void HandleKeyboardMessage(uint32_t msg, FEPackage *pkg);
+    void KeyboardPress(FEPackage *pkg);
+    void KeyboardRefresh(FEPackage *pkg);
+    void KeyboardFinish(FEPackage *pkg, bool accepted);
+public:
+    // Typed text from the window (SDL_TEXTINPUT) and the Backspace key; only used while the keyboard is up.
+    void OnTextInput(const char *utf8);
+    bool KeyboardActive() const { return m_kbActive; }
+private:
     void HandleBuyPartsLoaded(FEPackage *pkg);
     void HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg);
     void RefreshBuyParts(FEPackage *pkg);
@@ -247,6 +261,17 @@ private:
     std::vector<uint32_t> m_perfCardLabel;
     size_t m_perfCardSel = 0;
     char m_perfBank[24] = {};
+    struct KbKey {
+        FEObject *obj = nullptr;
+        std::string label;
+        float x = 0, y = 0;
+    };
+    bool m_kbActive = false;
+    std::string m_kbText;
+    std::vector<KbKey> m_kbKeys;
+    size_t m_kbSel = 0;
+    bool m_kbCaps = true, m_kbShift = false;
+    std::function<void(const std::string &)> m_kbDone;
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
     size_t m_buySel = 0, m_buyTop = 0;
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)

@@ -1226,23 +1226,25 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
         return mask;
     int numKeys = 0;
     if (const Uint8 *keys = SDL_GetKeyboardState(&numKeys)) {
-        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_KP_8])
+        // Text entry: the letter keys type, so only the arrows, Enter and Backspace/Esc drive the pad.
+        const bool typing = m_textInputMode;
+        if (keys[SDL_SCANCODE_UP] || (!typing && keys[SDL_SCANCODE_W]) || keys[SDL_SCANCODE_KP_8])
             mask |= kPadUp;
-        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_KP_2])
+        if (keys[SDL_SCANCODE_DOWN] || (!typing && keys[SDL_SCANCODE_S]) || keys[SDL_SCANCODE_KP_2])
             mask |= kPadDown;
-        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_KP_4])
+        if (keys[SDL_SCANCODE_LEFT] || (!typing && keys[SDL_SCANCODE_A]) || keys[SDL_SCANCODE_KP_4])
             mask |= kPadLeft;
-        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_KP_6])
+        if (keys[SDL_SCANCODE_RIGHT] || (!typing && keys[SDL_SCANCODE_D]) || keys[SDL_SCANCODE_KP_6])
             mask |= kPadRight;
-        if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER] || keys[SDL_SCANCODE_SPACE])
+        if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER] || (!typing && keys[SDL_SCANCODE_SPACE]))
             mask |= kPadAccept;
         if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER])
             mask |= kPadStart;
         if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_ESCAPE])
             mask |= kPadBack;
-        if (keys[SDL_SCANCODE_Q] || keys[SDL_SCANCODE_PAGEUP])
+        if ((!typing && keys[SDL_SCANCODE_Q]) || keys[SDL_SCANCODE_PAGEUP])
             mask |= kPadLTrigger;
-        if (keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_PAGEDOWN])
+        if ((!typing && keys[SDL_SCANCODE_E]) || keys[SDL_SCANCODE_PAGEDOWN])
             mask |= kPadRTrigger;
     }
     if (m_controller && SDL_GameControllerGetAttached(m_controller)) {
