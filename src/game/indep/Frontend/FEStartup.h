@@ -177,7 +177,8 @@ private:
     void BuyPerformancePackage(FEPackage *pkg);
     // The virtual keyboard (UI_VirtualKeyboard.fng, ISSUES #204): OpenKeyboard pushes it over the
     // current screen; `done` receives the text when DONE / Enter is chosen.
-    void OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done);
+    void OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done,
+                      std::function<void()> cancel = nullptr);
     void HandleKeyboardLoaded(FEPackage *pkg);
     void HandleKeyboardMessage(uint32_t msg, FEPackage *pkg);
     void KeyboardPress(FEPackage *pkg);
@@ -272,6 +273,7 @@ private:
     size_t m_kbSel = 0;
     bool m_kbCaps = true, m_kbShift = false;
     std::function<void(const std::string &)> m_kbDone;
+    std::function<void()> m_kbCancel;
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
     size_t m_buySel = 0, m_buyTop = 0;
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
@@ -363,7 +365,7 @@ public:
     // The card dialog's scripts rewrite the row colours every frame; re-apply the reveal after them.
     void PreRender();
 private:
-    void BeginCareer();          // New Career: create the profile and go to career car select
+    void BeginCareer(const std::string &name = "PLAYER");          // New Career: create the profile and go to career car select
     void RecordCareerCar();      // career car select accept: store the starter car and save
     void ResumeCareer();         // Resume Career: load the profile and enter the city
     bool LoadCareerProfile();    // load from the card into m_profile (keeps m_careerExists in sync)

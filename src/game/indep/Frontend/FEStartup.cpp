@@ -3524,7 +3524,9 @@ void FEStartupSequence::HandleMemcardLoaded(FEPackage *pkg)
     FENativeInterface::SetString(pkg, 0x47ff4e7c, "CALL");
     if (m_memcardCreate) {
         m_memcardCreate = false;
-        BeginCareer(); // 0x00259328: the new profile is written to the card at once
+        // 0x00259328 writes the new profile to the card at once; the PS2 asks for its name first
+        // (the keyboard, #204).  Cancelling keeps the default name so the flow can continue.
+        OpenKeyboard("PLAYER", [this](const std::string &name) { BeginCareer(name); }, [this]() { BeginCareer(); });
     }
     // The real screen polls the card every 0x15 ticks (0x0023d570 / 0x0023d9b0); the port reads it here.
     Career::MemoryCard &card = Career::MemoryCard::Get();
@@ -4202,10 +4204,12 @@ void FEStartupSequence::HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg)
 // cursor: the selected key's label is drawn larger.  The pad moves the cursor and types; the
 // window's keyboard types too (SDL_TEXTINPUT) and Enter finishes.  Letters are upper case
 // (CAPS flips, SHIFT flips the next key), a name holds up to 15 characters.
-void FEStartupSequence::OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done)
+void FEStartupSequence::OpenKeyboard(const std::string &initial, std::function<void(const std::string &)> done,
+                                     std::function<void()> cancel)
 {
     m_kbText = initial;
     m_kbDone = std::move(done);
+    m_kbCancel = std::move(cancel);
     m_kbCaps = true;
     m_kbShift = false;
     m_kbSel = 0;
@@ -4343,11 +4347,15 @@ void FEStartupSequence::KeyboardFinish(FEPackage *pkg, bool accepted)
     m_kbActive = false;
     m_fe->SetTextInputMode(false);
     auto done = std::move(m_kbDone);
+    auto cancel = std::move(m_kbCancel);
     m_kbDone = nullptr;
+    m_kbCancel = nullptr;
     m_engine->UnloadPackage(pkg);
     printf("[Keyboard] %s '%s'\n", accepted && !text.empty() ? "done" : "cancelled", text.c_str());
     if (accepted && !text.empty() && done)
         done(text);
+    else if (cancel)
+        cancel();
 }
 
 void FEStartupSequence::HandleKeyboardMessage(uint32_t msg, FEPackage *pkg)
@@ -4509,10 +4517,11 @@ void FEStartupSequence::ProfileManagerAccept()
 // 0x001e71f0 / 0x00259328: a new career starts with an empty profile and the starting cash/respect;
 
 // the save is written at once (UG2 does the same, then asks for a name and a starter car).
-void FEStartupSequence::BeginCareer()
+void FEStartupSequence::BeginCareer(const std::string &name)
 {
     m_profile = Career::Profile();
     m_profile.valid = true;
+    m_profile.name = name;
     m_profile.cars.clear();
     m_profile.currentCar = 0;
     printf("[Career] new profile %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
