@@ -774,6 +774,49 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             if (!s.decoded) {
                 s.decoded = true;
                 SolidMesh::DecodeChunks(s.data, s.dataSize, s.body, s.body + s.size, s.tris);
+                // Dev aid: NFSU2_SOLID_SCORE=1 rates every placed solid by its share of "spike" triangles
+                // (longest edge over 60% of the solid's bounding diagonal): mis-decoded geometry such as the
+                // Statue of Liberty's crown shows up as a high share on a big mesh.
+                // Dev aid: NFSU2_SOLID_DUMP=<hex hash>[,<hex hash>...] writes those solids as <hash>.obj in the current directory.
+                if (const char *dump = getenv("NFSU2_SOLID_DUMP"); dump && strstr(dump, ([&] { static char h[16]; snprintf(h, sizeof(h), "%08x", it->first); return h; })())) {
+                    char name[32];
+                    snprintf(name, sizeof(name), "%08x.obj", it->first);
+                    if (FILE *f = fopen(name, "w")) {
+                        size_t vi = 1;
+                        for (const SolidMesh::Triangle &t : s.tris) {
+                            for (int k = 0; k < 3; ++k)
+                                fprintf(f, "v %f %f %f\nvt %f %f\n", t.v[k].x, t.v[k].y, t.v[k].z, t.v[k].u, t.v[k].v);
+                            fprintf(f, "f %zu/%zu %zu/%zu %zu/%zu\n", vi, vi, vi + 1, vi + 1, vi + 2, vi + 2);
+                            vi += 3;
+                        }
+                        fclose(f);
+                        printf("[SolidDump] %s: %zu triangles\n", name, s.tris.size());
+                    }
+                }
+                if (getenv("NFSU2_SOLID_SCORE") && s.tris.size() >= 40) {
+                    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+                    for (const SolidMesh::Triangle &t : s.tris)
+                        for (const SolidMesh::Point &p : t.v) {
+                            const float c[3] = {p.x, p.y, p.z};
+                            for (int k = 0; k < 3; ++k) {
+                                lo[k] = std::min(lo[k], c[k]);
+                                hi[k] = std::max(hi[k], c[k]);
+                            }
+                        }
+                    const float diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                                 (hi[2] - lo[2]) * (hi[2] - lo[2]));
+                    size_t spikes = 0;
+                    for (const SolidMesh::Triangle &t : s.tris) {
+                        float longest = 0;
+                        for (int k = 0; k < 3; ++k) {
+                            const SolidMesh::Point &a = t.v[k], &b = t.v[(k + 1) % 3];
+                            longest = std::max(longest, std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)));
+                        }
+                        spikes += longest > 0.6f * diag;
+                    }
+                    printf("[SolidScore] %08x tris %zu diag %.1f spikes %zu (%.0f%%)\n", it->first, s.tris.size(), diag, spikes,
+                           100.0 * double(spikes) / double(s.tris.size()));
+                }
                 if (s.data != d) {
                     ++m_borrowedSolids;
                     for (uint32_t t : s.textures)
@@ -786,6 +829,12 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             memcpy(bbox, r, 24);
             memcpy(pos, r + 0x20, 12);
             memcpy(rot, r + 0x2c, 18);
+            // Dev aid: NFSU2_INST_NEAR=x,y,r lists the placed instances within r metres of (x, y).
+            if (const char *near = getenv("NFSU2_INST_NEAR")) {
+                float nx = 0, ny = 0, nr = 0;
+                if (sscanf(near, "%f,%f,%f", &nx, &ny, &nr) == 3 && std::hypot(pos[0] - nx, pos[1] - ny) < nr)
+                    printf("[Inst] %08x kind %d at %.0f %.0f %.0f tris %zu\n", it->first, int(kind), pos[0], pos[1], pos[2], s.tris.size());
+            }
             float m[9];
             for (int k = 0; k < 9; ++k)
                 m[k] = rot[k] / 8192.0f;
