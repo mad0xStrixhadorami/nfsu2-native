@@ -368,6 +368,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandlePerformancePackageLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0) {
+        HandleBuyPartsLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -530,6 +534,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
             HandleCustomizeCategoryMessage(msg, pkg);
         return;
     }
+    if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0)
+        return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_ChoosePerformancePackage.fng") == 0) {
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
             HandlePerformancePackageMessage(msg, pkg);
@@ -732,6 +738,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_BuyPerformanceParts.fng") == 0) {
+        if (pressed & FENativeInterface::kPadUp)
+            HandleBuyPartsMessage(kMsgPadUp, active);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleBuyPartsMessage(kMsgPadDown, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleBuyPartsMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleBuyPartsMessage(kMsgPadBack, active);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -3924,9 +3942,134 @@ void FEStartupSequence::HandlePerformancePackageMessage(uint32_t msg, FEPackage 
         const size_t sel = m_perfScroller.Selected();
         if (sel < m_perfCardType.size() && m_perfCardType[sel] == 1)
             BuyPerformancePackage(pkg);
+        else if (sel < m_perfCardType.size() && m_perfCardType[sel] == 2)
+            NavigateTo(pkg->GetName(), "UI_BuyPerformanceParts.fng");
         else
             printf("[PerfShop] card %zu (type %d) is not ported yet\n", sel,
                    sel < m_perfCardType.size() ? m_perfCardType[sel] : -1);
+    }
+}
+
+// UI_BuyPerformanceParts.fng (factory 0x002b7f18, ctor 0x002b7f50, list 0x002b88f0, refresh
+// 0x002b8690): "Performance Individual Parts" (ISSUES #199).  0x002b88f0 adds one row per part of
+// the category's three packages that 0x002b5760 offers for sale; the list is the EA array scroller
+// (0x0029f608 / 0x002a02b8) over 13 off-screen row templates, four rows visible: a name string
+// (b2980ba8..) at x -267 and a price string (9b483b01..) at x 201, with the cursor bars a753c46c
+// (names) and c128b184 (price) following the selected row.  The port lays the four visible rows
+// out directly.  The Torque / Power stat panel needs the engine model (not ported, #198) and is
+// hidden.
+namespace {
+constexpr uint32_t kPartNameSlot[] = {0xb2980ba8, 0xb2980ba9, 0xb2980baa, 0xb2980bab};
+constexpr uint32_t kPartDataSlot[] = {0x9b483b01, 0x9b483b02, 0x9b483b03, 0x9b483b04};
+constexpr float kPartRowY[] = {-73.0f, -48.0f, -23.0f, 2.0f}; // text sits 11 units below its cursor bar
+constexpr float kPartNameX = -267.0f, kPartDataX = 201.0f;
+constexpr size_t kPartRows = 4;
+} // namespace
+
+void FEStartupSequence::HandleBuyPartsLoaded(FEPackage *pkg)
+{
+    if (const char *money = getenv("NFSU2_PERF_TEST")) { // dev aid, see HandlePerformancePackageLoaded
+        if (!m_profile.valid || m_profile.cars.empty()) {
+            m_profile.valid = true;
+            m_profile.money = atoi(money);
+            m_profile.cars.push_back({"SKYLINE", 0});
+            m_profile.currentCar = 0;
+        }
+    }
+    m_buyParts.clear();
+    m_buySel = 0;
+    m_buyTop = 0;
+    for (uint32_t level = 1; level < 4; ++level)
+        if (const PerfPackage *pp = m_fe->PerfParts().Find(m_perfCategory, level))
+            for (const PerfPart &part : pp->parts)
+                if (PerfPartAvailable(uint16_t(part.id)))
+                    m_buyParts.push_back(&part);
+    // The stat panel: heading, the two rows and their bars.
+    for (uint32_t obj : {0xf601f2d4u, 0x38be24ceu, 0x38be24efu, 0x6bb32446u, 0x18531358u})
+        FENativeInterface::SetVisible(pkg, obj, false);
+    for (const char *name : {"TORQUE_BACKING", "TORQUE_LEFT_CAP", "TORQUE_CURRENT_BAR", "TORQUE_PREVIEW_BAR",
+                             "HORSEPOWER_BACKING", "HORSEPOWER_LEFT_CAP", "HORSEPOWER_CURRENT_BAR",
+                             "HORSEPOWER_PREVIEW_BAR"})
+        FENativeInterface::SetVisible(pkg, bStringHash(name), false);
+    printf("[PerfShop] individual parts: category %u, %zu for sale\n", m_perfCategory, m_buyParts.size());
+    RefreshBuyParts(pkg);
+}
+
+void FEStartupSequence::RefreshBuyParts(FEPackage *pkg)
+{
+    const size_t count = m_buyParts.size();
+    if (m_buySel >= count)
+        m_buySel = count ? count - 1 : 0;
+    if (m_buySel < m_buyTop)
+        m_buyTop = m_buySel;
+    if (m_buySel >= m_buyTop + kPartRows)
+        m_buyTop = m_buySel + 1 - kPartRows;
+    for (size_t row = 0; row < kPartRows; ++row) {
+        const size_t index = m_buyTop + row;
+        const bool used = index < count;
+        FENativeInterface::SetVisible(pkg, kPartNameSlot[row], used);
+        FENativeInterface::SetVisible(pkg, kPartDataSlot[row], used);
+        if (!used)
+            continue;
+        const PerfPart &part = *m_buyParts[index];
+        FENativeInterface::SetLanguageHash(pkg, kPartNameSlot[row], part.nameHash);
+        char price[24];
+        snprintf(price, sizeof(price), "$%u", part.price);
+        FENativeInterface::SetString(pkg, kPartDataSlot[row], price);
+        // Every row slot ships at the same x column as row 0 (the template slots are staggered by
+        // 10 units in the layout); all rows use row 0's name / price columns.
+        if (FEObject *o = pkg->FindObjectByHash(kPartNameSlot[row]))
+            FENativeInterface::SetCenter(o, kPartNameX, kPartRowY[row]);
+        if (FEObject *o = pkg->FindObjectByHash(kPartDataSlot[row]))
+            FENativeInterface::SetCenter(o, kPartDataX, kPartRowY[row]);
+    }
+    // The shipped row-0 backdrop group (66e29936) is the cursor: it follows the selected row.
+    if (FEObject *cursor = pkg->FindObjectByHash(0x66e29936)) {
+        float x, y;
+        FENativeInterface::GetCenter(cursor, x, y);
+        FENativeInterface::SetCenter(cursor, x, kPartRowY[m_buySel - m_buyTop] - kPartRowY[0] - 63.0f);
+    }
+    // Scroll arrows: up when rows are above the window, down when below.
+    FENativeInterface::SetAlpha(pkg, 0x444969fd, m_buyTop > 0 ? 255 : 0);
+    FENativeInterface::SetAlpha(pkg, 0x444969fe, m_buyTop + kPartRows < count ? 255 : 0);
+}
+
+void FEStartupSequence::BuySelectedPerfPart(FEPackage *pkg)
+{
+    Career::OwnedCar *car = ShopCar();
+    if (m_buySel >= m_buyParts.size() || !car)
+        return;
+    const PerfPart &part = *m_buyParts[m_buySel];
+    if (m_profile.money < int(part.price)) {
+        printf("[PerfShop] part %u costs $%u, career has $%d\n", part.id, part.price, m_profile.money);
+        ShowMessageDialog(kLabelNotEnoughBank);
+        return;
+    }
+    m_profile.money -= int(part.price);
+    AddOwnedPart(m_profile, 0x80000000u | part.id);
+    car->perfParts.push_back(uint16_t(part.id));
+    printf("[PerfShop] fitted part %u for $%u; bank $%d\n", part.id, part.price, m_profile.money);
+    if (!Career::SaveCareer(m_profile))
+        printf("[PerfShop] the part is fitted but the save failed\n");
+    // Rebuild the for-sale list without it.
+    const size_t keep = m_buySel;
+    HandleBuyPartsLoaded(pkg);
+    m_buySel = keep;
+    RefreshBuyParts(pkg);
+}
+
+void FEStartupSequence::HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadUp && m_buySel > 0) {
+        --m_buySel;
+        RefreshBuyParts(pkg);
+    } else if (msg == kMsgPadDown && m_buySel + 1 < m_buyParts.size()) {
+        ++m_buySel;
+        RefreshBuyParts(pkg);
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+    } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        BuySelectedPerfPart(pkg);
     }
 }
 
