@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "game/indep/Texture/TexturePack.h"
 
 #include <algorithm>
@@ -158,7 +159,10 @@ bool TexturePack::Decode(const TextureInfo &t, DecodedTexture &out) const
     out.rgba.assign(size_t(t.width) * t.height, 0);
     for (int y = 0; y < t.height; ++y) {
         for (int x = 0; x < t.width; ++x) {
-            int index = pixels[Swizzled8Index(x, y, t.width)];
+            // Tiny 4-bit textures (up to 16 wide: the 16x16 icons, panel corner pieces; 32x32 glyphs such as PS2_CIRCLE are swizzled) are stored linearly: only the
+            // larger ones carry the block swizzle (ISSUES #208).  NFSU2_TEX_SWIZZLE_ALL=1 restores the old path.
+            const bool linear = t.bitsPerPixel == 4 && t.width <= 16 && !getenv("NFSU2_TEX_SWIZZLE_ALL");
+            int index = linear ? pixels[size_t(y) * t.width + x] : pixels[Swizzled8Index(x, y, t.width)];
             int c = colors == 256 ? ClutIndex(index) : index;
             out.rgba[size_t(y) * t.width + x] = Ps2ColorToRgba(palette + 4 * c);
         }

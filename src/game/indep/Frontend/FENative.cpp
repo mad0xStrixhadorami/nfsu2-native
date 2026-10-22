@@ -1294,6 +1294,23 @@ SDL_Texture *FENativeInterface::TextureFor(uint32_t hash)
             if (info.nameHash != hash)
                 continue;
             DecodedTexture img;
+            // Dev aid: NFSU2_TEX_DEBUG=<hex hash> prints a texture's format and writes it as <name>.ppm.
+            if (const char *dbg = getenv("NFSU2_TEX_DEBUG"); dbg && uint32_t(strtoul(dbg, nullptr, 16)) == hash) {
+                DecodedTexture dump;
+                const bool ok = pack->Decode(info, dump);
+                printf("[Tex] %s %08x %ux%u %u-bit palette %u data %u decode %d\n", info.name.c_str(), hash, info.width,
+                       info.height, info.bitsPerPixel, info.paletteSize, info.dataSize, ok);
+                if (ok)
+                    if (FILE *f = fopen((info.name + ".ppm").c_str(), "wb")) {
+                        fprintf(f, "P6\n%d %d\n255\n", dump.width, dump.height);
+                        for (uint32_t px : dump.rgba) {
+                            const unsigned a = (px >> 24) & 0xff; // composite over black so the alpha shape shows
+                            const unsigned char rgb[3] = {uint8_t((px & 0xff) * a / 255), uint8_t(((px >> 8) & 0xff) * a / 255), uint8_t(((px >> 16) & 0xff) * a / 255)};
+                            fwrite(rgb, 1, 3, f);
+                        }
+                        fclose(f);
+                    }
+            }
             if (pack->Decode(info, img)) {
                 tex = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.width,
                                         img.height);
