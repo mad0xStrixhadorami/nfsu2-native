@@ -17,6 +17,7 @@
 #include "Speed/Indep/Src/FEng/FEString.h"
 
 namespace {
+void ApplyYesNoFocus(FEPackage *pkg, int selected); // the two-button prompt, defined with the dialog code
 
 // 0x004e6ba0 (NTSC) and 0x004e6bd0 (PAL): 12-entry startup tables read by 0x0023ae10.
 // Empty strings (0x00566608) are skipped when building the linked list.
@@ -665,6 +666,20 @@ void FEStartupSequence::Tick(uint32_t nowMs)
     // A message prompt sits over the screen that opened it: while it is up, the pad only closes
     // it (#189).  The covered screen stays loaded underneath and keeps its selection.
     if (m_dialogPackage && pressed) {
+        if (m_dialogYesNo) {
+            if (pressed & (FENativeInterface::kPadLeft | FENativeInterface::kPadRight)) {
+                m_dialogYesSel = (pressed & FENativeInterface::kPadLeft) ? 0 : 1;
+                ApplyYesNoFocus(m_dialogPackage, m_dialogYesSel);
+            } else if (pressed & (FENativeInterface::kPadAccept | FENativeInterface::kPadStart)) {
+                auto action = m_dialogYesSel == 0 ? m_dialogYesAction : nullptr;
+                CloseMessageDialog();
+                if (action)
+                    action();
+            } else if (pressed & FENativeInterface::kPadBack) {
+                CloseMessageDialog();
+            }
+            return;
+        }
         if (pressed & (FENativeInterface::kPadAccept | FENativeInterface::kPadBack |
                        FENativeInterface::kPadStart))
             CloseMessageDialog();
@@ -866,6 +881,10 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleProfileManagerMessage(kMsgPadRight, top);
         else if (pressed & FENativeInterface::kPadAccept)
             ProfileManagerAccept();
+        else if ((pressed & FENativeInterface::kPadBack) && !m_navPending) {
+            m_profileSub = false; // leaving the Create / Delete screen returns to the manager
+            PopScreen();
+        }
         return;
     }
     // Memory-card screens (MC_Main.fng / MC_List.fng): their rows are plain objects (no FEng
@@ -2057,8 +2076,59 @@ void FEStartupSequence::ShowMessageDialogText(const char *text)
     printf("[Dialog] %s\n", text);
 }
 
+namespace {
+// Focus the Yes or No button of the two-button prompt: the focused label uses the highlight green,
+// the other one plain white.
+void ApplyYesNoFocus(FEPackage *pkg, int selected)
+{
+    auto tint = [pkg](uint32_t hash, bool focused) {
+        if (FEObject *o = pkg->FindObjectByHash(hash))
+            if (FEObjData *d = o->GetObjData()) {
+                d->Col.a = 255;
+                d->Col.r = focused ? 204 : 255;
+                d->Col.g = focused ? 244 : 255;
+                d->Col.b = focused ? 138 : 255;
+            }
+    };
+    tint(kDialogYesLeft, selected == 0);
+    tint(kDialogNo, selected == 1);
+}
+void ShowYesNoControls(FEPackage *pkg, int selected)
+{
+    ShowDialogControl(pkg, kDialogYesCentre, false);
+    ShowDialogControl(pkg, kDialogYesCentreBar, false);
+    ShowDialogControl(pkg, kDialogYesLeft, true);
+    ShowDialogControl(pkg, kDialogYesLeftBar, true);
+    ShowDialogControl(pkg, kDialogNo, true);
+    ShowDialogControl(pkg, kDialogNoBar, true);
+    ApplyYesNoFocus(pkg, selected);
+}
+} // namespace
+
+void FEStartupSequence::ShowYesNoDialog(const char *text, std::function<void()> onYes)
+{
+    if (m_dialogPackage)
+        return;
+    FEPackage *pkg = m_engine->PushPackage("genericdialog_small.fng", 0, 0xff);
+    if (!pkg) {
+        printf("[Dialog] could not push genericdialog_small.fng\n");
+        return;
+    }
+    m_dialogPackage = pkg;
+    m_dialogYesNo = true;
+    m_dialogYesSel = 1; // No is the safe default
+    m_dialogYesAction = std::move(onYes);
+    FENativeInterface::SetString(pkg, kDialogMessage, text);
+    ShowYesNoControls(pkg, m_dialogYesSel);
+    printf("[Dialog] %s (Yes / No)\n", text);
+}
+
 void FEStartupSequence::HandleDialogLoaded(FEPackage *pkg)
 {
+    if (m_dialogYesNo) { // the intro fade re-shows the default objects; keep the two-button form
+        ShowYesNoControls(pkg, m_dialogYesSel);
+        return;
+    }
     // The package's intro fade re-shows its default objects; keep the one-button form on top of it.
     ShowDialogControl(pkg, kDialogYesLeft, false);
     ShowDialogControl(pkg, kDialogYesLeftBar, false);
@@ -2074,6 +2144,8 @@ bool FEStartupSequence::CloseMessageDialog()
         return false;
     FEPackage *pkg = m_dialogPackage;
     m_dialogPackage = nullptr;
+    m_dialogYesNo = false;
+    m_dialogYesAction = nullptr;
     printf("[Dialog] dismissed\n");
     m_engine->UnloadPackage(pkg);
     return true;
@@ -4412,14 +4484,21 @@ void FEStartupSequence::HandleKeyboardMessage(uint32_t msg, FEPackage *pkg)
 // (FUN_00273600(0x4f12a8) == 0) and shows the profile's name.
 void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
 {
-    FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0xbcb18f38); // "Profile Manager"
-    static const struct {
-        uint32_t icon, label;
-    } kCards[] = {{0x228b7e32, 0x1c8ace}, {0x56026748, 0x4af2e79e}, {0x2287e063, 0x18ecff}};
     std::vector<FEIconScroller::Def> defs;
-    defs.push_back({kCards[0].icon, kCards[0].label, !m_profile.valid});
-    defs.push_back({kCards[1].icon, kCards[1].label});
-    defs.push_back({kCards[2].icon, kCards[2].label});
+    if (m_profileSub) {
+        // 0x0023cd50 / 0x0023cdb8: the "Profile" screen, titled 0x4af2e79e, with Create and Delete.
+        FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0x4af2e79e);
+        defs.push_back({0x56026748, 0x55423473});                       // Create
+        defs.push_back({0xb9929709, 0x56b00632, !m_profile.valid});     // Delete
+    } else {
+        FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, 0xbcb18f38); // "Profile Manager"
+        static const struct {
+            uint32_t icon, label;
+        } kCards[] = {{0x228b7e32, 0x1c8ace}, {0x56026748, 0x4af2e79e}, {0x2287e063, 0x18ecff}};
+        defs.push_back({kCards[0].icon, kCards[0].label, !m_profile.valid});
+        defs.push_back({kCards[1].icon, kCards[1].label});
+        defs.push_back({kCards[2].icon, kCards[2].label});
+    }
 
     float centerX = 0.0f, centerY = -149.0f;
     m_profileCards = CloneOptionCards(pkg, defs.size(), "PROFILE_CARD_", centerX, centerY);
@@ -4441,8 +4520,8 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
     }
     // The card's own scripts relabel 47ff4e7c with the current profile's name (0x0023ca08).
     FENativeInterface::SetString(pkg, 0x47ff4e7c, m_profile.valid ? m_profile.name.c_str() : "");
-    printf("[Profile] manager: %zu cards (Save%s, Profile, Load), profile %s\n", m_profileCards.size(),
-           m_profile.valid ? "" : " disabled", m_profile.valid ? m_profile.name.c_str() : "none");
+    printf("[Profile] %s: %zu cards, profile %s\n", m_profileSub ? "profile screen (Create, Delete)" : "manager",
+           m_profileCards.size(), m_profile.valid ? m_profile.name.c_str() : "none");
 }
 
 void FEStartupSequence::HandleProfileManagerMessage(uint32_t msg, FEPackage *pkg)
@@ -4457,29 +4536,11 @@ void FEStartupSequence::HandleProfileManagerMessage(uint32_t msg, FEPackage *pkg
     }
 }
 
-// Accept on the highlighted card.  0x0023cbb8's options dispatch through the three vtables
-// 0x46ad10 / 0x46acb0 / 0x46acf8; the "Profile" one pushes the 0x0023cd50 screen (title
-// 0x4af2e79e = "Profile") whose two options are "Create" and "Delete".
-void FEStartupSequence::ProfileManagerAccept()
+// Profile -> Create: name the profile with the keyboard, refuse a name that is already on the card,
+// write a fresh career and make it current.
+void FEStartupSequence::CreateProfileWithKeyboard()
 {
-    const size_t sel = m_profileScroller.Selected();
-    if (sel == 0) {
-        // "Save": write the profile that is loaded (0x00273600(0x4f12a8) != 0).
-        if (!m_profile.valid) {
-            ShowMessageDialogText("There is no profile to save");
-            return;
-        }
-        if (Career::SaveCareer(m_profile)) {
-            m_careerExists = true;
-            printf("[Profile] saved %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
-                   m_profile.respect);
-        } else {
-            ShowMessageDialogText("The memory card could not be written");
-        }
-    } else if (sel == 1) {
-        // "Profile" -> Create / Delete (ISSUES #195 / #204).
-        // "Profile" -> Create: name the profile with the keyboard (Delete is not ported).
-        OpenKeyboard("", [this](const std::string &name) {
+    OpenKeyboard("", [this](const std::string &name) {
             const std::string file = Career::MemoryCard::SanitizeName(name);
             for (const Career::CardFile &f : Career::MemoryCard::Get().List())
                 if (f.name == file) {
@@ -4501,6 +4562,58 @@ void FEStartupSequence::ProfileManagerAccept()
             if (FEPackage *mgr = m_engine->GetPackageList()->FindPackage("UI_ProfileManager.fng"))
                 FENativeInterface::SetString(mgr, 0x47ff4e7c, m_profile.name.c_str());
         });
+}
+
+// Profile -> Delete: after a Yes / No prompt remove the loaded profile's save from the card.
+void FEStartupSequence::DeleteCurrentProfile()
+{
+    if (!m_profile.valid) {
+        ShowMessageDialogText("There is no profile to delete");
+        return;
+    }
+    const std::string text = "Delete profile " + m_profile.name + "?";
+    ShowYesNoDialog(text.c_str(), [this]() {
+        const std::string file = Career::MemoryCard::SanitizeName(m_profile.name);
+        const bool removed = Career::MemoryCard::Get().Remove(file);
+        printf("[Profile] delete %s: %s\n", file.c_str(), removed ? "removed" : "not on the card");
+        m_profile = Career::Profile();
+        m_careerExists = Career::CareerExists();
+        if (FEPackage *mgr = m_engine->GetPackageList()->FindPackage("UI_ProfileManager.fng"))
+            FENativeInterface::SetString(mgr, 0x47ff4e7c, "");
+    });
+}
+
+// Accept on the highlighted card.  0x0023cbb8's options dispatch through the three vtables
+// 0x46ad10 / 0x46acb0 / 0x46acf8; the "Profile" one pushes the 0x0023cd50 screen (title
+// 0x4af2e79e = "Profile") whose two options are "Create" and "Delete".
+void FEStartupSequence::ProfileManagerAccept()
+{
+    const size_t sel = m_profileScroller.Selected();
+    if (m_profileSub) {
+        if (sel == 0)
+            CreateProfileWithKeyboard();
+        else
+            DeleteCurrentProfile();
+        return;
+    }
+    if (sel == 0) {
+        // "Save": write the profile that is loaded (0x00273600(0x4f12a8) != 0).
+        if (!m_profile.valid) {
+            ShowMessageDialogText("There is no profile to save");
+            return;
+        }
+        if (Career::SaveCareer(m_profile)) {
+            m_careerExists = true;
+            printf("[Profile] saved %s (money %d, respect %d)\n", m_profile.name.c_str(), m_profile.money,
+                   m_profile.respect);
+        } else {
+            ShowMessageDialogText("The memory card could not be written");
+        }
+    } else if (sel == 1) {
+        // "Profile" opens the Create / Delete screen (0x0023cd50): the same package, re-entered
+        // with the two other cards.
+        m_profileSub = true;
+        NavigateTo("UI_ProfileManager.fng", "UI_ProfileManager.fng");
     } else {
         // "Load": pick a save off the card through the career flow's own MC_List.fng.
         if (!Career::CareerExists()) {

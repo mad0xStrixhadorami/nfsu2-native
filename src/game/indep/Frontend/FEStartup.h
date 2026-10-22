@@ -227,6 +227,8 @@ private:
     // viewport or player for.  The game's own "Not Available" text cannot be borrowed because the
     // language bank keys it by an internal label hash, not by bStringHash of the visible string.
     void ShowMessageDialogText(const char *text);
+    // Yes / No prompt (GenericDialog_SMALL's two-button form); `onYes` runs when Yes is chosen.
+    void ShowYesNoDialog(const char *text, std::function<void()> onYes);
     void HandleDialogLoaded(FEPackage *pkg);
     bool CloseMessageDialog();
     FEPackage *m_dialogPackage = nullptr;   // pushed over the shop while the prompt is up
@@ -274,6 +276,10 @@ private:
     bool m_kbCaps = true, m_kbShift = false;
     std::function<void(const std::string &)> m_kbDone;
     std::function<void()> m_kbCancel;
+    bool m_dialogYesNo = false;
+    int m_dialogYesSel = 0; // 0 = Yes, 1 = No
+    std::function<void()> m_dialogYesAction;
+    bool m_profileSub = false; // the Profile Manager's Create / Delete screen (0x0023cd50)
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
     size_t m_buySel = 0, m_buyTop = 0;
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
@@ -386,6 +392,8 @@ private:
     void HandleProfileManagerLoaded(FEPackage *pkg);
     void HandleProfileManagerMessage(uint32_t msg, FEPackage *pkg);
     void ProfileManagerAccept();
+    void CreateProfileWithKeyboard();
+    void DeleteCurrentProfile();
     FEIconScroller m_profileScroller;
     std::vector<FEObject *> m_profileCards; // the cloned card images bound to m_profileScroller
     void HandleOptionsMainLoaded(FEPackage *pkg);
