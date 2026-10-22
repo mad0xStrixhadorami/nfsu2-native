@@ -196,7 +196,7 @@ int main(int argc, char **argv)
     fe.AttachEngine(engine);
     fe.SetFileReader([fs](const char *path) { return ReadGameFile(*fs, path); });
 
-    std::vector<uint8_t> globalB, frontB;
+    std::vector<uint8_t> globalB, frontB, perfTuningB;
     FEStartupSequence startup(engine, &fe, /*isPal=*/true);
 
     if (const char *package = getenv("NFSU2_PACKAGE")) {
@@ -214,6 +214,11 @@ int main(int argc, char **argv)
         startup.LoadBootProfile();
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
+        // The tuning / dyno screens (UI_PerformanceTuning_*, UI_PerformanceDyno_*) ship in the in-game
+        // bundle the dyno scene loads (ISSUES #203); the port keeps them resident with the front end.
+        perfTuningB = ReadGameFile(*fs, "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
+        if (!perfTuningB.empty())
+            fe.AddBundle(perfTuningB.data(), perfTuningB.size(), "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
         if (bootPkg)
             engine->UnloadPackage(bootPkg);
         if (getenv("NFSU2_LIST_PACKAGES")) {
@@ -284,6 +289,11 @@ int main(int argc, char **argv)
         }
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
+        // The tuning / dyno screens (UI_PerformanceTuning_*, UI_PerformanceDyno_*) ship in the in-game
+        // bundle the dyno scene loads (ISSUES #203); the port keeps them resident with the front end.
+        perfTuningB = ReadGameFile(*fs, "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
+        if (!perfTuningB.empty())
+            fe.AddBundle(perfTuningB.data(), perfTuningB.size(), "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
         if (getenv("NFSU2_LIST_PACKAGES")) {
             for (const std::string &n : fe.PackageNames())
                 printf("%s\n", n.c_str());
