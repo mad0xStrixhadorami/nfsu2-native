@@ -15,6 +15,7 @@
 #include "game/indep/Frontend/FEText.h"
 #include "game/indep/Frontend/PaintCatalog.h"
 #include "game/indep/Frontend/PartCatalog.h"
+#include "game/indep/Frontend/PerfPackages.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -191,6 +192,7 @@ public:
     const PaintCatalog &Paint() const { return m_paint; }
     // GLOBALB's shop part records (spoilers, roof scoops, ...) and their price tiers (#184).
     const PartCatalog &Parts() const { return m_parts; }
+    const PerfPackages &PerfParts() const { return m_perf; }
     // RGB for a paint index; `stock` is returned for 0 or an out-of-range index.
     SDL_Color ColorForPaint(uint32_t set, uint32_t index, SDL_Color stock) const
     {
@@ -407,6 +409,7 @@ private:
     std::map<std::string, CarRecord> m_carTable; // GLOBALB chunk 0x34600, keyed by upper-case folder
     std::vector<std::string> m_carRoster;         // same chunk, in record order (car-select carousel)
     PaintCatalog m_paint;                          // GLOBALB chunk 0x80034602 GLOSS set (#167)
+    PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)
     std::vector<PreviewTriangle> m_carPreviewTris;
     std::vector<SolidMesh::Triangle> m_carPreviewModel; // assembled stock body (GL preview)

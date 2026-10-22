@@ -989,6 +989,8 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             if (m_paint.ParsePrices(c->Data(), c->size))
                 printf("[Paint] price table loaded (%zu entries)\n", m_paint.PriceEntryCount());
             m_parts.ParsePrices(c->Data(), c->size);
+            if (m_perf.Parse(c->Data(), c->size))
+                printf("[Parts] %zu performance packages\n", m_perf.Count());
         } else if (c->id == 0x80034602) { // repacked car part database: paint + shop parts
             m_paint.Parse(c->Data(), c->size);
             m_parts.Parse(c->Data(), c->size);
