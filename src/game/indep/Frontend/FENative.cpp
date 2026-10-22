@@ -383,11 +383,14 @@ std::vector<uint8_t> FENativeInterface::TunedCarRecord(const std::string &folder
         tuned = it->second.raw;
         PerfModel::Apply(tuned.data(), tuned.size(), m_perf, parts);
         // The tuning sliders (ISSUES #214) refine the part-tuned frame.
-        if (tune.size() == Tune::kSettingSize && !parts.empty()) {
+        // The original runs the apply pass for every car with unlocked fields, tuned or not (neutral
+        // sliders still clamp each value into its range).
+        if (!parts.empty()) {
             std::vector<uint8_t> frame(tuned.begin() + PerfModel::kFrameOffset,
                                        tuned.begin() + PerfModel::kFrameOffset + PerfModel::kFrameSize);
             Tune::Session session(m_tuneTable, it->second.raw.data(), frame, parts);
-            session.LoadSetting(tune);
+            if (tune.size() == Tune::kSettingSize)
+                session.LoadSetting(tune);
             session.Apply();
             std::copy(session.Frame().begin(), session.Frame().end(), tuned.begin() + PerfModel::kFrameOffset);
         }
