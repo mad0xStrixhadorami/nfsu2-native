@@ -27,6 +27,8 @@ uint16_t U16(const uint8_t *p)
 
 // Pixel data is stored in GS memory order. For 8-bit textures this maps a linear (x, y) to
 // its byte in the uploaded block.
+bool g_forceLinear = false; // dev aid: decode every texture row by row (NFSU2_TEX_SCORE compares layouts)
+
 int Swizzled8Index(int x, int y, int width)
 {
     int block = (y & ~0xf) * width + (x & ~0xf) * 2;
@@ -161,7 +163,7 @@ bool TexturePack::Decode(const TextureInfo &t, DecodedTexture &out) const
         for (int x = 0; x < t.width; ++x) {
             // Tiny 4-bit textures (up to 16 wide: the 16x16 icons, panel corner pieces; 32x32 glyphs such as PS2_CIRCLE are swizzled) are stored linearly: only the
             // larger ones carry the block swizzle (ISSUES #208).  NFSU2_TEX_SWIZZLE_ALL=1 restores the old path.
-            const bool linear = t.bitsPerPixel == 4 && t.width <= 16 && !getenv("NFSU2_TEX_SWIZZLE_ALL");
+            const bool linear = g_forceLinear || (t.bitsPerPixel == 4 && t.width <= 16 && !getenv("NFSU2_TEX_SWIZZLE_ALL"));
             int index = linear ? pixels[size_t(y) * t.width + x] : pixels[Swizzled8Index(x, y, t.width)];
             int c = colors == 256 ? ClutIndex(index) : index;
             out.rgba[size_t(y) * t.width + x] = Ps2ColorToRgba(palette + 4 * c);
@@ -169,3 +171,5 @@ bool TexturePack::Decode(const TextureInfo &t, DecodedTexture &out) const
     }
     return true;
 }
+
+void SetForceLinearDecode(bool on) { g_forceLinear = on; }

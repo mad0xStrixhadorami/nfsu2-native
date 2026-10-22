@@ -1,3 +1,5 @@
+#include <tuple>
+#include <map>
 #include "game/indep/World/TrackWorld.h"
 
 #include <algorithm>
@@ -861,6 +863,46 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     printf("[World] %zu solids borrowed from neighbouring regions\n", m_borrowedSolids);
     printf("[World] %zu texture packs, %zu textures; strips: %lu exact topology, %lu approximated\n", m_packs.size(),
            m_textures.size(), SolidMesh::g_exactStrips, SolidMesh::g_approxStrips);
+    // Dev aid: NFSU2_TEX_SCORE=1 compares the swizzled and the row-by-row decode of every world texture
+    // (mean absolute difference of neighbouring pixels: natural images are smooth, a wrong layout is not)
+    // and prints, per (bits, width, height) class, how many textures a linear decode would make smoother.
+    if (getenv("NFSU2_TEX_SCORE")) {
+        struct Tally {
+            int total = 0, linearBetter = 0;
+        };
+        std::map<std::tuple<int, int, int>, Tally> classes;
+        auto rough = [](const DecodedTexture &d) {
+            double sum = 0;
+            long n = 0;
+            for (int y = 0; y < d.height; ++y)
+                for (int x = 0; x + 1 < d.width; ++x) {
+                    const uint32_t a = d.rgba[size_t(y) * d.width + x], b = d.rgba[size_t(y) * d.width + x + 1];
+                    for (int c = 0; c < 24; c += 8)
+                        sum += std::abs(int((a >> c) & 255) - int((b >> c) & 255));
+                    ++n;
+                }
+            return n ? sum / double(n) : 0.0;
+        };
+        for (const auto &pack : m_packs)
+            for (size_t i = 0; i < pack->Count(); ++i) {
+                const TextureInfo &t = pack->At(i);
+                DecodedTexture a, b;
+                SetForceLinearDecode(false);
+                if (!pack->Decode(t, a) || a.width < 8)
+                    continue;
+                SetForceLinearDecode(true);
+                const bool ok = pack->Decode(t, b);
+                SetForceLinearDecode(false);
+                if (!ok)
+                    continue;
+                Tally &tally = classes[{t.bitsPerPixel, t.width, t.height}];
+                ++tally.total;
+                tally.linearBetter += rough(b) < rough(a) * 0.8;
+            }
+        for (const auto &c : classes)
+            printf("[TexScore] %2d-bit %4dx%-4d : %3d textures, linear smoother for %d\n", std::get<0>(c.first),
+                   std::get<1>(c.first), std::get<2>(c.first), c.second.total, c.second.linearBetter);
+    }
     printf("[World] %zu solids, %zu scenery sections, %zu instances placed (%zu skipped), %zu triangles, %zu cells\n",
            solids.size(), sections.size(), m_instances, unresolved, m_triangleCount, m_cells.size());
     if (!m_instances)

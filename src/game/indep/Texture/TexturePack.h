@@ -32,6 +32,9 @@ struct DecodedTexture {
     std::vector<uint32_t> rgba; // 0xAABBGGRR, ready for SDL_PIXELFORMAT_ABGR8888
 };
 
+// Dev aid: while set, Decode reads pixels row by row instead of through the GS block swizzle.
+void SetForceLinearDecode(bool on);
+
 class TexturePack {
 public:
     bool Parse(const uint8_t *data, size_t size);
