@@ -387,6 +387,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleSlidersLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0) {
+        HandleNosLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -550,7 +554,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         return;
     }
     if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0 ||
-        strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0)
+        strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -787,6 +792,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCardMenuMessage(kMsgPadAccept, top);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCardMenuMessage(kMsgPadBack, top);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_PerformanceTuning_NOS.fng") == 0) {
+        if (pressed & FENativeInterface::kPadUp)
+            HandleNosMessage(kMsgPadUp, top);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleNosMessage(kMsgPadDown, top);
+        else if (pressed & FENativeInterface::kPadLeft)
+            HandleNosMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleNosMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadLTrigger)
+            HandleNosMessage(kMsgPadLTrigger, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleNosMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -4575,7 +4596,9 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
             {0x9701bde4, 0x135c04da, "Nitrous tuning"}};
         int cardId = 0;
         for (const auto &m : kMaster) {
-            if (cardId < 4) // Suspension / Drivetrain / Aerodynamics / Tires & Brakes (0x002c3e90)
+            if (cardId == 6) // Nitrous
+                cards.push_back({m.icon, m.label, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_NOS.fng"); }});
+            else if (cardId < 4) // Suspension / Drivetrain / Aerodynamics / Tires & Brakes (0x002c3e90)
                 cards.push_back({m.icon, m.label, [this, pkg, cardId]() {
                                      m_tuneCard = cardId;
                                      NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Sliders.fng");
@@ -4801,6 +4824,108 @@ void FEStartupSequence::HandleSlidersMessage(uint32_t msg, FEPackage *pkg)
             m_tuneSession->Reset(field);
             m_tuneSession->SetDisplay(field, 0, m_tuneSession->Display(field, 0));
             RefreshSliders(pkg);
+        }
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        FinishSliders(pkg);
+        PopScreen();
+    }
+}
+
+// UI_PerformanceTuning_NOS.fng (ISSUES #214, card 6 of the master menu): the nitrous graph.  The
+// dot is the pair {duration (field 0x10), torque (field 0x11)} of the car's tuning session, the
+// crosshair follows it and the two sliders are coupled (0x00321b70: more torque, shorter burn).
+// The original class (0x002c5fd8 / 0x002c6078) places the dot in the graph box from the fields'
+// slider values; the port maps the duration over the 0..12 s axis and the torque over its
+// 0.1..0.9 range.  Left / Right change the duration, Up / Down the torque.
+namespace {
+constexpr float kNosX0 = -148.6f, kNosW = 319.3f; // the graph box (d35a7923 spans it)
+constexpr float kNosYTop = 124.0f, kNosH = 202.0f;  // 01183698 centred at y 23, 202 tall
+}
+
+void FEStartupSequence::HandleNosLoaded(FEPackage *pkg)
+{
+    m_tuneRows.clear();
+    m_tuneSession.reset();
+    if (const char *test = getenv("NFSU2_TUNE_TEST")) { // see HandleSlidersLoaded
+        (void)test;
+        if (!m_profile.valid || m_profile.cars.empty()) {
+            m_profile.valid = true;
+            m_profile.cars.push_back({"SKYLINE", 0});
+            m_profile.currentCar = 0;
+        }
+        Career::OwnedCar &c = m_profile.cars[size_t(m_profile.currentCar)];
+        if (c.perfParts.empty())
+            for (size_t i = 0; i < m_fe->PerfParts().Count(); ++i)
+                if (m_fe->PerfParts().At(i).level == 3)
+                    for (const PerfPart &part : m_fe->PerfParts().At(i).parts)
+                        c.perfParts.push_back(uint16_t(part.id));
+    }
+    Career::OwnedCar *car = ShopCar();
+    const uint8_t *record = nullptr;
+    std::vector<uint8_t> frame;
+    if (car && m_fe->TuneInputs(car->model, car->perfParts, record, frame)) {
+        m_tuneSession = std::make_unique<Tune::Session>(m_fe->TuneTable(), record, frame, car->perfParts);
+        m_tuneSession->SetMetric(m_speedoUnits != 0);
+        if (car->tune.size() == Tune::kSettingSize)
+            m_tuneSession->LoadSetting(car->tune);
+        if (!m_tuneSession->FieldActive(0x10) || !m_tuneSession->FieldActive(0x11))
+            m_tuneSession.reset(); // no nitrous parts fitted
+    }
+    printf("[Tuning] nitrous graph: %s\n", m_tuneSession ? "ready" : "no nitrous parts fitted");
+    RefreshNos(pkg);
+}
+
+void FEStartupSequence::RefreshNos(FEPackage *pkg)
+{
+    const bool ready = m_tuneSession != nullptr;
+    for (uint32_t obj : {0x9c90d375u, 0x01183698u, 0xd35a7923u, 0x11495cd6u})
+        FENativeInterface::SetVisible(pkg, obj, ready);
+    if (!ready)
+        return;
+    float lo, hi;
+    m_tuneSession->Bounds(0x11, 0, true, lo, hi);
+    const float seconds = m_tuneSession->Display(0x10, 0);
+    const float torque = m_tuneSession->Display(0x11, 0);
+    const float x = kNosX0 + std::clamp(seconds / 12.0f, 0.0f, 1.0f) * kNosW;
+    const float y = kNosYTop - std::clamp((torque - lo) / (hi - lo), 0.0f, 1.0f) * kNosH;
+    auto place = [&](uint32_t hash, float cx, float cy) {
+        if (FEObject *o = pkg->FindObjectByHash(hash))
+            FENativeInterface::SetCenter(o, cx, cy);
+    };
+    place(0x9c90d375, x, y);                                   // the dot
+    place(0x01183698, x, kNosYTop - kNosH * 0.5f);             // the vertical line
+    place(0xd35a7923, kNosX0 + kNosW * 0.5f, y);               // the horizontal line
+    if (FEObject *seg = pkg->FindObjectByHash(0x11495cd6)) {   // the duration bar under the line
+        FENativeInterface::SetSize(seg, x - kNosX0, 3.0f);
+        FENativeInterface::SetCenter(seg, kNosX0 + (x - kNosX0) * 0.5f, y + 1.5f);
+    }
+}
+
+void FEStartupSequence::AdjustNos(FEPackage *pkg, int field, int dir)
+{
+    if (!m_tuneSession)
+        return;
+    const float step = m_tuneSession->Step(field);
+    m_tuneSession->SetDisplay(field, 0, m_tuneSession->Display(field, 0) + float(dir) * step);
+    RefreshNos(pkg);
+}
+
+void FEStartupSequence::HandleNosMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadLeft)
+        AdjustNos(pkg, 0x10, -1);
+    else if (msg == kMsgPadRight)
+        AdjustNos(pkg, 0x10, +1);
+    else if (msg == kMsgPadUp)
+        AdjustNos(pkg, 0x11, +1);
+    else if (msg == kMsgPadDown)
+        AdjustNos(pkg, 0x11, -1);
+    else if (msg == kMsgPadLTrigger) { // Reset to default
+        if (m_tuneSession) {
+            m_tuneSession->Reset(0x10);
+            m_tuneSession->Reset(0x11);
+            m_tuneSession->SetDisplay(0x10, 0, m_tuneSession->Display(0x10, 0));
+            RefreshNos(pkg);
         }
     } else if (msg == kMsgPadBack && !m_navPending) {
         FinishSliders(pkg);

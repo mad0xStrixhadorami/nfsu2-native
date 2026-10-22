@@ -195,6 +195,10 @@ private:
     void RefreshSliders(FEPackage *pkg);
     void AdjustSlider(FEPackage *pkg, int dir);
     void FinishSliders(FEPackage *pkg);
+    void HandleNosLoaded(FEPackage *pkg);
+    void HandleNosMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshNos(FEPackage *pkg);
+    void AdjustNos(FEPackage *pkg, int field, int dir);
     void HandleCardMenuLoaded(FEPackage *pkg);
     void HandleCardMenuMessage(uint32_t msg, FEPackage *pkg);
     void HandleBuyPartsLoaded(FEPackage *pkg);

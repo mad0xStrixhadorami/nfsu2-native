@@ -123,6 +123,7 @@ bool Session::Supported(int field)
     switch (field) {
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
     case 10: case 11: case 12: case 13: case 14: case 15:
+    case 0x10: case 0x11:
     case 0x12: case 0x13: case 0x14: case 0x15: case 0x16:
         return true;
     default:
@@ -162,6 +163,8 @@ float *Session::WorkPtr(int field, int sub)
     case 8: off = 0x270; break;
     case 9: off = 0x1b8 + size_t(sub) * 4; break;
     case 10: case 11: case 12: case 13: case 14: case 15: off = 0x1b0 + size_t(field) * 4; break;
+    case 0x10: off = 0x2a0; break;
+    case 0x11: off = 0x2ac; break;
     case 0x12: off = 0x27c; break;
     case 0x13: off = sub == 0 ? 0xdc : 0xe0; break;
     case 0x14: off = sub == 0 ? 0xfc : 0x100; break;
@@ -256,6 +259,14 @@ bool Session::Bounds(int field, int sub, bool average, float &lo, float &hi) con
     case 0x12:
         l = 0.0f;
         h = 1.0f;
+        break;
+    case 0x10: // the nitrous depletion rate: 1 .. 11, no table adjust
+        lo = 1.0f;
+        hi = 11.0f;
+        return true;
+    case 0x11: // the nitrous torque mix: 0.1 .. 0.9, adjusted by the entry
+        l = 0.1f;
+        h = 0.9f;
         break;
     case 10: case 11: case 12: case 13: case 14: case 15:
         // 0x00320670: the ratios for 250 mph and 2.5 mph (111.7568 / 1.1175681 m/s); no table adjust.
@@ -547,6 +558,18 @@ void Session::WritePhysical(int field, int sub, float value)
         *WorkPtr(9, 0) = value;
         *WorkPtr(9, 1) = value;
         break;
+    case 0x10: case 0x11: {
+        // 0x00321b70: the nitrous rate and torque are coupled - raising one lowers the other in
+        // proportion to their slider spans.
+        const int other = field == 0x11 ? 0x10 : 0x11;
+        float lo, hi, lo2, hi2;
+        SliderRange(field, 0, lo, hi);
+        SliderRange(other, 0, lo2, hi2);
+        const float newOther = Ref(other, 0) - (value - Ref(field, 0)) / (hi - lo) * (hi2 - lo2);
+        *WorkPtr(field, 0) = value;
+        *WorkPtr(other, 0) = newOther;
+        break;
+    }
     case 10: case 11: case 12: case 13: case 14: case 15: {
         // 0x00321a60: reorder the six ratios around the changed one, zero the gears the car lacks.
         float arr[8] = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -596,6 +619,15 @@ void Session::SetDisplay(int field, int sub, float display)
     const int stored = int(pos * 100.0f + 100.5f);         // 0x0031f658
     Byte(field, sub) = uint8_t(std::max(0, std::min(200, stored)));
     WritePhysical(field, sub, v);
+    if (field == 0x10 || field == 0x11) { // 0x0031f8d8: the coupled partner's slider follows
+        const int other = field == 0x11 ? 0x10 : 0x11;
+        float olo, ohi;
+        if (FieldActive(other) && SliderRange(other, 0, olo, ohi)) {
+            const float actual = Clamp(ReadValue(other, 0), olo, ohi);
+            const int b = int(((actual - Ref(other, 0)) / (ohi - olo)) * 100.0f + 100.5f);
+            Byte(other, 0) = uint8_t(std::max(0, std::min(200, b)));
+        }
+    }
     if (field >= 10 && field <= 15) { // 0x0031f8d8: every gear's slider follows the ratios as written
         for (int g = 10; g < 16; ++g) {
             float glo, ghi;
