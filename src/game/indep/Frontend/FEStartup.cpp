@@ -391,6 +391,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleNosLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0) {
+        HandleGraphLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -555,7 +559,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0 ||
-        strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0)
+        strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -792,6 +797,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCardMenuMessage(kMsgPadAccept, top);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCardMenuMessage(kMsgPadBack, top);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_PerformanceTuning_Graph.fng") == 0) {
+        if (pressed & FENativeInterface::kPadUp)
+            HandleGraphMessage(kMsgPadUp, top);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleGraphMessage(kMsgPadDown, top);
+        else if (pressed & FENativeInterface::kPadLeft)
+            HandleGraphMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleGraphMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadLTrigger)
+            HandleGraphMessage(kMsgPadLTrigger, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleGraphMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -4596,7 +4617,12 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
             {0x9701bde4, 0x135c04da, "Nitrous tuning"}};
         int cardId = 0;
         for (const auto &m : kMaster) {
-            if (cardId == 6) // Nitrous
+            if (cardId == 4 || cardId == 5) // ECU / Turbo: the curve graph
+                cards.push_back({m.icon, m.label, [this, pkg, cardId]() {
+                                     m_tuneCard = cardId;
+                                     NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Graph.fng");
+                                 }});
+            else if (cardId == 6) // Nitrous
                 cards.push_back({m.icon, m.label, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_NOS.fng"); }});
             else if (cardId < 4) // Suspension / Drivetrain / Aerodynamics / Tires & Brakes (0x002c3e90)
                 cards.push_back({m.icon, m.label, [this, pkg, cardId]() {
@@ -4927,6 +4953,146 @@ void FEStartupSequence::HandleNosMessage(uint32_t msg, FEPackage *pkg)
             m_tuneSession->SetDisplay(0x10, 0, m_tuneSession->Display(0x10, 0));
             RefreshNos(pkg);
         }
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        FinishSliders(pkg);
+        PopScreen();
+    }
+}
+
+// UI_PerformanceTuning_Graph.fng (ISSUES #214, master cards 4 = ECU and 5 = Turbo): the torque
+// curve editor.  Nine columns (one per curve point, RPM x 1000 along the bottom, torque 0..500 up
+// the side) each show the point's allowed range (the red Maximum and green Minimum markers) and
+// its current value (the teal marker); Left / Right pick a point, Up / Down move it by a thirtieth
+// of its span, and the neighbours give back the difference so the curve's area stays (0x00321548).
+// The marker images ship as 48 x 45 templates off-screen (y 596 / 629 / 642); the port finds them by
+// size and colour, squashes them to thin bars and places them by value.
+namespace {
+constexpr float kGraphYBottom = 165.0f, kGraphYSpan = 240.0f, kGraphScale = 500.0f; // 0..500 N*m
+}
+
+void FEStartupSequence::HandleGraphLoaded(FEPackage *pkg)
+{
+    m_tuneRows.clear();
+    m_tuneSession.reset();
+    m_graphSel = 0;
+    m_graphField = m_tuneCard == 5 ? 0x18 : 0x17;
+    if (getenv("NFSU2_TUNE_TEST")) { // see HandleSlidersLoaded
+        if (!m_profile.valid || m_profile.cars.empty()) {
+            m_profile.valid = true;
+            m_profile.cars.push_back({"SKYLINE", 0});
+            m_profile.currentCar = 0;
+        }
+        Career::OwnedCar &c = m_profile.cars[size_t(m_profile.currentCar)];
+        if (c.perfParts.empty())
+            for (size_t i = 0; i < m_fe->PerfParts().Count(); ++i)
+                if (m_fe->PerfParts().At(i).level == 3)
+                    for (const PerfPart &part : m_fe->PerfParts().At(i).parts)
+                        c.perfParts.push_back(uint16_t(part.id));
+    }
+    Career::OwnedCar *car = ShopCar();
+    const uint8_t *record = nullptr;
+    std::vector<uint8_t> frame;
+    if (car && m_fe->TuneInputs(car->model, car->perfParts, record, frame)) {
+        m_tuneSession = std::make_unique<Tune::Session>(m_fe->TuneTable(), record, frame, car->perfParts);
+        m_tuneSession->SetMetric(m_speedoUnits != 0);
+        if (car->tune.size() == Tune::kSettingSize)
+            m_tuneSession->LoadSetting(car->tune);
+        if (!m_tuneSession->FieldActive(m_graphField))
+            m_tuneSession.reset(); // no parts that unlock this curve
+    }
+    // The marker templates, by their size and colour, left to right.
+    m_graphRed.clear();
+    m_graphGreen.clear();
+    m_graphTeal.clear();
+    m_graphDots.clear();
+    for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext()) {
+        if (o->Type != FE_Image)
+            continue;
+        float w, h, x, y;
+        FENativeInterface::GetSize(o, w, h);
+        FENativeInterface::GetCenter(o, x, y);
+        const FEObjData *d = o->GetObjData();
+        if (!d)
+            continue;
+        if (w > 48.0f && w < 48.5f && h > 44.5f && h < 45.5f) {
+            if (y > 594.0f && y < 598.0f)
+                m_graphRed.push_back(o);
+            else if (y > 627.0f && y < 631.0f)
+                m_graphGreen.push_back(o);
+            else if (y > 640.0f && y < 644.0f)
+                m_graphTeal.push_back(o);
+        } else if (w > 13.5f && w < 14.5f && h > 13.5f && h < 14.5f && y > 276.0f && y < 280.0f) {
+            m_graphDots.push_back(o);
+        }
+    }
+    auto byX = [](FEObject *a, FEObject *b) {
+        float ax, ay, bx, by;
+        FENativeInterface::GetCenter(a, ax, ay);
+        FENativeInterface::GetCenter(b, bx, by);
+        return ax < bx;
+    };
+    for (auto *list : {&m_graphRed, &m_graphGreen, &m_graphTeal, &m_graphDots})
+        std::sort(list->begin(), list->end(), byX);
+    printf("[Tuning] graph field %d: %s, markers %zu/%zu/%zu, dots %zu\n", m_graphField,
+           m_tuneSession ? "ready" : "no parts unlock it", m_graphRed.size(), m_graphGreen.size(), m_graphTeal.size(),
+           m_graphDots.size());
+    RefreshGraph(pkg);
+}
+
+void FEStartupSequence::RefreshGraph(FEPackage *pkg)
+{
+    const size_t columns = std::min<size_t>(9, std::min(m_graphRed.size(), std::min(m_graphGreen.size(), m_graphTeal.size())));
+    for (size_t i = 0; i < columns; ++i) {
+        FEObject *markers[3] = {m_graphRed[i], m_graphGreen[i], m_graphTeal[i]};
+        float x, y0;
+        FENativeInterface::GetCenter(markers[0], x, y0);
+        float lo = 0, hi = 0, cur = 0;
+        if (m_tuneSession) {
+            m_tuneSession->SliderRangeDisplay(m_graphField, int(i), lo, hi);
+            cur = m_tuneSession->Display(m_graphField, int(i));
+        }
+        const float values[3] = {hi, lo, cur}; // red = Maximum, green = Minimum, teal = now
+        for (int k = 0; k < 3; ++k) {
+            FENativeInterface::SetObjectVisible(markers[k], m_tuneSession != nullptr);
+            if (!m_tuneSession)
+                continue;
+            const float y = kGraphYBottom - std::clamp(values[k] / kGraphScale, 0.0f, 1.0f) * kGraphYSpan;
+            FENativeInterface::SetSize(markers[k], 46.0f, k == 2 ? 4.0f : 3.0f);
+            FENativeInterface::SetCenter(markers[k], x, y);
+        }
+    }
+    // The selected point's dot.
+    for (size_t i = 0; i < m_graphDots.size(); ++i) {
+        const bool show = m_tuneSession && i == m_graphSel && i < columns;
+        FENativeInterface::SetObjectVisible(m_graphDots[i], show);
+        if (show) {
+            float x, y;
+            FENativeInterface::GetCenter(m_graphRed[i], x, y);
+            const float v = m_tuneSession->Display(m_graphField, int(i));
+            FENativeInterface::SetCenter(m_graphDots[i], x, kGraphYBottom - std::clamp(v / kGraphScale, 0.0f, 1.0f) * kGraphYSpan);
+        }
+    }
+    (void)pkg;
+}
+
+void FEStartupSequence::HandleGraphMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadLeft && m_graphSel > 0) {
+        --m_graphSel;
+        RefreshGraph(pkg);
+    } else if (msg == kMsgPadRight && m_graphSel + 1 < 9) {
+        ++m_graphSel;
+        RefreshGraph(pkg);
+    } else if ((msg == kMsgPadUp || msg == kMsgPadDown) && m_tuneSession) {
+        const float step = m_tuneSession->Step(m_graphField);
+        m_tuneSession->SetDisplay(m_graphField, int(m_graphSel),
+                                  m_tuneSession->Display(m_graphField, int(m_graphSel)) + (msg == kMsgPadUp ? step : -step));
+        RefreshGraph(pkg);
+    } else if (msg == kMsgPadLTrigger && m_tuneSession) { // Reset to default
+        for (int i = 0; i < 9; ++i)
+            m_tuneSession->Reset(m_graphField, i);
+        m_tuneSession->Apply();
+        RefreshGraph(pkg);
     } else if (msg == kMsgPadBack && !m_navPending) {
         FinishSliders(pkg);
         PopScreen();

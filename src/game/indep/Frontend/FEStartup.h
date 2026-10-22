@@ -195,6 +195,9 @@ private:
     void RefreshSliders(FEPackage *pkg);
     void AdjustSlider(FEPackage *pkg, int dir);
     void FinishSliders(FEPackage *pkg);
+    void HandleGraphLoaded(FEPackage *pkg);
+    void HandleGraphMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshGraph(FEPackage *pkg);
     void HandleNosLoaded(FEPackage *pkg);
     void HandleNosMessage(uint32_t msg, FEPackage *pkg);
     void RefreshNos(FEPackage *pkg);
@@ -301,6 +304,9 @@ private:
     std::unique_ptr<Tune::Session> m_tuneSession;   // the open tuning screen's session (#214)
     std::vector<TuneRow> m_tuneRows;
     size_t m_tuneSel = 0, m_tuneTop = 0;
+    size_t m_graphSel = 0;                          // the selected curve point
+    int m_graphField = 0x17;
+    std::vector<FEObject *> m_graphRed, m_graphGreen, m_graphTeal, m_graphDots;
     int m_tuneCard = 0;                             // 0 Suspension, 1 Drivetrain, 2 Aerodynamics, 3 Tires & Brakes
     bool m_profileSub = false; // the Profile Manager's Create / Delete screen (0x0023cd50)
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)

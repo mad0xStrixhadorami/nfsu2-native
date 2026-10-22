@@ -137,6 +137,24 @@ static int PerfModelDiscTest(const ZipFileSystem &fs)
                 printf("  [tune] field %2d bounds %.4f..%.4f slider %.4f..%.4f display %.2f..%.2f default shows %.3f\n", f,
                        bl, bh, sl, sh, dl, dh, session.Display(f, 0));
             check(sl <= sh && bl <= bh, "(tune ranges ordered)");
+            if (getenv("NFSU2_TUNE_DEBUG") && (f == 0x17 || f == 0x18)) {
+                float lo2, hi2;
+                printf("  [tune]   curve %d:", f);
+                for (int i = 0; i < 9; ++i) {
+                    session.SliderRangeDisplay(f, i, lo2, hi2);
+                    printf(" %.0f[%.0f..%.0f]", session.Display(f, i), lo2, hi2);
+                }
+                printf("\n");
+                session.SetDisplay(f, 4, session.Display(f, 4) + 20.0f);
+                printf("  [tune]   after +20 at point 4:");
+                float sum = 0;
+                for (int i = 0; i < 9; ++i) {
+                    printf(" %.0f", session.Display(f, i));
+                    sum += session.Display(f, i);
+                }
+                printf("  (sum %.0f)\n", sum);
+                session.ResetAll();
+            }
             if (getenv("NFSU2_TUNE_DEBUG") && (f == 3 || f == 0 || f == 10 || f == 11 || f == 16 || f == 17)) {
                 float lo2, hi2;
                 session.SliderRangeDisplay(f, 0, lo2, hi2);

@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/TuneSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace Tune {
@@ -57,6 +58,8 @@ void Pair(int field, int &a, int &b)
 // inches (metres in the data).
 float UnitScale(int field, bool metric, bool toDisplay)
 {
+    if (field == 0x17 || field == 0x18) // 0x00321cb8: kN*m -> N*m (x1000) or ft-lbs (x737.56)
+        return metric ? (toDisplay ? 1000.0f : 0.001f) : (toDisplay ? 737.5621f : 1.0f / 737.5621f);
     if (field != 3 && field != 7)
         return 1.0f;
     if (metric)
@@ -124,7 +127,7 @@ bool Session::Supported(int field)
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
     case 10: case 11: case 12: case 13: case 14: case 15:
     case 0x10: case 0x11:
-    case 0x12: case 0x13: case 0x14: case 0x15: case 0x16:
+    case 0x12: case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18:
         return true;
     default:
         return false;
@@ -163,6 +166,8 @@ float *Session::WorkPtr(int field, int sub)
     case 8: off = 0x270; break;
     case 9: off = 0x1b8 + size_t(sub) * 4; break;
     case 10: case 11: case 12: case 13: case 14: case 15: off = 0x1b0 + size_t(field) * 4; break;
+    case 0x17: off = 0x200 + size_t(sub) * 4; break;
+    case 0x18: off = 0x224 + size_t(sub) * 4; break;
     case 0x10: off = 0x2a0; break;
     case 0x11: off = 0x2ac; break;
     case 0x12: off = 0x27c; break;
@@ -186,6 +191,8 @@ float Session::ReadValue(int field, int sub) const
     switch (field) {
     case 1: case 5: case 0x13: case 0x14:
         return (*WorkPtr(field, 0) + *WorkPtr(field, 1)) * 0.5f;
+    case 0x17: // 0x00320e20: the engine curve without the extra (turbo) curve
+        return *WorkPtr(0x17, sub) - *WorkPtr(0x18, sub);
     case 3: case 7: {
         // 0x00320e20: the stock wheel height minus the working copy's (the lowering).
         const size_t off = field == 3 ? 0x18 : 0x78;
@@ -202,6 +209,10 @@ void Session::CaptureRefs()
     for (int f = 0; f < 0x17; ++f)
         if (FieldActive(f))
             m_ref[size_t(f)] = ReadValue(f, 0);
+    for (int f = 0x17; f <= 0x18; ++f)
+        if (FieldActive(f))
+            for (int i = 0; i < 9; ++i)
+                m_ref[Index(f, i)] = ReadValue(f, i);
 }
 
 // 0x00321118: the active table entry moves the bounds (mode 0/1 absolute, 2/3 fraction of the span,
@@ -260,6 +271,24 @@ bool Session::Bounds(int field, int sub, bool average, float &lo, float &hi) con
         l = 0.0f;
         h = 1.0f;
         break;
+    case 0x17: case 0x18:
+        // 0x00320670: over all nine points, the curve value and the value with the upgrade deltas
+        // (field 0x17: stock + the 0x530 and 0x5f0 tables; field 0x18: the extra curve and the
+        // 0x620 table), then moved by the entry and kept non-negative.
+        for (size_t i = 0; i < 9; ++i) {
+            if (field == 0x17) {
+                const float a = RecM(0x310 + i * 4);
+                take(a);
+                take(a + RecM(0x530 + i * 4) + RecM(0x5f0 + i * 4));
+            } else {
+                take(RecM(0x334 + i * 4));
+                take(RecM(0x620 + i * 4));
+            }
+        }
+        AdjustByEntry(field, l, h);
+        lo = l >= 0.0f ? l : 0.0f;
+        hi = h >= 0.0f ? h : 0.0f;
+        return true;
     case 0x10: // the nitrous depletion rate: 1 .. 11, no table adjust
         lo = 1.0f;
         hi = 11.0f;
@@ -337,7 +366,6 @@ bool Session::Bounds(int field, int sub, bool average, float &lo, float &hi) con
 // references (the smaller for the sign-flipped fields).
 float Session::Base(int field, int sub) const
 {
-    (void)sub;
     int a, b;
     Pair(field, a, b);
     const float sign = Sign(field);
@@ -345,7 +373,7 @@ float Session::Base(int field, int sub) const
     for (int f : {a, b}) {
         if (f == -1)
             continue;
-        const float r = m_ref[Index(f, 0)];
+        const float r = m_ref[Index(f, f >= 0x17 ? sub : 0)];
         v = sign <= 0.0f ? std::min(v, r) : std::max(v, r);
     }
     return v;
@@ -558,6 +586,9 @@ void Session::WritePhysical(int field, int sub, float value)
         *WorkPtr(9, 0) = value;
         *WorkPtr(9, 1) = value;
         break;
+    case 0x17: case 0x18:
+        WriteCurve(field, sub, value, false);
+        break;
     case 0x10: case 0x11: {
         // 0x00321b70: the nitrous rate and torque are coupled - raising one lowers the other in
         // proportion to their slider spans.
@@ -598,6 +629,60 @@ void Session::WritePhysical(int field, int sub, float value)
     }
 }
 
+// 0x00321548: set one point of a curve field inside its range; with `spread` the change is paid back
+// by the neighbours (weights 0x0051dec0: +0.25 for the first two, -0.25 for the next six, then
+// whatever is left) so the curve's area stays put.  The main curve always holds value + extra curve.
+void Session::WriteCurve(int field, int sub, float value, bool spread)
+{
+    static const float kWeights[9] = {0.25f, 0.25f, -0.25f, -0.25f, -0.25f, -0.25f, -0.25f, -0.25f, 0.0f};
+    float cur[9];
+    for (int i = 0; i < 9; ++i)
+        cur[i] = ReadValue(field, i);
+    const float change = value - cur[sub];
+    float lo, hi;
+    if (!SliderRange(field, sub, lo, hi))
+        return;
+    cur[sub] = std::min(hi, std::max(lo, value));
+    if (change != 0.0f) {
+        float left = change;
+        int dir = 0, steps = 0, weight = 0;
+        while (std::fabs(left) > 1.0e-7f && steps < 0x14 && spread) {
+            float move = -left;
+            if (steps < 9) {
+                move = change * kWeights[steps];
+                move = left <= 0.0f ? std::max(move, left) : std::min(move, left);
+            }
+            dir = -dir;
+            if (dir > -1) {
+                ++dir;
+                if (dir > 8)
+                    dir = 1;
+            }
+            const int at = sub + dir;
+            if (at >= 0 && at < 9) {
+                float nlo, nhi;
+                SliderRange(field, at, nlo, nhi);
+                ++weight;
+                const float before = cur[at];
+                float after = before + move;
+                after = std::min(nhi, std::max(nlo, after));
+                cur[at] = after;
+                ++steps;
+                left += after - before;
+            }
+        }
+    }
+    for (int i = 0; i < 9; ++i) {
+        if (field == 0x17) {
+            *WorkPtr(0x17, i) = cur[i] + *WorkPtr(0x18, i);
+        } else {
+            const float ecu = ReadValue(0x17, i);
+            *WorkPtr(0x18, i) = cur[i];
+            *WorkPtr(0x17, i) = ecu + cur[i];
+        }
+    }
+}
+
 float Session::Display(int field, int sub) const
 {
     float lo, hi;
@@ -618,7 +703,20 @@ void Session::SetDisplay(int field, int sub, float display)
     const float pos = (v - Ref(field, sub)) / (hi - lo);
     const int stored = int(pos * 100.0f + 100.5f);         // 0x0031f658
     Byte(field, sub) = uint8_t(std::max(0, std::min(200, stored)));
-    WritePhysical(field, sub, v);
+    if (field == 0x17 || field == 0x18) {
+        WriteCurve(field, sub, v, true);
+        // 0x0031f8d8: every point's slider follows the redistributed values
+        for (int i = 0; i < 9; ++i) {
+            float plo, phi;
+            if (!SliderRange(field, i, plo, phi))
+                continue;
+            const float actual = Clamp(ReadValue(field, i), plo, phi);
+            const int b = int(((actual - Ref(field, i)) / (phi - plo)) * 100.0f + 100.5f);
+            Byte(field, i) = uint8_t(std::max(0, std::min(200, b)));
+        }
+    } else {
+        WritePhysical(field, sub, v);
+    }
     if (field == 0x10 || field == 0x11) { // 0x0031f8d8: the coupled partner's slider follows
         const int other = field == 0x11 ? 0x10 : 0x11;
         float olo, ohi;
@@ -669,6 +767,33 @@ void Session::Apply()
         const float pos = Clamp((float(Byte(f, 0)) - 100.0f) * 0.01f, -1.0f, 1.0f);
         const float v = Clamp(Ref(f, 0) + pos * (hi - lo), lo, hi);
         WritePhysical(f, 0, v);
+    }
+    // 0x0031fbe0 third loop: each curve point from its slider (no spreading), then the curve's
+    // total is put back to what the parts left (0x00321850).
+    float before = 0.0f;
+    for (int i = 0; i < 9; ++i)
+        before += F32(m_part.data() + 0x200 + size_t(i) * 4);
+    bool curves = false;
+    for (int f = 0x17; f <= 0x18; ++f) {
+        if (!FieldActive(f))
+            continue;
+        curves = true;
+        for (int i = 0; i < 9; ++i) {
+            float lo, hi;
+            if (!SliderRange(f, i, lo, hi))
+                continue;
+            const float pos = Clamp((float(Byte(f, i)) - 100.0f) * 0.01f, -1.0f, 1.0f);
+            const float v = Clamp(Ref(f, i) + pos * (hi - lo), lo, hi);
+            WriteCurve(f, i, v, false);
+        }
+    }
+    if (curves) {
+        float after = 0.0f;
+        for (int i = 0; i < 9; ++i)
+            after += F32(m_work.data() + 0x200 + size_t(i) * 4);
+        if (std::fabs(before - after) > 0.001f) // 0x00321850
+            for (int i = 0; i < 9; ++i)
+                *WorkPtr(0x17, i) += (before - after) * (1.0f / 9.0f);
     }
 }
 

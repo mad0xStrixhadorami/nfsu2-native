@@ -67,6 +67,7 @@ public:
     void Reset(int field, int sub = 0);
     void ResetAll();
 
+    // The curve fields (0x17 ECU, 0x18 Turbo) have nine points; `sub` is the point (0..8).
     // Writes every active field's tuned physical value into the working frame (0x0031fbe0).
     void Apply();
     const std::vector<uint8_t> &Frame() const { return m_work; } // 0x2b0 bytes, ready to copy back
@@ -88,7 +89,8 @@ private:
     float ToDisplay(float physical, int field) const;
     float ToPhysical(float display, int field) const;
     void CaptureRefs();
-    float RatioToSpeed(float x) const;                          // 0x00321de8 (an involution)
+    float RatioToSpeed(float x) const;
+    void WriteCurve(int field, int sub, float value, bool spread); // 0x00321548                          // 0x00321de8 (an involution)
     float SpeedScale() const { return m_metric ? 3.6f : 2.237f; } // m/s -> km/h or mph
     float Reorder(float value, int field, float arr[8]);        // 0x003218e0
 
