@@ -170,6 +170,12 @@ private:
     void HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *pkg);
     void HandlePerformanceCategoryLoaded(FEPackage *pkg);
     void HandlePerformanceCategoryMessage(uint32_t msg, FEPackage *pkg);
+    void HandlePerformancePackageLoaded(FEPackage *pkg);
+    void HandlePerformancePackageMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshPerformancePackage(FEPackage *pkg);
+    void BuyPerformancePackage(FEPackage *pkg);
+    bool PerfPartAvailable(uint16_t id);
+    void PerfPackagePrice(const PerfPackage &pkg, int &total, int &saving);
     // UI_GenericParts_Browser.fng (factory 0x002a50c0, ctor 0x002a50f8, refresh 0x002a6be0): the
     // Body Shop.  CATEGORY_MASTER/CATEGORY_ICON is the part-slot carousel (0x002a76e8 in
     // 0x002a7e70), MINI_MASTER/PARTS_ICON the item carousel; the selected item's name and price go
@@ -228,6 +234,14 @@ private:
     bool PopScreen(); // back to the package saved by NavigateTo
     static constexpr size_t kPaintPartCount = 9; // 0x002bcff8 card order
     size_t m_performanceCategorySel = 0;
+    uint32_t m_perfCategory = 0;            // the chosen 0x34a15 category (DAT_00514570)
+    FEIconScroller m_perfScroller;          // the package cards (#198)
+    std::vector<FEObject *> m_perfCards;
+    std::vector<int> m_perfCardType;        // 0 first card, 1 package, 2 individual parts
+    std::vector<uint32_t> m_perfCardLevel;
+    std::vector<uint32_t> m_perfCardLabel;
+    size_t m_perfCardSel = 0;
+    char m_perfBank[24] = {};
     size_t m_customizeCategorySel = 0; // last category carousel slot (0 body .. 4 dyno)
     // Body Shop state (#185): the selected part-slot card and the item selection inside it.
     FEIconScroller m_partsCategoryScroller; // CATEGORY_MASTER / CATEGORY_ICON

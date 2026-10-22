@@ -43,6 +43,10 @@ struct OwnedCar {
     // Wide-body kit fitted by the Body Shop (ISSUES #193): the catalogue's KITW number, 1..4;
     // 0 keeps the stock KIT00 shell.  The kit replaces the whole shell and both door skins.
     uint8_t wideBody = 0;
+    // The performance packages' parts fitted by the Performance Shop (ISSUES #198): global part ids
+    // from the 0x34a15 table (PerfPackages).  The original keeps them in the car's installed-part
+    // set (0x0031a548 on the shop manager's car, +0xc40).
+    std::vector<uint16_t> perfParts;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

@@ -155,6 +155,7 @@ int main()
     p.cars[0].frontBumper = 2;            // Body Shop bumpers / side skirts (ISSUES #190)
     p.cars[0].rearBumper = 17;
     p.cars[0].skirt = 9;
+    p.cars[0].perfParts = {2, 3, 17};     // Performance Shop parts (ISSUES #198)
     p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
     p.ownedParts = {0x00000c01u, 0x02000701u, 0x00001004u}; // spoiler / roof OFFSET / exhaust (#187)
     p.completedEvents.push_back(0x12345678);
@@ -203,6 +204,8 @@ int main()
         return Fail("fitted hood, headlights and taillights must round-trip (v10)");
     if (q.cars[0].frontBumper != 2 || q.cars[0].rearBumper != 17 || q.cars[0].skirt != 9)
         return Fail("fitted bumpers and side skirts must round-trip (v11)");
+    if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
+        return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)
         return Fail("fitted wide-body kit must round-trip (v12)");
 

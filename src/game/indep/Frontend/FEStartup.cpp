@@ -364,6 +364,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandlePerformanceCategoryLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChoosePerformancePackage.fng") == 0) {
+        HandlePerformancePackageLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -524,6 +528,11 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         // Pad messages are taken from the pad in Tick(); keep FEng's copies out of the scroller.
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
             HandleCustomizeCategoryMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_ChoosePerformancePackage.fng") == 0) {
+        if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandlePerformancePackageMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_ChoosePerformanceCategory.fng") == 0) {
@@ -723,6 +732,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && active && active->GetName() && active->IsInputEnabled() &&
+        strcasecmp(active->GetName(), "UI_ChoosePerformancePackage.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandlePerformancePackageMessage(kMsgPadLeft, active);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandlePerformancePackageMessage(kMsgPadRight, active);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandlePerformancePackageMessage(kMsgPadAccept, active);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandlePerformancePackageMessage(kMsgPadBack, active);
         return;
     }
     if (pressed && active && active->GetName() && active->IsInputEnabled() &&
@@ -1521,6 +1542,20 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
     }
 }
 
+namespace {
+// 0x002b64c8's nine cards, in screen order: the performance category (= the 0x34a15 package
+// category and the shop's part id), its icon and its label.  0x002b7e80 reuses the labels as the
+// package screen's header.
+const struct PerfCategoryCard {
+    uint32_t partId, tex, label;
+} kPerfCategories[] = {
+    {3, 0xc15c94e6, 0x026eea5e}, {7, 0x502abeed, 0xa7884765}, {1, 0x01a29ffa, 0x73ad2f72},
+    {5, 0x178475e7, 0x9c34c75f}, {2, 0x9701bde4, 0xa7886f38}, {8, 0x06e8e477, 0xabca6aef},
+    {6, 0xbaa23a28, 0xaa8959ad}, {0, 0xea57d2c4, 0x758d5e3c}, {4, 0x06ef789c, 0xabd0ff14},
+};
+
+} // namespace
+
 // UI_ChoosePerformanceCategory.fng (factory 0x002b5d70, ctor 0x002b5da8, AddOptions 0x002b64c8):
 // "Change Performance Parts".  0x002b64c8 calls 0x002b6358(screen, partId, icon, label) nine
 // times, in the order below; each adds a card (vtable 0x477c90, part id at +0x58) greyed when no
@@ -1529,15 +1564,8 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
 // screens (UI_ChoosePerformancePackage / UI_BuyPerformanceParts) are not ported (ISSUES #196).
 void FEStartupSequence::HandlePerformanceCategoryLoaded(FEPackage *pkg)
 {
-    static const struct {
-        uint32_t partId, tex, label;
-    } kCards[] = {
-        {3, 0xc15c94e6, 0x026eea5e}, {7, 0x502abeed, 0xa7884765}, {1, 0x01a29ffa, 0x73ad2f72},
-        {5, 0x178475e7, 0x9c34c75f}, {2, 0x9701bde4, 0xa7886f38}, {8, 0x06e8e477, 0xabca6aef},
-        {6, 0xbaa23a28, 0xaa8959ad}, {0, 0xea57d2c4, 0x758d5e3c}, {4, 0x06ef789c, 0xabd0ff14},
-    };
     std::vector<FEIconScroller::Def> defs;
-    for (const auto &c : kCards)
+    for (const auto &c : kPerfCategories)
         defs.push_back({c.tex, c.label, false});
     printf("[Customize] performance parts: %zu categories\n", defs.size());
     m_scroller.Setup(pkg, defs, m_performanceCategorySel);
@@ -1567,7 +1595,8 @@ void FEStartupSequence::HandlePerformanceCategoryMessage(uint32_t msg, FEPackage
     }
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
         m_performanceCategorySel = m_scroller.Selected();
-        printf("[Customize] performance category %zu is not ported yet\n", m_performanceCategorySel);
+        m_perfCategory = kPerfCategories[m_performanceCategorySel].partId;
+        NavigateTo(pkg->GetName(), "UI_ChoosePerformancePackage.fng");
     }
 }
 
@@ -3633,6 +3662,274 @@ void FEStartupSequence::HandleMemcardMessage(uint32_t msg, FEPackage *pkg)
         OpenMemcardList();
 }
 
+// Menus whose option cards are built at runtime (FUN_0029ae78 clones OPTION_MASTER, the 118x59
+// card image, once per option) ship no card objects; this makes `count` top-level clones of the
+// master, hides the master and returns the clones plus the row centre the scroller should use.
+// Empty when the package has no OPTION_MASTER image.
+std::vector<FEObject *> CloneOptionCards(FEPackage *pkg, size_t count, const char *prefix, float &centerX,
+                                         float &centerY)
+{
+    std::vector<FEObject *> cards;
+    FEObject *art = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"));
+    FEImage *artImage = art && art->Type == FE_Image ? static_cast<FEImage *>(art) : nullptr;
+    if (!artImage || !artImage->GetImageData())
+        return cards;
+    float cardW = 118.0f, cardH = 59.0f;
+    const FEImageData artData = *artImage->GetImageData();
+    FENativeInterface::GetCenter(art, centerX, centerY);
+    FENativeInterface::GetSize(art, cardW, cardH);
+    FENativeInterface::SetObjectVisible(art, false); // the template; every card is a clone
+    for (size_t i = 0; i < count; ++i) {
+        // FEObject's copy ctor zeroes the transform data (FEObject.cpp:82), and an FEImage's zero
+        // UV rect draws nothing, so the art data is copied over before the transform is set.
+        FEImage *card = static_cast<FEImage *>(art->Clone(false));
+        FEImageData *data = card ? card->GetImageData() : nullptr;
+        if (!data) {
+            delete card;
+            break;
+        }
+        *data = artData;
+        data->Col.r = data->Col.g = data->Col.b = data->Col.a = 255;
+        data->Pos = FEVector3(centerX, centerY, 0.0f);
+        data->Size = FEVector3(cardW, cardH, 1.0f);
+        char cardName[32];
+        snprintf(cardName, sizeof(cardName), "%s%zu", prefix, i + 1);
+        card->SetName(cardName);
+        pkg->AddObject(card);
+        cards.push_back(card);
+    }
+    return cards;
+}
+
+// UI_ChoosePerformancePackage.fng (factory 0x002b6918, ctor 0x002b6950, cards 0x002b78f0, refresh
+// 0x002b6fc0): the packages of the chosen category (ISSUES #198).  0x002b78f0 adds, in order, a
+// first card (type 0, 0xc7d3f6a7 / 0xdf3fd1d6), one card per level 1..3 (type 1,
+// PERFORMANCE_ICON_PACKAGE / PERFORMANCE_PACKAGE_<n>, carrying the package) and a last card
+// (type 2, 0x6a93275f / 0xed55c635 = "Performance Individual Parts").  Like the Profile Manager
+// the package ships no card objects, so they are clones of OPTION_MASTER.
+// A package card lists its parts in PartName_<n> / PartPrice_<n> rows (0x002b7cd8, a part already
+// fitted or owned shows PURCHASED_ICON_<n> instead of a price).  0x0026b218 prices it: the sum of
+// the parts not yet owned (0x002643f8); with two or more of them 10% comes off (20% for the one
+// car type 0x7fc8d0d0) and the "discount" row shows the saving.
+void FEStartupSequence::HandlePerformancePackageLoaded(FEPackage *pkg)
+{
+    // Dev aid: NFSU2_PERF_TEST=<money> opens the shop with an in-memory career owning a Skyline
+    // (for screens launched with NFSU2_PACKAGE, which have no loaded profile).
+    if (const char *money = getenv("NFSU2_PERF_TEST")) {
+        if (!m_profile.valid || m_profile.cars.empty()) {
+            m_profile.valid = true;
+            m_profile.money = atoi(money);
+            m_profile.cars.push_back({"SKYLINE", 0});
+            m_profile.currentCar = 0;
+        }
+    }
+    struct Card {
+        int type;
+        uint32_t tex, label, level;
+    };
+    std::vector<Card> cards;
+    cards.push_back({0, 0xc7d3f6a7, 0xdf3fd1d6, 0});
+    for (uint32_t level = 1; level < 4; ++level) {
+        char name[48];
+        snprintf(name, sizeof(name), "PERFORMANCE_PACKAGE_%u", level);
+        if (m_fe->PerfParts().Find(m_perfCategory, level))
+            cards.push_back({1, bStringHash("PERFORMANCE_ICON_PACKAGE"), bStringHash(name), level});
+    }
+    cards.push_back({2, 0x6a93275f, 0xed55c635, 0});
+
+    std::vector<FEIconScroller::Def> defs;
+    m_perfCardType.clear();
+    m_perfCardLevel.clear();
+    m_perfCardLabel.clear();
+    for (const Card &c : cards) {
+        defs.push_back({c.tex, c.label, false});
+        m_perfCardType.push_back(c.type);
+        m_perfCardLevel.push_back(c.level);
+        m_perfCardLabel.push_back(c.label);
+    }
+    float centerX = 0.0f, centerY = -149.0f;
+    m_perfCards = CloneOptionCards(pkg, defs.size(), "PERF_CARD_", centerX, centerY);
+    if (m_perfCards.size() != defs.size()) {
+        printf("[Customize] performance package: OPTION_MASTER missing\n");
+        return;
+    }
+    m_perfScroller.SetupObjects(pkg, defs, m_perfCards, m_perfCardSel < defs.size() ? m_perfCardSel : 0,
+                                "OPTION_MASTER");
+    m_perfScroller.SetLayoutCenter(centerX, centerY);
+    // The original's stat bars follow the car (+ the highlighted package, not ported): keep the
+    // car-select bars and hide the preview overlays that would show the package's placeholder.
+    for (const char *name : {"ACCEL_PREVIEW", "TOP_SPEED_PREVIEW", "HANDLING_PREVIEW"})
+        FENativeInterface::SetVisible(pkg, bStringHash(name), false);
+    m_fe->UpdateStatBars(pkg, true);
+    printf("[Customize] performance package: category %u, %zu cards\n", m_perfCategory, defs.size());
+    RefreshPerformancePackage(pkg);
+}
+
+// The owned/fitted test of 0x002b5a38: a part is for sale unless it is on the car (0x002b5aa0) or
+// in the profile's item pool (0x002b5ac0).  Pool keys carry bit 31 (the Body Shop keys never do).
+bool FEStartupSequence::PerfPartAvailable(uint16_t id)
+{
+    const Career::OwnedCar *car = ShopCar();
+    if (car && std::find(car->perfParts.begin(), car->perfParts.end(), id) != car->perfParts.end())
+        return false;
+    return !HasOwnedPart(m_profile, 0x80000000u | id);
+}
+
+// 0x0026b218: {total to pay, saving}.
+void FEStartupSequence::PerfPackagePrice(const PerfPackage &pkg, int &total, int &saving)
+{
+    int sum = 0, count = 0;
+    for (const PerfPart &part : pkg.parts)
+        if (PerfPartAvailable(uint16_t(part.id))) {
+            sum += int(part.price);
+            ++count;
+        }
+    total = sum;
+    saving = 0;
+    if (count >= 2) {
+        total = sum * 90 / 100;
+        saving = sum - total;
+    }
+}
+
+void FEStartupSequence::RefreshPerformancePackage(FEPackage *pkg)
+{
+    if (m_perfCards.empty())
+        return;
+    const size_t sel = m_perfScroller.Selected();
+    if (sel >= m_perfCardType.size())
+        return;
+    // Header = the category's label (0x002b7e80), the selected-card caption = the card's label.
+    for (const auto &c : kPerfCategories)
+        if (c.partId == m_perfCategory)
+            FENativeInterface::SetLanguageHash(pkg, 0x42adb44c, c.label);
+    FENativeInterface::SetLanguageHash(pkg, 0x0666176b, m_perfCardLabel[sel]);
+    const PerfPackage *pp =
+        m_perfCardType[sel] == 1 ? m_fe->PerfParts().Find(m_perfCategory, m_perfCardLevel[sel]) : nullptr;
+    for (int row = 1; row <= 4; ++row) {
+        char name[32];
+        snprintf(name, sizeof(name), "PARTNAME_%d", row); // bStringHash is case sensitive
+        const uint32_t nameObj = bStringHash(name);
+        snprintf(name, sizeof(name), "PARTPRICE_%d", row);
+        const uint32_t priceObj = bStringHash(name);
+        snprintf(name, sizeof(name), "PURCHASED_ICON_%d", row);
+        const uint32_t iconObj = bStringHash(name);
+        const PerfPart *part = pp && size_t(row) <= pp->parts.size() ? &pp->parts[size_t(row) - 1] : nullptr;
+        FENativeInterface::SetVisible(pkg, nameObj, part != nullptr);
+        const bool available = part && PerfPartAvailable(uint16_t(part->id));
+        FENativeInterface::SetVisible(pkg, priceObj, available);
+        FENativeInterface::SetVisible(pkg, iconObj, part && !available);
+        if (part) {
+            FENativeInterface::SetLanguageHash(pkg, nameObj, part->nameHash);
+            char price[24];
+            snprintf(price, sizeof(price), "$%u", part->price);
+            FENativeInterface::SetString(pkg, priceObj, price);
+        }
+    }
+    const bool packageCard = pp != nullptr;
+    for (uint32_t obj : {0x06e0c9a8u, 0xbe8693e1u, 0x0380b632u, 0x89ca4fdbu, 0x507e6a40u})
+        FENativeInterface::SetVisible(pkg, obj, packageCard);
+    if (pp) {
+        int total = 0, saving = 0;
+        PerfPackagePrice(*pp, total, saving);
+        char text[24];
+        snprintf(text, sizeof(text), "$%d", saving);
+        if (saving > 0)
+            FENativeInterface::SetString(pkg, 0xbe8693e1, text);
+        else
+            FENativeInterface::SetLanguageHash(pkg, 0xbe8693e1, 0xa4c02484);
+        snprintf(text, sizeof(text), "$%d", total);
+        if (total > 0)
+            FENativeInterface::SetString(pkg, 0x0380b632, text);
+        else
+            FENativeInterface::SetLanguageHash(pkg, 0x0380b632, 0xa4c02484);
+        // The label is a printf format ("10%% Discount:"); the original passes it through the
+        // formatter, so the doubled percent sign becomes one.
+        std::string discount = m_fe->LanguageText(0x6da17a25);
+        for (size_t at = discount.find("%%"); at != std::string::npos; at = discount.find("%%", at + 1))
+            discount.erase(at, 1);
+        FENativeInterface::SetString(pkg, 0x06e0c9a8, discount.c_str());
+    }
+    snprintf(m_perfBank, sizeof(m_perfBank), "$%d", m_profile.valid ? m_profile.money : 0);
+    FENativeInterface::SetString(pkg, 0xeb3a688a, m_perfBank);
+}
+
+void FEStartupSequence::BuyPerformancePackage(FEPackage *pkg)
+{
+    const size_t sel = m_perfScroller.Selected();
+    Career::OwnedCar *car = ShopCar();
+    if (sel >= m_perfCardType.size() || m_perfCardType[sel] != 1 || !car)
+        return;
+    const PerfPackage *pp = m_fe->PerfParts().Find(m_perfCategory, m_perfCardLevel[sel]);
+    if (!pp)
+        return;
+    int total = 0, saving = 0;
+    PerfPackagePrice(*pp, total, saving);
+    bool anyNew = false;
+    for (const PerfPart &part : pp->parts)
+        anyNew = anyNew || PerfPartAvailable(uint16_t(part.id));
+    if (!anyNew) {
+        printf("[PerfShop] package %u/%u is already fitted\n", m_perfCategory, m_perfCardLevel[sel]);
+        return;
+    }
+    if (m_profile.money < total) {
+        printf("[PerfShop] package %u/%u costs $%d, career has $%d\n", m_perfCategory, m_perfCardLevel[sel],
+               total, m_profile.money);
+        ShowMessageDialog(kLabelNotEnoughBank);
+        return;
+    }
+    m_profile.money -= total;
+    // A category holds one package at a time: drop the car's parts of this category, then fit
+    // this package's (owned parts of other levels stay in the pool for free refitting).
+    for (const PerfPart &part : pp->parts)
+        AddOwnedPart(m_profile, 0x80000000u | part.id);
+    for (uint32_t level = 1; level < 4; ++level)
+        if (const PerfPackage *other = m_fe->PerfParts().Find(m_perfCategory, level))
+            for (const PerfPart &part : other->parts)
+                car->perfParts.erase(std::remove(car->perfParts.begin(), car->perfParts.end(), uint16_t(part.id)),
+                                     car->perfParts.end());
+    for (const PerfPart &part : pp->parts)
+        car->perfParts.push_back(uint16_t(part.id));
+    printf("[PerfShop] fitted package %u/%u for $%d (saving $%d); bank $%d\n", m_perfCategory,
+           m_perfCardLevel[sel], total, saving, m_profile.money);
+    if (!Career::SaveCareer(m_profile))
+        printf("[PerfShop] the package is fitted but the save failed\n");
+    RefreshPerformancePackage(pkg);
+}
+
+void FEStartupSequence::HandlePerformancePackageMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_perfCards.empty() || m_perfScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_perfScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_perfScroller.HandleMessage(msg, 0.0f);
+        m_perfScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_perfScroller.HandleMessage(msg, 0.0f);
+        m_perfCardSel = m_perfScroller.Selected();
+        RefreshPerformancePackage(pkg);
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        const size_t sel = m_perfScroller.Selected();
+        if (sel < m_perfCardType.size() && m_perfCardType[sel] == 1)
+            BuyPerformancePackage(pkg);
+        else
+            printf("[PerfShop] card %zu (type %d) is not ported yet\n", sel,
+                   sel < m_perfCardType.size() ? m_perfCardType[sel] : -1);
+    }
+}
+
 // UI_ProfileManager.fng (factory 0x0023c968, ctor 0x0023c9a0, options 0x0023cbb8): the main menu's
 // Profile Manager.  0x0023cbb8 builds three option objects at runtime with
 // FUN_0029ae78(obj, icon, label, 0) and hands each one to IconScroller::AddOption (0x0029cd38):
@@ -3653,36 +3950,8 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
     defs.push_back({kCards[1].icon, kCards[1].label});
     defs.push_back({kCards[2].icon, kCards[2].label});
 
-    m_profileCards.clear();
-    FEObject *art = pkg->FindObjectByHash(bStringHash("OPTION_MASTER"));
-    float centerX = 0.0f, centerY = -149.0f, cardW = 118.0f, cardH = 59.0f;
-    FEImageData artData{};
-    FEImage *artImage = art && art->Type == FE_Image ? static_cast<FEImage *>(art) : nullptr;
-    if (artImage && artImage->GetImageData()) {
-        artData = *artImage->GetImageData();
-        FENativeInterface::GetCenter(art, centerX, centerY);
-        FENativeInterface::GetSize(art, cardW, cardH);
-        FENativeInterface::SetObjectVisible(art, false); // the template; every card is a clone
-    }
-    for (size_t i = 0; art && i < defs.size(); ++i) {
-        // FEObject's copy ctor zeroes the transform data (FEObject.cpp:82), and an FEImage's zero
-        // UV rect draws nothing, so the art data is copied over before the transform is set.
-        FEImage *card = static_cast<FEImage *>(art->Clone(false));
-        FEImageData *data = card ? card->GetImageData() : nullptr;
-        if (!data) {
-            delete card;
-            break;
-        }
-        *data = artData;
-        data->Col.r = data->Col.g = data->Col.b = data->Col.a = 255;
-        data->Pos = FEVector3(centerX, centerY, 0.0f);
-        data->Size = FEVector3(cardW, cardH, 1.0f);
-        char cardName[24];
-        snprintf(cardName, sizeof(cardName), "PROFILE_CARD_%zu", i + 1);
-        card->SetName(cardName);
-        pkg->AddObject(card);
-        m_profileCards.push_back(card);
-    }
+    float centerX = 0.0f, centerY = -149.0f;
+    m_profileCards = CloneOptionCards(pkg, defs.size(), "PROFILE_CARD_", centerX, centerY);
     if (m_profileCards.size() == defs.size()) {
         // Dev aid: NFSU2_PROFILE_CARD_TEX=<hex> forces one texture on the three cards, so the
         // layout can be checked when the card icons themselves are missing.
