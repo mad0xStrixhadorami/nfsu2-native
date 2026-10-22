@@ -391,24 +391,46 @@ std::vector<uint8_t> FENativeInterface::TunedCarRecord(const std::string &folder
 // 0-100 km/h time (12 s -> 4.5 s), simulated top speed (170 -> 270 km/h) and tyre grip per tonne.
 // Layout as 0x002614e0: the track starts 46 units into the 256-wide backing and is 164 long; the
 // "cur" fill starts 4 units further and grows with the value, the handle sits at its end.
-void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force)
+void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::vector<uint16_t> *previewParts)
 {
     if (!pkg)
         return;
-    if (!force && m_statBarsCar == m_previewCarName)
+    // The fitted performance parts change the figures too (ISSUES #200), so they are part of the key.
+    std::string key = m_previewCarName;
+    for (uint16_t id : m_previewPerfParts)
+        key += "," + std::to_string(id);
+    if (!force && m_statBarsCar == key)
         return;
-    m_statBarsCar = m_previewCarName;
+    m_statBarsCar = key;
     SetVisible(pkg, 0xf5a9d520, true);
-    PlayerCar::Performance p;
     PlayerCar::Wheel w[4];
-    float values[3] = {0.5f, 0.5f, 0.5f};
-    if (CarPerformance(m_previewCarName, p)) {
-        float t100, vmax;
-        PlayerCar::Simulate(p, CarWheels(m_previewCarName, w) ? w[0].radius : 0.32f, t100, vmax);
-        values[0] = (12.0f - t100) / (12.0f - 4.5f);
-        values[1] = (vmax * 3.6f - 170.0f) / (270.0f - 170.0f);
-        values[2] = (p.grip - 0.15f * (p.mass - 1.0f) - 0.9f) / (1.25f - 0.9f);
-    }
+    const float radius = CarWheels(m_previewCarName, w) ? w[0].radius : 0.32f;
+    // The three 0..1 bar values of a car with the given performance parts fitted.
+    auto statValues = [&](const std::vector<uint16_t> &parts, float values[3]) {
+        values[0] = values[1] = values[2] = 0.5f;
+        PlayerCar::Performance p;
+        bool ok = false;
+        if (parts.empty()) {
+            ok = CarPerformance(m_previewCarName, p);
+        } else {
+            const std::vector<uint8_t> tuned = TunedCarRecord(m_previewCarName, parts);
+            if (!tuned.empty()) {
+                ReadCarPerformance(tuned.data(), p);
+                ok = p.Valid();
+            }
+        }
+        if (ok) {
+            float t100, vmax;
+            PlayerCar::Simulate(p, radius, t100, vmax);
+            values[0] = (12.0f - t100) / (12.0f - 4.5f);
+            values[1] = (vmax * 3.6f - 170.0f) / (270.0f - 170.0f);
+            values[2] = (p.grip - 0.15f * (p.mass - 1.0f) - 0.9f) / (1.25f - 0.9f);
+        }
+    };
+    float values[3], preview[3];
+    statValues(m_previewPerfParts, values);
+    if (previewParts)
+        statValues(*previewParts, preview);
     static const char *const kBars[3] = {"ACCEL", "TOP_SPEED", "HANDLING"};
     constexpr float kInset = 46.0f, kTrack = 164.0f;
     for (int i = 0; i < 3; ++i) {
@@ -427,14 +449,33 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force)
         const float left = bx - bw * 0.5f + kInset;
         SetSize(cur, kTrack * v, ch);
         SetCenter(cur, left + 4.0f + kTrack * v * 0.5f, cy);
+        // The package screens' "<name>_PREVIEW" bar: the same track filled to the value the car
+        // would have with the highlighted package fitted.
+        FEObject *prev = pkg->FindObjectByHash(bStringHash((base + "_PREVIEW").c_str()));
+        if (prev) {
+            SetObjectVisible(prev, previewParts != nullptr);
+            if (previewParts) {
+                // Only the part beyond the current value shows: the preview bar is drawn over "cur".
+                const float pv = std::clamp(preview[i], v, 1.0f);
+                float px, py, pw, ph;
+                GetCenter(prev, px, py);
+                GetSize(prev, pw, ph);
+                SetObjectVisible(prev, pv > v + 0.002f);
+                SetSize(prev, kTrack * (pv - v), ph);
+                SetCenter(prev, left + 4.0f + kTrack * (v + pv) * 0.5f, py);
+            }
+        }
         if (handle) {
             float hx, hy;
             GetCenter(handle, hx, hy);
             SetCenter(handle, left + kTrack * v, hy);
         }
     }
-    printf("[CarSelect] %s stats: accel %.2f top speed %.2f handling %.2f\n", m_previewCarName.c_str(), values[0],
+    printf("[CarSelect] %s stats: accel %.2f top speed %.2f handling %.2f", m_previewCarName.c_str(), values[0],
            values[1], values[2]);
+    if (previewParts)
+        printf(" -> %.2f %.2f %.2f", preview[0], preview[1], preview[2]);
+    printf("\n");
 }
 
 // Real car-name label from the GLOBALB car table (chunk 0x34600): "<manufacturer> <model>". The

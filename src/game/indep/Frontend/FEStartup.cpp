@@ -3776,11 +3776,6 @@ void FEStartupSequence::HandlePerformancePackageLoaded(FEPackage *pkg)
     m_perfScroller.SetupObjects(pkg, defs, m_perfCards, m_perfCardSel < defs.size() ? m_perfCardSel : 0,
                                 "OPTION_MASTER");
     m_perfScroller.SetLayoutCenter(centerX, centerY);
-    // The original's stat bars follow the car (+ the highlighted package, not ported): keep the
-    // car-select bars and hide the preview overlays that would show the package's placeholder.
-    for (const char *name : {"ACCEL_PREVIEW", "TOP_SPEED_PREVIEW", "HANDLING_PREVIEW"})
-        FENativeInterface::SetVisible(pkg, bStringHash(name), false);
-    m_fe->UpdateStatBars(pkg, true);
     printf("[Customize] performance package: category %u, %zu cards\n", m_perfCategory, defs.size());
     RefreshPerformancePackage(pkg);
 }
@@ -3869,6 +3864,22 @@ void FEStartupSequence::RefreshPerformancePackage(FEPackage *pkg)
         for (size_t at = discount.find("%%"); at != std::string::npos; at = discount.find("%%", at + 1))
             discount.erase(at, 1);
         FENativeInterface::SetString(pkg, 0x06e0c9a8, discount.c_str());
+    }
+    // The stat bars: the car as it is, plus the bars for the car with the highlighted package fitted
+    // (0x002b7498 fills the "current" and "preview" values from two tuning objects).
+    if (pp) {
+        std::vector<uint16_t> after;
+        if (const Career::OwnedCar *car = ShopCar())
+            after = car->perfParts;
+        for (uint32_t level = 1; level < 4; ++level)
+            if (const PerfPackage *other = m_fe->PerfParts().Find(m_perfCategory, level))
+                for (const PerfPart &part : other->parts)
+                    after.erase(std::remove(after.begin(), after.end(), uint16_t(part.id)), after.end());
+        for (const PerfPart &part : pp->parts)
+            after.push_back(uint16_t(part.id));
+        m_fe->UpdateStatBars(pkg, true, &after);
+    } else {
+        m_fe->UpdateStatBars(pkg, true);
     }
     snprintf(m_perfBank, sizeof(m_perfBank), "$%d", m_profile.valid ? m_profile.money : 0);
     FENativeInterface::SetString(pkg, 0xeb3a688a, m_perfBank);

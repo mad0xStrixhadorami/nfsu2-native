@@ -317,7 +317,8 @@ public:
     const std::vector<RaceInfo> &Races() const { return m_races; }
     static void SetTextureHash(FEObject *obj, uint32_t texHash);
     static void SetTextureHash(FEPackage *pkg, uint32_t objHash, uint32_t texHash);
-    void UpdateStatBars(FEPackage *pkg, bool force = false);
+    // previewParts (package screens): also fill the "<name>_PREVIEW" bars for that fitted set.
+    void UpdateStatBars(FEPackage *pkg, bool force = false, const std::vector<uint16_t> *previewParts = nullptr);
     static void SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime = true);
     static void GetCenter(const FEObject *obj, float &x, float &y);
     static void SetCenter(FEObject *obj, float x, float y);
