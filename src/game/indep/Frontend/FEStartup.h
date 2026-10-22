@@ -189,6 +189,8 @@ public:
     void OnTextInput(const char *utf8);
     bool KeyboardActive() const { return m_kbActive; }
 private:
+    void HandleCardMenuLoaded(FEPackage *pkg);
+    void HandleCardMenuMessage(uint32_t msg, FEPackage *pkg);
     void HandleBuyPartsLoaded(FEPackage *pkg);
     void HandleBuyPartsMessage(uint32_t msg, FEPackage *pkg);
     void RefreshBuyParts(FEPackage *pkg);
@@ -279,6 +281,9 @@ private:
     bool m_dialogYesNo = false;
     int m_dialogYesSel = 0; // 0 = Yes, 1 = No
     std::function<void()> m_dialogYesAction;
+    FEIconScroller m_cardScroller;                  // the tuning shop's card menus (#206)
+    std::vector<FEObject *> m_cardMenuCards;
+    std::vector<std::function<void()>> m_cardActions;
     bool m_profileSub = false; // the Profile Manager's Create / Delete screen (0x0023cd50)
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
     size_t m_buySel = 0, m_buyTop = 0;

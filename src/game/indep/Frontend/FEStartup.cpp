@@ -378,6 +378,11 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleKeyboardLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
+        HandleCardMenuLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -542,6 +547,12 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0)
         return; // the pad is read in Tick()
+    if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
+        if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleCardMenuMessage(msg, pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePerformancePackage.fng") == 0) {
         if (msg != kMsgPadLeft && msg != kMsgPadRight && msg != kMsgPadAccept && msg != kMsgPadBack)
             HandlePerformancePackageMessage(msg, pkg);
@@ -758,6 +769,19 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCustomizeCategoryMessage(kMsgPadAccept, active);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCustomizeCategoryMessage(kMsgPadBack, active);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        (strcasecmp(top->GetName(), "UI_PerformanceDyno_MAIN.fng") == 0 ||
+         strcasecmp(top->GetName(), "UI_PerformanceTuning_Master.fng") == 0)) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleCardMenuMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleCardMenuMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleCardMenuMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleCardMenuMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -1559,7 +1583,7 @@ void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
     };
     std::vector<FEIconScroller::Def> defs;
     for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
-        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 1 && i != 2});
+        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 1 && i != 2 && i != 4});
     printf("[Customize] category picker: %zu options (body parts, paint)\n", defs.size());
     m_scroller.Setup(pkg, defs, m_customizeCategorySel);
 }
@@ -1597,6 +1621,10 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
         }
         if (m_customizeCategorySel == 1) {
             NavigateTo(pkg->GetName(), "UI_ChoosePerformanceCategory.fng");
+            return;
+        }
+        if (m_customizeCategorySel == 4) {
+            NavigateTo(pkg->GetName(), "UI_PerformanceDyno_MAIN.fng");
             return;
         }
         printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
@@ -4471,6 +4499,80 @@ void FEStartupSequence::HandleKeyboardMessage(uint32_t msg, FEPackage *pkg)
             m_kbText.pop_back();
     }
     KeyboardRefresh(pkg);
+}
+
+// The tuning shop's two card menus (ISSUES #206), both icon scrollers over cloned OPTION_MASTER
+// cards like the Profile Manager.  UI_PerformanceDyno_MAIN.fng (ctor 0x002c25f0, AddOptions
+// 0x002c2c08) holds Tune Settings, Test Run, Dyno Run, Mode Select, Save Profile (only once the
+// tuning session has changes, 0x002c1ac8) and Quit Tuning; UI_PerformanceTuning_Master.fng
+// (0x002c3978, AddOptions 0x002c3d88) holds Suspension, Drivetrain, Aerodynamics, Tires & Brakes,
+// ECU, Turbo and Nitrous, each opening a slider / graph screen (0x002c3e90).  Only the navigation
+// is ported: Tune Settings opens the master, the sliders, the test and dyno runs are not.
+void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
+{
+    struct Card {
+        uint32_t icon, label;
+        std::function<void()> action;
+    };
+    std::vector<Card> cards;
+    const bool dyno = strcasecmp(pkg->GetName(), "UI_PerformanceDyno_MAIN.fng") == 0;
+    auto notPorted = [this](const char *what) {
+        return [this, what]() {
+            printf("[Tuning] %s is not ported yet\n", what);
+            ShowMessageDialogText((std::string(what) + " is not available in the native build").c_str());
+        };
+    };
+    if (dyno) {
+        cards.push_back({0xd4060fc4, 0xa34e13bd, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Master.fng"); }});
+        cards.push_back({0xf188098c, 0xf62234ef, notPorted("Test Run")});
+        cards.push_back({0xfe1e723e, 0x436c91d4, notPorted("Dyno Run")});
+        cards.push_back({0xc2b2829c, 0xffe08459, notPorted("Mode Select")});
+        cards.push_back({0x4c9e34e6, 0xde5cdfb2, [this]() { PopScreen(); }}); // Quit Tuning
+    } else {
+        static const struct { uint32_t icon, label; const char *name; } kMaster[] = {
+            {0x178475e7, 0xef3772c1, "Suspension tuning"}, {0x01a29ffa, 0xe8da9e62, "Drivetrain tuning"},
+            {0x214db7cf, 0x7ed554d1, "Aerodynamics tuning"}, {0xd6dc23ee, 0x6741bf48, "Tires & Brakes tuning"},
+            {0x502abeed, 0x135bdd07, "ECU tuning"}, {0x06ef789c, 0x5ae08536, "Turbo tuning"},
+            {0x9701bde4, 0x135c04da, "Nitrous tuning"}};
+        for (const auto &m : kMaster)
+            cards.push_back({m.icon, m.label, notPorted(m.name)});
+    }
+    std::vector<FEIconScroller::Def> defs;
+    m_cardActions.clear();
+    for (const Card &c : cards) {
+        defs.push_back({c.icon, c.label, false});
+        m_cardActions.push_back(c.action);
+    }
+    float centerX = 0.0f, centerY = -149.0f;
+    m_cardMenuCards = CloneOptionCards(pkg, defs.size(), "TUNING_CARD_", centerX, centerY);
+    if (m_cardMenuCards.size() != defs.size()) {
+        printf("[Tuning] OPTION_MASTER missing\n");
+        return;
+    }
+    m_cardScroller.SetupObjects(pkg, defs, m_cardMenuCards, 0, "OPTION_MASTER");
+    m_cardScroller.SetLayoutCenter(centerX, centerY);
+    FENativeInterface::SetString(pkg, 0x242217c1, ""); // the dyno screen's "Filter type goes here" placeholder
+    printf("[Tuning] %s: %zu cards\n", pkg->GetName(), defs.size());
+}
+
+void FEStartupSequence::HandleCardMenuMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_cardMenuCards.empty() || m_cardScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_cardScroller.HandleMessage(msg, TickSeconds());
+    } else if (msg == kMsgInitComplete) {
+        m_cardScroller.HandleMessage(msg, 0.0f);
+        m_cardScroller.AllowFade();
+    } else if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_cardScroller.HandleMessage(msg, 0.0f);
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+    } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        const size_t sel = m_cardScroller.Selected();
+        if (sel < m_cardActions.size() && m_cardActions[sel])
+            m_cardActions[sel]();
+    }
 }
 
 // UI_ProfileManager.fng (factory 0x0023c968, ctor 0x0023c9a0, options 0x0023cbb8): the main menu's
