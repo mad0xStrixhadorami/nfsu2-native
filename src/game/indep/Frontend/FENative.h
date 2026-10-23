@@ -18,6 +18,7 @@
 #include "game/indep/Frontend/PerfPackages.h"
 #include "game/indep/Frontend/PerfModel.h"
 #include "game/indep/Frontend/TuneSystem.h"
+#include "game/indep/Frontend/DynoRatings.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -202,6 +203,7 @@ public:
     std::vector<uint8_t> TunedCarRecord(const std::string &folder, const std::vector<uint16_t> &parts,
                                         const std::vector<uint8_t> &tune = {}) const;
     const Tune::Table &TuneTable() const { return m_tuneTable; }
+    const DynoRatings::Limits &DynoLimits() const { return m_dynoLimits; } // chunk 0x34a32 (#215)
     // The stock record and the part-tuned 0x2b0-byte frame a tuning session starts from (empty if unknown).
     bool TuneInputs(const std::string &folder, const std::vector<uint16_t> &parts, const uint8_t *&record,
                     std::vector<uint8_t> &frame) const;
@@ -431,6 +433,7 @@ private:
     std::vector<uint16_t> m_previewPerfParts;
     std::vector<uint8_t> m_previewTune;
     bool m_textInputMode = false;
+    DynoRatings::Limits m_dynoLimits;
     Tune::Table m_tuneTable;                       // chunk 0x34a1a slider definitions (#207)
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)

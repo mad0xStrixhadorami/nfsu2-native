@@ -316,6 +316,7 @@ private:
         float torque = 0, torqueRpm = 0, power = 0, powerRpm = 0; // kN*m, rpm, kW, rpm
         std::vector<float> torqueCurve; // kN*m every 50 rpm from idle (the chart plots it)
         float idleRpm = 0;
+        DynoRatings::Ratings ratings; // the Results bars
     };
     DynoRun m_dynoRun[3]; // 0 current, 1 previous, 2 first run
     int m_dynoRuns = 0;

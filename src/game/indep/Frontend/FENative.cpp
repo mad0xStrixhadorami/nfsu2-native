@@ -1085,6 +1085,8 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             if (m_perf.Parse(c->Data(), c->size))
                 printf("[Parts] %zu performance packages\n", m_perf.Count());
             m_tuneTable.Parse(c->Data(), c->size);
+        } else if (c->id == 0x80034a30) { // physics rating limits: subchunk 0x34a32 (#215)
+            m_dynoLimits.Parse(c->Data(), c->size);
         } else if (c->id == 0x80034602) { // repacked car part database: paint + shop parts
             m_paint.Parse(c->Data(), c->size);
             m_parts.Parse(c->Data(), c->size);

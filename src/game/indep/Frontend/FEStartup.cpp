@@ -5035,12 +5035,15 @@ bool FEStartupSequence::StartDynoRun()
     run.zero60 = times.zeroTo60mph;
     run.zero100 = times.zeroTo100mph;
     run.topSpeed = times.topSpeed;
+    run.ratings = DynoRatings::Compute(m_fe->DynoLimits(), tuned.data(), p, radius);
     if (m_dynoRuns == 0)
         m_dynoRun[2] = run; // the first run stays
     else
         m_dynoRun[1] = m_dynoRun[0];
     m_dynoRun[0] = run;
     ++m_dynoRuns;
+    printf("[Dyno] ratings: acceleration %.3f top speed %.3f handling %.3f\n", run.ratings.acceleration,
+           run.ratings.topSpeed, run.ratings.handling);
     printf("[Dyno] run %d: 0-60 %.1fs 0-100 %.1fs top %.0f mph, %.0f N*m @%.0f, %.0f kW @%.0f\n", m_dynoRuns, run.zero60,
            run.zero100, run.topSpeed / 0.44704f, run.torque * 1000.0f, run.torqueRpm, run.power, run.powerRpm);
     return true;
@@ -5109,10 +5112,39 @@ void FEStartupSequence::HandleDynoChartLoaded(FEPackage *pkg)
 
 void FEStartupSequence::HandleDynoResultsLoaded(FEPackage *pkg)
 {
-    static const uint32_t kColumn[3] = {0xed5bed0b, 0xbf527c45, 0xb7554520}; // current / previous / first
-    const bool metric = m_speedoUnits != 0;
     if (!m_dynoRun[0].valid)
         StartDynoRun();
+    // The three rating bars (0x002c8568 registers accel_/top_speed_/handling_ cur, backing, handle
+    // with a 1.0 span; 0x002c84c8 feeds 0x0031ce90 / 0x0031cdd8 / 0x0031d060 into them).  The
+    // visible track starts 80.5 left of the backing's centre and is 163.5 long (measured from the
+    // shipped layout); the fill (cur) runs from 74 left of the centre to the handle.
+    static const char *kBars[3][3] = {{"ACCEL_CUR", "ACCEL_BACKING", "ACCEL_HANDLE"},
+                                      {"TOP_SPEED_CUR", "TOP_SPEED_BACKING", "TOP_SPEED_HANDLE"},
+                                      {"HANDLING_CUR", "HANDLING_BACKING", "HANDLING_HANDLE"}};
+    if (m_dynoRun[0].valid) {
+        const float values[3] = {m_dynoRun[0].ratings.acceleration, m_dynoRun[0].ratings.topSpeed,
+                                 m_dynoRun[0].ratings.handling};
+        for (int b = 0; b < 3; ++b) {
+            FEObject *cur = pkg->FindObjectByHash(bStringHash(kBars[b][0]));
+            FEObject *back = pkg->FindObjectByHash(bStringHash(kBars[b][1]));
+            FEObject *handle = pkg->FindObjectByHash(bStringHash(kBars[b][2]));
+            if (!cur || !back || !handle)
+                continue;
+            float bx, by, bw, bh, cx, cy, cw, ch, hx, hy;
+            FENativeInterface::GetCenter(back, bx, by);
+            FENativeInterface::GetSize(back, bw, bh);
+            FENativeInterface::GetCenter(cur, cx, cy);
+            FENativeInterface::GetSize(cur, cw, ch);
+            FENativeInterface::GetCenter(handle, hx, hy);
+            const float handleX = bx - 80.5f + std::clamp(values[b], 0.0f, 1.0f) * 163.5f;
+            const float left = bx - 74.0f, width = std::max(2.0f, handleX - left);
+            FENativeInterface::SetCenter(handle, handleX, hy);
+            FENativeInterface::SetSize(cur, width, ch);
+            FENativeInterface::SetCenter(cur, left + width * 0.5f, cy);
+        }
+    }
+    static const uint32_t kColumn[3] = {0xed5bed0b, 0xbf527c45, 0xb7554520}; // current / previous / first
+    const bool metric = m_speedoUnits != 0;
     for (int c = 0; c < 3; ++c) {
         const DynoRun &run = m_dynoRun[c];
         const uint32_t base = kColumn[c];
