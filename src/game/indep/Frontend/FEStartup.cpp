@@ -231,11 +231,6 @@ void FEStartupSequence::LoadBootProfile()
         if (index >= 0)
             m_fe->SetPreviewExhaustPaint(PaintCatalog::kMufflers, uint32_t(index));
     }
-    // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
-    if (const char *award = getenv("NFSU2_AWARD_TEST")) {
-        m_raceMode = 1;
-        AwardCareerResult(atoi(award), 1);
-    }
     // Dev aid: NFSU2_SIGNED="2:STREETGLOW,3:BRIDE" signs sponsors without playing the events (not saved).
     if (const char *signedList = getenv("NFSU2_SIGNED")) {
         for (const char *c = signedList; *c;) {
@@ -252,6 +247,11 @@ void FEStartupSequence::LoadBootProfile()
             c = end + 1;
         }
         m_profile.valid = true;
+    }
+    // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
+    if (const char *award = getenv("NFSU2_AWARD_TEST")) {
+        m_raceMode = 1;
+        AwardCareerResult(atoi(award), 1);
     }
 }
 
@@ -5002,6 +5002,13 @@ void FEStartupSequence::HandleNosMessage(uint32_t msg, FEPackage *pkg)
 // UI_PerformanceDyno_Results.fng (0x002c8038) fills one column of five rows per run.
 bool FEStartupSequence::StartDynoRun()
 {
+    if (const char *dump = getenv("NFSU2_LANG_DUMP")) // dev aid: print language strings by hash
+        for (const char *s = dump; *s;) {
+            char *end;
+            const uint32_t h = uint32_t(strtoul(s, &end, 16));
+            printf("[Lang] %08x = %s\n", h, m_fe->LanguageText(h).c_str());
+            s = *end ? end + 1 : end;
+        }
     if (getenv("NFSU2_TUNE_TEST") && (!m_profile.valid || m_profile.cars.empty())) { // dev aid, see HandleSlidersLoaded
         m_profile.valid = true;
         m_profile.cars.push_back({"SKYLINE", 0});
@@ -5622,14 +5629,20 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
         printf("[Career] event %08x already complete (race %d, P%d)\n", ev->id, raceNumber, place);
         return;
     }
+    // 0x00268f48: a type-1 event in an area with a signed sponsor pays the sponsor's race purse
+    // (record +2) instead of the event's own purse.
+    int basePurse = int(ev->purse);
+    if (ev->kind == 1 && ev->region < Career::Profile::kAreas)
+        if (const Career::Sponsor *sp = Career::SponsorTable::Get().Find(m_profile.signedSponsors[ev->region]))
+            basePurse = int(sp->racePurse);
     int money = 0, respect = 0;
     if (place == 1) {
-        money = int(ev->purse);
+        money = basePurse;
         respect = int(ev->respect);
     } else if (place == 2) {
-        money = int(ev->purse) / 2;
+        money = basePurse / 2;
     } else if (place == 3) {
-        money = int(ev->purse) / 4;
+        money = basePurse / 4;
     }
     if (money == 0 && respect == 0) {
         printf("[Career] event %08x (race %d): P%d, no purse - win it to complete\n", ev->id, raceNumber,
