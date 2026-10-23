@@ -395,6 +395,14 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleGraphLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0) {
+        HandleDynoChartLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0) {
+        HandleDynoResultsLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_ChoosePaintCategory.fng") == 0) {
         HandlePaintCategoryLoaded(pkg);
         return;
@@ -560,7 +568,9 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     if (strcasecmp(name, "UI_BuyPerformanceParts.fng") == 0 || strcasecmp(name, "UI_VirtualKeyboard.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Sliders.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0 ||
-        strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0)
+        strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0 ||
+        strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -797,6 +807,23 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleCardMenuMessage(kMsgPadAccept, top);
         else if (pressed & FENativeInterface::kPadBack)
             HandleCardMenuMessage(kMsgPadBack, top);
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        (strcasecmp(top->GetName(), "UI_PerformanceDyno_Chart.fng") == 0 ||
+         strcasecmp(top->GetName(), "UI_PerformanceDyno_Results.fng") == 0)) {
+        const bool chart = strcasecmp(top->GetName(), "UI_PerformanceDyno_Chart.fng") == 0;
+        // Chart: Next -> Results.  Results: Back -> Chart, Next -> the Dyno Shop (0x002c7d80 / 0x002c8660).
+        if (pressed & FENativeInterface::kPadAccept) {
+            if (chart) {
+                NavigateTo(top->GetName(), "UI_PerformanceDyno_Results.fng");
+            } else {
+                if (!m_backStack.empty())
+                    m_backStack.pop_back(); // the chart
+                PopScreen();
+            }
+        } else if ((pressed & FENativeInterface::kPadBack) && !chart)
+            PopScreen();
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -1688,6 +1715,9 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
             return;
         }
         if (m_customizeCategorySel == 4) {
+            for (DynoRun &run : m_dynoRun)
+                run = DynoRun();
+            m_dynoRuns = 0;
             NavigateTo(pkg->GetName(), "UI_PerformanceDyno_MAIN.fng");
             return;
         }
@@ -4606,7 +4636,10 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
     if (dyno) {
         cards.push_back({0xd4060fc4, 0xa34e13bd, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Master.fng"); }});
         cards.push_back({0xf188098c, 0xf62234ef, notPorted("Test Run")});
-        cards.push_back({0xfe1e723e, 0x436c91d4, notPorted("Dyno Run")});
+        cards.push_back({0xfe1e723e, 0x436c91d4, [this, pkg]() {
+                             m_dynoFresh = true; // every Dyno Run measures the car again
+                             NavigateTo(pkg->GetName(), "UI_PerformanceDyno_Chart.fng");
+                         }});
         cards.push_back({0xc2b2829c, 0xffe08459, notPorted("Mode Select")});
         cards.push_back({0x4c9e34e6, 0xde5cdfb2, [this]() { PopScreen(); }}); // Quit Tuning
     } else {
@@ -4956,6 +4989,151 @@ void FEStartupSequence::HandleNosMessage(uint32_t msg, FEPackage *pkg)
     } else if (msg == kMsgPadBack && !m_navPending) {
         FinishSliders(pkg);
         PopScreen();
+    }
+}
+
+// Dyno Run (ISSUES #215): the original drives the car on a 3D dyno scene (0x002c2128 starts the
+// session, 0x002c7be8 hands the measured figures to 0x002c1568, which keeps the last three runs:
+// current, previous and the first).  The port measures the same figures without the scene: the
+// torque scan of 0x0031d438 / 0x0031d2e0 (50 rpm steps) and a full-throttle straight-line run of
+// the tuned car (PlayerCar::SimulateRun).  UI_PerformanceDyno_Chart.fng plots the torque and power
+// curves (0x002c76a0: torque x 1000 N*m or x 0.7375621 lb-ft, power = torque * rpm * 0.00010471 *
+// 1000 kW or x 1.34102 HP; teal 0x0080aa and gold 0xaf951a, the previous run at alpha 0x82);
+// UI_PerformanceDyno_Results.fng (0x002c8038) fills one column of five rows per run.
+bool FEStartupSequence::StartDynoRun()
+{
+    if (getenv("NFSU2_TUNE_TEST") && (!m_profile.valid || m_profile.cars.empty())) { // dev aid, see HandleSlidersLoaded
+        m_profile.valid = true;
+        m_profile.cars.push_back({"SKYLINE", 0});
+        m_profile.currentCar = 0;
+    }
+    const Career::OwnedCar *car = ShopCar();
+    if (!car)
+        return false;
+    const std::vector<uint8_t> tuned = m_fe->TunedCarRecord(car->model, car->perfParts, car->tune);
+    PlayerCar::Performance p;
+    if (tuned.empty())
+        return false;
+    FENativeInterface::ReadCarPerformance(tuned.data(), p);
+    if (!p.Valid())
+        return false;
+    DynoRun run;
+    run.valid = true;
+    run.idleRpm = p.idleRpm;
+    for (float rpm = p.idleRpm; rpm < p.maxRpm; rpm += 50.0f) {
+        const float torque = PlayerCar::Torque(p, rpm); // kN*m
+        run.torqueCurve.push_back(torque);
+        if (torque > run.torque)
+            run.torque = torque, run.torqueRpm = rpm;
+        const float power = torque * rpm * 0.10471976f;
+        if (power > run.power)
+            run.power = power, run.powerRpm = rpm;
+    }
+    PlayerCar::Wheel wheels[4];
+    const float radius = m_fe->CarWheels(car->model, wheels) ? wheels[0].radius : 0.32f;
+    const PlayerCar::RunTimes times = PlayerCar::SimulateRun(p, radius);
+    run.zero60 = times.zeroTo60mph;
+    run.zero100 = times.zeroTo100mph;
+    run.topSpeed = times.topSpeed;
+    if (m_dynoRuns == 0)
+        m_dynoRun[2] = run; // the first run stays
+    else
+        m_dynoRun[1] = m_dynoRun[0];
+    m_dynoRun[0] = run;
+    ++m_dynoRuns;
+    printf("[Dyno] run %d: 0-60 %.1fs 0-100 %.1fs top %.0f mph, %.0f N*m @%.0f, %.0f kW @%.0f\n", m_dynoRuns, run.zero60,
+           run.zero100, run.topSpeed / 0.44704f, run.torque * 1000.0f, run.torqueRpm, run.power, run.powerRpm);
+    return true;
+}
+
+namespace {
+// The plot area of UI_PerformanceDyno_Chart.fng in FEng units (the grid is 10 columns of 1000 rpm
+// by 5 rows of 100, both axes 0..500).
+constexpr float kDynoX0 = -248.1f, kDynoX1 = 246.7f, kDynoYTop = -171.5f, kDynoYBottom = 147.5f;
+constexpr uint32_t kDynoLineSource = 0x014245e2; // the plain tinted bar the layout ships (the Graph markers use it too)
+} // namespace
+
+void FEStartupSequence::HandleDynoChartLoaded(FEPackage *pkg)
+{
+    m_dynoDots.clear();
+    if (m_dynoFresh || !m_dynoRun[0].valid) {
+        StartDynoRun();
+        m_dynoFresh = false;
+    }
+    FEObject *src = pkg->FindObjectByHash(kDynoLineSource);
+    FEImage *srcImage = src && src->Type == FE_Image ? static_cast<FEImage *>(src) : nullptr;
+    if (!srcImage || !srcImage->GetImageData() || !m_dynoRun[0].valid) {
+        printf("[Dyno] chart: no data to plot\n");
+        return;
+    }
+    const FEImageData srcData = *srcImage->GetImageData();
+    const bool metric = m_speedoUnits != 0;
+    const int runs = m_dynoRuns > 1 ? 2 : 1;
+    for (int r = runs - 1; r >= 0; --r) { // the previous run first, so the current one draws over it
+        const DynoRun &run = m_dynoRun[r];
+        for (int curve = 0; curve < 2; ++curve) {
+            const uint8_t alpha = r == 0 ? 255 : 0x82;
+            const uint8_t cr = curve == 0 ? 0x00 : 0xaf, cg = curve == 0 ? 0x80 : 0x95, cb = curve == 0 ? 0xaa : 0x1a;
+            float prevY = 0.0f;
+            for (size_t i = 0; i < run.torqueCurve.size(); ++i) {
+                const float rpm = run.idleRpm + 50.0f * float(i);
+                const float torque = run.torqueCurve[i];
+                float value = curve == 0 ? torque * 1000.0f * (metric ? 1.0f : 0.7375621f)
+                                         : torque * rpm * 0.10471976f * (metric ? 1.0f : 1.34102209f);
+                value = std::clamp(value, 0.0f, 500.0f);
+                const float x = kDynoX0 + rpm / 10000.0f * (kDynoX1 - kDynoX0);
+                const float y = kDynoYBottom - value / 500.0f * (kDynoYBottom - kDynoYTop);
+                const float h = i == 0 ? 3.0f : std::max(3.0f, std::fabs(y - prevY) + 1.0f);
+                prevY = y;
+                FEImage *dot = static_cast<FEImage *>(src->Clone(false));
+                FEImageData *data = dot ? dot->GetImageData() : nullptr;
+                if (!data) {
+                    delete dot;
+                    continue;
+                }
+                *data = srcData;
+                dot->RenderContext = 0; // the source sits in a group; the dots are top-level
+                data->Col.r = cr, data->Col.g = cg, data->Col.b = cb, data->Col.a = alpha;
+                data->Pos = FEVector3(x, y, 50.0f); // z > 0 or the renderer culls it; the grid tiles sit at 159
+                data->Size = FEVector3(3.0f, h, 1.0f);
+                char name[32];
+                snprintf(name, sizeof(name), "DYNO_DOT_%d_%d_%zu", r, curve, i);
+                dot->SetName(name);
+                pkg->AddObject(dot);
+                m_dynoDots.push_back(dot);
+            }
+        }
+    }
+    printf("[Dyno] chart: %zu points, %d run(s)\n", m_dynoDots.size(), runs);
+}
+
+void FEStartupSequence::HandleDynoResultsLoaded(FEPackage *pkg)
+{
+    static const uint32_t kColumn[3] = {0xed5bed0b, 0xbf527c45, 0xb7554520}; // current / previous / first
+    const bool metric = m_speedoUnits != 0;
+    if (!m_dynoRun[0].valid)
+        StartDynoRun();
+    for (int c = 0; c < 3; ++c) {
+        const DynoRun &run = m_dynoRun[c];
+        const uint32_t base = kColumn[c];
+        // +0 0-60, +1 0-100, +2 top speed, +3 torque, +4 power (the layout's row order)
+        for (uint32_t k = 0; k < 5; ++k)
+            FENativeInterface::SetVisible(pkg, base + k, run.valid);
+        if (!run.valid)
+            continue;
+        char text[64];
+        snprintf(text, sizeof(text), "%.1f sec", run.zero60);
+        FENativeInterface::SetString(pkg, base + 0, text);
+        snprintf(text, sizeof(text), "%.1f sec", run.zero100);
+        FENativeInterface::SetString(pkg, base + 1, text);
+        snprintf(text, sizeof(text), metric ? "%.0f km/h" : "%.0f mph", run.topSpeed * (metric ? 3.6f : 2.237f));
+        FENativeInterface::SetString(pkg, base + 2, text);
+        snprintf(text, sizeof(text), metric ? "%.0f N-M\n@%.0f rpm" : "%.0f lb-ft\n@%.0f rpm",
+                 run.torque * (metric ? 1000.0f : 737.5621f), run.torqueRpm);
+        FENativeInterface::SetString(pkg, base + 3, text);
+        snprintf(text, sizeof(text), metric ? "%.0f kW\n@%.0f rpm" : "%.0f HP\n@%.0f rpm",
+                 run.power * (metric ? 1.0f : 1.34102209f), run.powerRpm);
+        FENativeInterface::SetString(pkg, base + 4, text);
     }
 }
 

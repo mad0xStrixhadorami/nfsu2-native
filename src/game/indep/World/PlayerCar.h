@@ -49,6 +49,11 @@ public:
     static float Torque(const Performance &p, float rpm);
     // Straight-line run with this drivetrain at full throttle: 0-100 km/h time (s) and top speed (m/s).
     static void Simulate(const Performance &p, float wheelRadius, float &zeroTo100, float &topSpeed);
+    // The same run with the Dyno Results figures: seconds to 60 mph and 100 mph (0 = not reached).
+    struct RunTimes {
+        float zeroTo60mph = 0, zeroTo100mph = 0, zeroTo100kmh = 0, topSpeed = 0; // topSpeed in m/s
+    };
+    static RunTimes SimulateRun(const Performance &p, float wheelRadius);
 
     // Aftermarket parts installed on this car (ISSUES.md #178).  The shops install whole parts:
     // roof scoops and exhaust tips come from the universal CARS\ROOF and CARS\EXHAUST geometry and

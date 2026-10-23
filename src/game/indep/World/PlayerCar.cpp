@@ -729,20 +729,33 @@ void PlayerCar::UpdateEngine(float throttle, float brake, float dt, float power)
 
 void PlayerCar::Simulate(const Performance &p, float wheelRadius, float &zeroTo100, float &topSpeed)
 {
+    const RunTimes run = SimulateRun(p, wheelRadius);
+    zeroTo100 = run.zeroTo100kmh;
+    topSpeed = run.topSpeed;
+}
+
+PlayerCar::RunTimes PlayerCar::SimulateRun(const Performance &p, float wheelRadius)
+{
     PlayerCar car;
     car.SetPerformance(p);
     car.m_wheelRadius = wheelRadius;
-    zeroTo100 = 0;
+    RunTimes run;
     const float dt = 1.0f / 60.0f;
     for (int step = 0; step < 60 * 120; ++step) {
         float before = car.m_speed;
         car.UpdateEngine(1.0f, 0.0f, dt, 1.0f);
-        if (!zeroTo100 && car.m_speed >= 100.0f / 3.6f)
-            zeroTo100 = (step + 1) * dt;
+        const float t = (step + 1) * dt;
+        if (!run.zeroTo100kmh && car.m_speed >= 100.0f / 3.6f)
+            run.zeroTo100kmh = t;
+        if (!run.zeroTo60mph && car.m_speed >= 60.0f * 0.44704f)
+            run.zeroTo60mph = t;
+        if (!run.zeroTo100mph && car.m_speed >= 100.0f * 0.44704f)
+            run.zeroTo100mph = t;
         if (step > 600 && car.m_speed - before < 1e-4f)
             break;
     }
-    topSpeed = car.m_speed;
+    run.topSpeed = car.m_speed;
+    return run;
 }
 
 void PlayerCar::Place(float x, float y, float z, float yaw)

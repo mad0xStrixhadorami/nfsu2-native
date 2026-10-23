@@ -198,6 +198,9 @@ private:
     void HandleGraphLoaded(FEPackage *pkg);
     void HandleGraphMessage(uint32_t msg, FEPackage *pkg);
     void RefreshGraph(FEPackage *pkg);
+    void HandleDynoChartLoaded(FEPackage *pkg);
+    void HandleDynoResultsLoaded(FEPackage *pkg);
+    bool StartDynoRun(); // measures the shop car and pushes it into the run history
     void HandleNosLoaded(FEPackage *pkg);
     void HandleNosMessage(uint32_t msg, FEPackage *pkg);
     void RefreshNos(FEPackage *pkg);
@@ -307,6 +310,17 @@ private:
     size_t m_graphSel = 0;                          // the selected curve point
     int m_graphField = 0x17;
     std::vector<FEObject *> m_graphRed, m_graphGreen, m_graphTeal, m_graphDots;
+    struct DynoRun { // one Dyno Run's figures (the original keeps three: current, previous, first; 0x00516210)
+        bool valid = false;
+        float zero60 = 0, zero100 = 0, topSpeed = 0; // s, s, m/s
+        float torque = 0, torqueRpm = 0, power = 0, powerRpm = 0; // kN*m, rpm, kW, rpm
+        std::vector<float> torqueCurve; // kN*m every 50 rpm from idle (the chart plots it)
+        float idleRpm = 0;
+    };
+    DynoRun m_dynoRun[3]; // 0 current, 1 previous, 2 first run
+    int m_dynoRuns = 0;
+    bool m_dynoFresh = false; // the next chart load measures a new run
+    std::vector<FEObject *> m_dynoDots;
     int m_tuneCard = 0;                             // 0 Suspension, 1 Drivetrain, 2 Aerodynamics, 3 Tires & Brakes
     bool m_profileSub = false; // the Profile Manager's Create / Delete screen (0x0023cd50)
     std::vector<const PerfPart *> m_buyParts; // the individual-parts list (#199)
