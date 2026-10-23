@@ -1242,6 +1242,9 @@ int main(int argc, char **argv)
             }
             // The crib and the world map swap in place (World Map opens from the crib, Back returns).
             if (cribPkg) {
+                // The menu may have switched packages itself (shop screens navigate): resolve the live one.
+                if (FEPackage *live = engine->GetPackageList()->FindPackage(startup.LastMenu()))
+                    cribPkg = live;
                 if (const char *menu = startup.TakeCareerMenuSwitch()) {
                     engine->UnloadPackage(cribPkg);
                     cribPkg = engine->PushPackage(menu, 0, 0xff);

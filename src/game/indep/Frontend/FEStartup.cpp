@@ -319,6 +319,9 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         return;
     const char *name = pkg->GetName();
     m_navPending = false;
+    m_lastMenu = name;
+    if (strcasecmp(name, "UI_CareerCrib.fng") == 0)
+        m_cribShop = false;
 
     if (strcasecmp(name, "UG_LS_Splash.fng") == 0) {
         HandleSplashLoaded(pkg);
@@ -3066,8 +3069,15 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
 
 bool FEStartupSequence::PopScreen()
 {
-    if (m_backStack.empty())
+    if (m_backStack.empty()) {
+        if (m_cribShop) { // a shop opened from the career crib: Back returns there
+            printf("[Menu] back to UI_CareerCrib.fng\n");
+            m_cribShop = false;
+            m_careerMenuSwitch = "UI_CareerCrib.fng";
+            return true;
+        }
         return false;
+    }
     std::string prev = m_backStack.back();
     m_backStack.pop_back();
     printf("[Menu] back to %s\n", prev.c_str());
@@ -3237,11 +3247,27 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             m_careerMenuSwitch = "UI_CareerCarSelect.fng";
             break;
         case 3:
-            printf("[Career] crib: change parts (not ported)\n");
+        case 4: {
+            // Change Parts -> the car shop's category picker; Performance Tuning -> the Dyno Shop.
+            // Both stand on the profile's current car; Back returns to the crib (PopScreen).
+            const bool tuning = m_cribActions[sel] == 4;
+            printf("[Career] crib: %s\n", tuning ? "performance tuning" : "change parts");
+            if (Career::OwnedCar *car = ShopCar()) {
+                ApplyOwnedCarPreview(*car);
+                m_cribShop = true;
+                m_backStack.clear();
+                if (tuning) {
+                    for (DynoRun &run : m_dynoRun)
+                        run = DynoRun();
+                    m_dynoRuns = 0;
+                    m_customizeCategorySel = 4;
+                }
+                m_careerMenuSwitch = tuning ? "UI_PerformanceDyno_MAIN.fng" : "UI_ChooseCustomizeCategory.fng";
+            } else {
+                ShowMessageDialogText("You have no car to work on");
+            }
             break;
-        case 4:
-            printf("[Career] crib: performance tuning (not ported)\n");
-            break;
+        }
         case 5:
             printf("[Career] crib: signed sponsors (%d)\n", m_profile.SignedSponsorCount());
             if (m_profile.SignedSponsorCount() > 0)
@@ -3941,6 +3967,20 @@ std::vector<FEObject *> CloneOptionCards(FEPackage *pkg, size_t count, const cha
     return cards;
 }
 
+// The icon-card menus of the tuning shops and the Profile Manager ship their card slots
+// (0x4b4e3888 + n, like the Graphics Shop): using them keeps each card's own art, so the icons
+// draw.  Falls back to clones of OPTION_MASTER when too few slots ship.
+std::vector<FEObject *> ShippedOrClonedCards(FEPackage *pkg, size_t count, const char *prefix, float &centerX,
+                                             float &centerY, bool &shipped)
+{
+    std::vector<FEObject *> slots;
+    for (size_t i = 0; i < count; ++i)
+        if (FEObject *o = pkg->FindObjectByHash(0x4b4e3888u + uint32_t(i)))
+            slots.push_back(o);
+    shipped = slots.size() == count;
+    return shipped ? slots : CloneOptionCards(pkg, count, prefix, centerX, centerY);
+}
+
 // UI_ChoosePerformancePackage.fng (factory 0x002b6918, ctor 0x002b6950, cards 0x002b78f0, refresh
 // 0x002b6fc0): the packages of the chosen category (ISSUES #198).  0x002b78f0 adds, in order, a
 // first card (type 0, 0xc7d3f6a7 / 0xdf3fd1d6), one card per level 1..3 (type 1,
@@ -3990,14 +4030,16 @@ void FEStartupSequence::HandlePerformancePackageLoaded(FEPackage *pkg)
         m_perfCardLabel.push_back(c.label);
     }
     float centerX = 0.0f, centerY = -149.0f;
-    m_perfCards = CloneOptionCards(pkg, defs.size(), "PERF_CARD_", centerX, centerY);
+    bool perfShipped = false;
+    m_perfCards = ShippedOrClonedCards(pkg, defs.size(), "PERF_CARD_", centerX, centerY, perfShipped);
     if (m_perfCards.size() != defs.size()) {
         printf("[Customize] performance package: OPTION_MASTER missing\n");
         return;
     }
     m_perfScroller.SetupObjects(pkg, defs, m_perfCards, m_perfCardSel < defs.size() ? m_perfCardSel : 0,
                                 "OPTION_MASTER");
-    m_perfScroller.SetLayoutCenter(centerX, centerY);
+    if (!perfShipped)
+        m_perfScroller.SetLayoutCenter(centerX, centerY);
     printf("[Customize] performance package: category %u, %zu cards\n", m_perfCategory, defs.size());
     RefreshPerformancePackage(pkg);
 }
@@ -4674,13 +4716,15 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
         m_cardActions.push_back(c.action);
     }
     float centerX = 0.0f, centerY = -149.0f;
-    m_cardMenuCards = CloneOptionCards(pkg, defs.size(), "TUNING_CARD_", centerX, centerY);
+    bool shipped = false;
+    m_cardMenuCards = ShippedOrClonedCards(pkg, defs.size(), "TUNING_CARD_", centerX, centerY, shipped);
     if (m_cardMenuCards.size() != defs.size()) {
         printf("[Tuning] OPTION_MASTER missing\n");
         return;
     }
     m_cardScroller.SetupObjects(pkg, defs, m_cardMenuCards, 0, "OPTION_MASTER");
-    m_cardScroller.SetLayoutCenter(centerX, centerY);
+    if (!shipped)
+        m_cardScroller.SetLayoutCenter(centerX, centerY);
     FENativeInterface::SetString(pkg, 0x242217c1, ""); // the dyno screen's "Filter type goes here" placeholder
     printf("[Tuning] %s: %zu cards\n", pkg->GetName(), defs.size());
 }
@@ -5356,7 +5400,8 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
     }
 
     float centerX = 0.0f, centerY = -149.0f;
-    m_profileCards = CloneOptionCards(pkg, defs.size(), "PROFILE_CARD_", centerX, centerY);
+    bool profileShipped = false;
+    m_profileCards = ShippedOrClonedCards(pkg, defs.size(), "PROFILE_CARD_", centerX, centerY, profileShipped);
     if (m_profileCards.size() == defs.size()) {
         // Dev aid: NFSU2_PROFILE_CARD_TEX=<hex> forces one texture on the three cards, so the
         // layout can be checked when the card icons themselves are missing.
@@ -5369,7 +5414,8 @@ void FEStartupSequence::HandleProfileManagerLoaded(FEPackage *pkg)
             sscanf(pos, "%f,%f", &centerX, &centerY);
         }
         m_profileScroller.SetupObjects(pkg, defs, m_profileCards, 0, "OPTION_MASTER");
-        m_profileScroller.SetLayoutCenter(centerX, centerY);
+        if (!profileShipped)
+            m_profileScroller.SetLayoutCenter(centerX, centerY);
     } else {
         printf("[Profile] OPTION_MASTER missing; the manager has no cards\n");
     }
@@ -5527,6 +5573,17 @@ void FEStartupSequence::ResumeCareer()
         return;
     }
     m_navPending = true; // leaving the front end for the world (one accept press only)
+    if (const char *extra = getenv("NFSU2_EXTRA_CARS")) { // dev aid, see the garage car select
+        std::string list = extra;
+        for (size_t b = 0; b < list.size();) {
+            size_t e = list.find(',', b);
+            if (e == std::string::npos)
+                e = list.size();
+            if (e > b && !m_profile.Owns(list.substr(b, e - b)))
+                m_profile.cars.push_back({list.substr(b, e - b), 0});
+            b = e + 1;
+        }
+    }
     if (const Career::OwnedCar *car = m_profile.CurrentCar())
         ApplyOwnedCarPreview(*car);
     m_raceMode = 1;  // DAT_00506b50: career

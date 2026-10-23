@@ -85,6 +85,7 @@ public:
 
     // The career menu (crib / world map) asked to swap its package (the world map opens from the crib
     // and Back returns to it); main.cpp owns the pushed package, so it performs the swap. Taken once.
+    const char *LastMenu() const { return m_lastMenu.c_str(); }
     const char *TakeCareerMenuSwitch()
     {
         const char *n = m_careerMenuSwitch;
@@ -320,6 +321,8 @@ private:
     };
     DynoRun m_dynoRun[3]; // 0 current, 1 previous, 2 first run
     int m_dynoRuns = 0;
+    bool m_cribShop = false; // a shop screen opened from the career crib (Back returns there)
+    std::string m_lastMenu;  // the package that finished loading last (main.cpp resolves the crib menu by it)
     bool m_dynoFresh = false; // the next chart load measures a new run
     std::vector<FEObject *> m_dynoDots;
     int m_tuneCard = 0;                             // 0 Suspension, 1 Drivetrain, 2 Aerodynamics, 3 Tires & Brakes
