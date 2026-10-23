@@ -199,6 +199,17 @@ private:
     void HandleGraphLoaded(FEPackage *pkg);
     void HandleGraphMessage(uint32_t msg, FEPackage *pkg);
     void RefreshGraph(FEPackage *pkg);
+    // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
+    void HandleVinylLayerLoaded(FEPackage *pkg);
+    void HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshVinylLayers(FEPackage *pkg);
+    void PreviewVinylWork();
+    void HandleVinylBrowserLoaded(FEPackage *pkg);
+    void HandleVinylBrowserMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshVinylItems(FEPackage *pkg);
+    void RefreshVinylInfo(FEPackage *pkg);
+    void ApplyVinylDesign(FEPackage *pkg);
+    void CycleVinylColors(int direction);
     void HandleDynoChartLoaded(FEPackage *pkg);
     void HandleDynoResultsLoaded(FEPackage *pkg);
     bool StartDynoRun(); // measures the shop car and pushes it into the run history
@@ -321,6 +332,16 @@ private:
     };
     DynoRun m_dynoRun[3]; // 0 current, 1 previous, 2 first run
     int m_dynoRuns = 0;
+    // Vinyl shop state.
+    std::vector<Career::OwnedCar::VinylLayer> m_vinylWork; // the car's layers plus the previewed change
+    int m_vinylLayer = 0;                // layer being edited, 0..3
+    bool m_vinylBrowser = false;         // the parts browser shows vinyl groups / designs
+    std::vector<int> m_vinylGroups;      // groups with designs, the browser's category cards
+    size_t m_vinylGroupSel = 0, m_vinylSel = 0;
+    std::vector<const VinylDesign *> m_vinylItems; // designs of the selected group (null = "No Vinyl")
+    int m_vinylScheme = 0;               // colour scheme being previewed on the layer
+    FEIconScroller m_vinylLayerScroller;
+    std::vector<FEObject *> m_vinylLayerCards;
     bool m_cribShop = false; // a shop screen opened from the career crib (Back returns there)
     std::string m_lastMenu;  // the package that finished loading last (main.cpp resolves the crib menu by it)
     bool m_dynoFresh = false; // the next chart load measures a new run

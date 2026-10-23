@@ -32,6 +32,7 @@
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/Frontend/VinylCatalog.h"
 #include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/Sound/CarAudioTable.h"
 #include "game/indep/Sound/EngineSound.h"
@@ -265,6 +266,31 @@ int main(int argc, char **argv)
         return failures ? 1 : 0;
     if (argc > 3 && strcmp(argv[1], "--dump") == 0)
         return DumpFile(*fs, argv[2], argv[3]);
+    if (argc > 3 && strcmp(argv[1], "--vinyls") == 0) { // dev aid: --vinyls <VINYLS.BIN> <CAR> lists the shop catalogue
+        FILE *f = fopen(argv[2], "rb");
+        if (!f)
+            return 1;
+        std::vector<uint8_t> data;
+        uint8_t buf[65536];
+        for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;)
+            data.insert(data.end(), buf, buf + n);
+        fclose(f);
+        TexturePack pack;
+        VinylCatalog catalog;
+        if (!pack.Parse(data.data(), data.size()) || !catalog.Build(pack, argv[3])) {
+            printf("no vinyl catalogue\n");
+            return 1;
+        }
+        for (int g : catalog.UsedGroups()) {
+            const auto items = catalog.InGroup(g);
+            printf("%-14s %3zu:", VinylCatalog::Groups()[size_t(g)].debug, items.size());
+            for (size_t i = 0; i < items.size() && i < 6; ++i)
+                printf(" %s", items[i]->name.c_str());
+            printf("\n");
+        }
+        printf("%zu designs\n", catalog.Designs().size());
+        return 0;
+    }
     if (argc > 2 && strcmp(argv[1], "--tpk") == 0) { // dev aid: list the textures of an extracted pack file
         FILE *f = fopen(argv[2], "rb");
         if (!f)
@@ -595,6 +621,8 @@ int main(int argc, char **argv)
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
     // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
     FEPackage *cribPkg = nullptr;
+    int playerSkinIndex = -1;       // the player's car in the world (vinyl skin, ISSUES #223)
+    std::string playerSkinKey;
     // Post-race results (UI_PostRaceResults.fng): opponents' finish times on a race clock.
     FEPackage *resultsPkg = nullptr;
     std::vector<std::string> oppNames;
@@ -908,19 +936,8 @@ int main(int argc, char **argv)
                          &car.TriangleExhausts(),
                          fe.ColorForPaint(fe.PreviewExhaustSet(), fe.PreviewExhaustPaint(),
                                           SDL_Color{150, 150, 150, 255}));
-            // Vinyl layers (Graphics Shop, ISSUES #223): the composed skin replaces the flat paint.
-            if (!fe.PreviewVinyls().empty() || getenv("NFSU2_VINYL_TEST")) {
-                std::vector<CarSkin::Layer> layers = fe.PreviewVinyls().empty() ? fe.TestVinyls() : fe.PreviewVinyls();
-                CarSkin::Vinyls vinyls;
-                if (vinyls.Load(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\VINYLS.BIN").c_str()), fe.PreviewCarName())) {
-                    const SDL_Color body = fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(), SDL_Color{40, 90, 200, 255});
-                    std::vector<uint32_t> skin;
-                    vinyls.Compose(body.r, body.g, body.b, layers, skin);
-                    world.SetCarSkin(playerCarIndex, CarSkin::DetectBodySlot(car.Model(), car.TriangleTextures(), fe.PreviewCarName()),
-                                     std::move(skin));
-                    printf("[Vinyl] %zu layer(s) on the race car\n", layers.size());
-                }
-            }
+            playerSkinIndex = int(playerCarIndex);
+            playerSkinKey.clear(); // the per-frame check below composes the skin
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);
@@ -1254,6 +1271,30 @@ int main(int argc, char **argv)
             // Paused: the simulation stands still (zero time step) while the world and HUD draw. The
             // career crib (ISSUES #141) also holds the simulation until the player returns to explore.
             const Uint32 frameStart = last;
+            // Vinyl skin of the player's car: recomposed when the previewed layers or paint change
+            // (the crib's Graphics Shop previews live on the world car).
+            if (playerSkinIndex >= 0) {
+                const std::vector<CarSkin::Layer> layers = fe.PreviewVinyls().empty() ? fe.TestVinyls() : fe.PreviewVinyls();
+                const SDL_Color body = fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(), SDL_Color{40, 90, 200, 255});
+                std::string key = std::to_string(body.r) + "," + std::to_string(body.g) + "," + std::to_string(body.b);
+                for (const CarSkin::Layer &l : layers) {
+                    key += "|" + l.design;
+                    for (auto &col : l.color)
+                        for (uint8_t v : col)
+                            key += "," + std::to_string(v);
+                }
+                if (key != playerSkinKey) {
+                    playerSkinKey = key;
+                    if (layers.empty()) {
+                        world.SetCarSkin(size_t(playerSkinIndex), 0, {});
+                    } else if (fe.EnsureVinylShop()) {
+                        std::vector<uint32_t> skin;
+                        fe.ComposeVinylSkin(body, layers, skin);
+                        world.SetCarSkin(size_t(playerSkinIndex), CarSkin::DetectBodySlot(car.Model(), car.TriangleTextures(), fe.PreviewCarName()),
+                                         std::move(skin));
+                    }
+                }
+            }
             const float dt = (pausePkg || cribPkg) ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
             u32 pad = fe.GetJoyPadMask(0);
             for (const HeldPress &h : held)

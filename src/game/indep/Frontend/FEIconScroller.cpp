@@ -83,6 +83,7 @@ void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
         Option opt;
         opt.texHash = defs[i].texHash;
         opt.nameHash = defs[i].nameHash;
+        opt.text = defs[i].text;
         opt.disabled = defs[i].disabled;
         opt.obj = obj;
         opt.xPos = addPos;
@@ -114,6 +115,24 @@ void FEIconScroller::Bind(FEPackage *pkg, const std::vector<Def> &defs,
     Position();
 }
 
+void FEIconScroller::SetOptionText(size_t index, const std::string &text)
+{
+    if (index >= m_options.size())
+        return;
+    m_options[index].text = text;
+    if (index == m_selected && m_pkg)
+        UpdateSelection();
+}
+
+void FEIconScroller::SetOptionIcon(size_t index, uint32_t texHash)
+{
+    if (index >= m_options.size())
+        return;
+    m_options[index].texHash = texHash;
+    if (m_options[index].obj)
+        FENativeInterface::SetTextureHash(m_options[index].obj, texHash);
+}
+
 void FEIconScroller::AllowFade()
 {
     m_allowFade = true;
@@ -136,7 +155,7 @@ void FEIconScroller::HandleMessage(uint32_t msg, float dt)
         return;
     if (msg == FEStartupSequence::kMsgInitComplete) {
         // 0x0029d710: RefreshHeader() (0x0029de00) on FEHASH_INITCOMPLETE.
-        FENativeInterface::SetLanguageHash(m_pkg, 0x5e7b09c9, m_options[m_selected].nameHash);
+        RefreshTitle();
         Position();
     } else if (msg == FEStartupSequence::kMsgPadLeft || msg == FEStartupSequence::kMsgPadRight) {
         // 0x0029d710 -> 0x002d41e8 / 0x002d4208 -> 0x0029c718 (ScrollWrapped prev / next)
@@ -156,6 +175,16 @@ void FEIconScroller::HandleMessage(uint32_t msg, float dt)
     }
 }
 
+// 0x0029de00 (RefreshHeader): ICON_TITLE (0x5e7b09c9) shows the selected option's label, or its
+// text override.
+void FEIconScroller::RefreshTitle()
+{
+    if (!m_options[m_selected].text.empty())
+        FENativeInterface::SetString(m_pkg, 0x5e7b09c9, m_options[m_selected].text.c_str());
+    else
+        FENativeInterface::SetLanguageHash(m_pkg, 0x5e7b09c9, m_options[m_selected].nameHash);
+}
+
 void FEIconScroller::UpdateSelection()
 {
     // 0x0029ce70 (IconScroller::SetSelection)
@@ -169,8 +198,7 @@ void FEIconScroller::UpdateSelection()
     if (FEObject *focus = m_focusObject ? m_focusObject : m_options[m_selected].obj)
         m_pkg->SetCurrentButton(focus, true);
 
-    // 0x0029de00 (RefreshHeader): ICON_TITLE (0x5e7b09c9)
-    FENativeInterface::SetLanguageHash(m_pkg, 0x5e7b09c9, m_options[m_selected].nameHash);
+    RefreshTitle();
 
     // 0x002991c0 / 0x00299480 (ScrollBar::Refresh) and 0x0029d360 (UpdateArrows)
     FEObject *backing = m_pkg->FindObjectByHash(bStringHash("SCROLLBAR_BACKING"));

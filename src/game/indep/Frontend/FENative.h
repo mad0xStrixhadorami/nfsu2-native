@@ -20,6 +20,7 @@
 #include "game/indep/Frontend/TuneSystem.h"
 #include "game/indep/Frontend/DynoRatings.h"
 #include "game/indep/World/CarSkin.h"
+#include "game/indep/Frontend/VinylCatalog.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -213,6 +214,13 @@ public:
     // Vinyl layers drawn on the previewed car's paint skin (ISSUES #223); empty = plain paint.
     void SetPreviewVinyls(const std::vector<CarSkin::Layer> &layers) { m_previewVinyls = layers; }
     const std::vector<CarSkin::Layer> &PreviewVinyls() const { return m_previewVinyls; }
+    // Loads the previewed car's vinyl pack and builds the shop catalogue; false if the car has none.
+    bool EnsureVinylShop();
+    const VinylCatalog &VinylShop() const { return m_vinylCatalog; }
+    bool ComposeVinylSkin(SDL_Color body, const std::vector<CarSkin::Layer> &layers, std::vector<uint32_t> &rgba) const
+    {
+        return m_vinyls.Compose(body.r, body.g, body.b, layers, rgba);
+    }
     void SetPreviewTune(const std::vector<uint8_t> &tune) { m_previewTune = tune; }
     const std::vector<uint8_t> &PreviewTune() const { return m_previewTune; }
     const std::vector<uint16_t> &PreviewPerfParts() const { return m_previewPerfParts; }
@@ -440,6 +448,7 @@ private:
     DynoRatings::Limits m_dynoLimits;
     std::vector<CarSkin::Layer> m_previewVinyls;
     CarSkin::Vinyls m_vinyls;
+    VinylCatalog m_vinylCatalog;
     std::string m_vinylsCar;
     std::vector<uint32_t> m_skinPixels;
     std::string m_skinKey;

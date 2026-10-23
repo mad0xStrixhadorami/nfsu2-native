@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "Speed/Indep/Src/FEng/FEngine.h"
@@ -17,6 +18,7 @@ public:
         uint32_t texHash;  // icon texture
         uint32_t nameHash; // language label shown in ICON_TITLE
         bool disabled = false; // greyed (option +0x24, e.g. View Signed Sponsors with none signed)
+        std::string text;      // shown in ICON_TITLE instead of the language label when non-empty
     };
 
     // Bind to a loaded package and add options (IconScrollerMenu::AddOption for each Def).
@@ -40,6 +42,10 @@ public:
     // Start edge fades once the menu's intro animation has finished (0x0029dcb0 -> 0x0029d038).
     void AllowFade();
 
+    // Replaces an option's title text (and refreshes ICON_TITLE if it is the selected one).
+    void SetOptionText(size_t index, const std::string &text);
+    // Replaces an option's icon texture.
+    void SetOptionIcon(size_t index, uint32_t texHash);
     bool Empty() const { return m_options.empty(); }
     size_t Selected() const { return m_selected; }
     FEPackage *Package() const { return m_pkg; }
@@ -47,6 +53,7 @@ public:
 private:
     struct Option {
         uint32_t texHash = 0, nameHash = 0;
+        std::string text;
         FEObject *obj = nullptr;
         float xPos = 0, origW = 0, origH = 0;
         int origAlpha = 255;
@@ -56,6 +63,7 @@ private:
               size_t defaultSelection, const char *masterName, bool focusMaster,
               bool forceVisibleAlpha, float spacing = 40.0f);
     void UpdateSelection();
+    void RefreshTitle();
     void Position();
 
     FEPackage *m_pkg = nullptr;

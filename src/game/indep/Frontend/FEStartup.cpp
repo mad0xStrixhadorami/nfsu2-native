@@ -398,6 +398,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleGraphLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0) {
+        HandleVinylLayerLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0) {
         HandleDynoChartLoaded(pkg);
         return;
@@ -573,7 +577,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         strcasecmp(name, "UI_PerformanceTuning_NOS.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0 ||
-        strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0)
+        strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0 ||
+        strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -827,6 +832,20 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             }
         } else if ((pressed & FENativeInterface::kPadBack) && !chart)
             PopScreen();
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_ChooseVinylLayer.fng") == 0) {
+        static const struct { uint32_t bit, msg; } kLayerMap[] = {
+            {FENativeInterface::kPadUp, kMsgPadUp},           {FENativeInterface::kPadDown, kMsgPadDown},
+            {FENativeInterface::kPadLeft, kMsgPadLeft},       {FENativeInterface::kPadRight, kMsgPadRight},
+            {FENativeInterface::kPadLTrigger, kMsgPadLTrigger}, {FENativeInterface::kPadRTrigger, kMsgPadRTrigger},
+            {FENativeInterface::kPadAccept, kMsgPadAccept},   {FENativeInterface::kPadBack, kMsgPadBack}};
+        for (auto &m : kLayerMap)
+            if (pressed & m.bit) {
+                HandleVinylLayerMessage(m.msg, top);
+                break;
+            }
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -1938,6 +1957,10 @@ uint32_t UniversalPartsType(uint8_t partId)
 // fitted set on the preview (#185/#186/#190).
 void FEStartupSequence::HandlePartsBrowserLoaded(FEPackage *pkg)
 {
+    if (m_vinylBrowser) {
+        HandleVinylBrowserLoaded(pkg);
+        return;
+    }
     m_partsCategorySel = std::min(m_partsCategorySel, kPartsCardCount - 1);
     std::vector<FEIconScroller::Def> defs;
     for (const PartsCardDef &card : kPartsCards)
@@ -2380,6 +2403,10 @@ void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
 
 void FEStartupSequence::HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg)
 {
+    if (m_vinylBrowser) {
+        HandleVinylBrowserMessage(msg, pkg);
+        return;
+    }
     if (m_partsCategoryScroller.Empty() || m_partsCategoryScroller.Package() != pkg)
         return;
     if (msg == kMsgScreenTick) {
@@ -2442,7 +2469,7 @@ void FEStartupSequence::HandlePaintCategoryLoaded(FEPackage *pkg)
         const char *debug;
     } kOptions[] = {
         {0x550681a4, 0x6a4c46a6, false, "Paint"},
-        {0x55778e5a, 0x78deea1c, true, "Vinyls"},
+        {0x55778e5a, 0x78deea1c, false, "Vinyls"},
         {0xda1dae54, 0x4e933e83, true, "Decals"},
         // 0x002bb0f0 picks the label by game mode: 0x920dbb02 in career (DAT_00506b50 == 1),
         // otherwise 0xd132a6fe.  The port's car-shop path is the non-career one.
@@ -2486,6 +2513,8 @@ void FEStartupSequence::HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg)
         m_paintCategorySel = m_paintCategoryScroller.Selected();
         if (m_paintCategorySel == 0) {
             NavigateTo(pkg->GetName(), "UI_Paint.fng");
+        } else if (m_paintCategorySel == 1) {
+            NavigateTo(pkg->GetName(), "UI_ChooseVinylLayer.fng"); // 0x002a45e0
         } else {
             // 0x002a45e0 maps these to UI_ChooseVinylLayer.fng / UI_DecalMain.fng; neither screen
             // is ported yet, and Install/Purchase Setup has no ported target either.
@@ -2493,6 +2522,342 @@ void FEStartupSequence::HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg)
         }
         return;
     }
+}
+
+std::vector<FEObject *> ShippedOrClonedCards(FEPackage *pkg, size_t count, const char *prefix, float &centerX,
+                                             float &centerY, bool &shipped);
+
+// ---------------------------------------------------------------------------------------------
+// Graphics Shop: Vinyls (ISSUES #223).  Vinyls opens UI_ChooseVinylLayer.fng (0x002a45e0): four
+// layer cards (VINYL_LAYER_1..4 icons, shipped slots 0x4b4e3888..8b).  Accept opens the shared
+// UI_GenericParts_Browser in vinyl mode (DAT_0051456c == 2, 0x002a8430): the category cards are the
+// VINYL_GROUP_* icons and the item list the designs of the group.  Up / Down on the layer screen
+// step the colour scheme of the layer (the port's stand-in for the Repaint screen), Q / E (L1 / R1)
+// move the layer in the stack (Reorder Layers).  Prices are stand-ins (VinylCatalog::Price).
+namespace {
+constexpr uint32_t kMsgPadSquare = 0x5ca1ab1e; // the pad's square (keyboard X)
+constexpr uint32_t kVinylLayerIcon = 0x27b8f0dd; // VINYL_LAYER_1; _2.._4 follow
+using SkinLayer = Career::OwnedCar::VinylLayer;
+
+std::vector<CarSkin::Layer> ToSkinLayers(const std::vector<SkinLayer> &layers)
+{
+    std::vector<CarSkin::Layer> out;
+    for (const SkinLayer &l : layers) {
+        CarSkin::Layer s;
+        s.design = l.design;
+        for (int k = 0; k < 3; ++k)
+            for (int ch = 0; ch < 3; ++ch)
+                s.color[k][ch] = l.color[k][ch];
+        out.push_back(s);
+    }
+    return out;
+}
+
+std::string DisplayName(const std::string &design)
+{
+    std::string base = design;
+    char piece = 0;
+    if (base.size() > 1 && base.back() >= 'A' && base.back() <= 'C' && std::isdigit(static_cast<unsigned char>(base[base.size() - 2])))
+        piece = base.back(), base.pop_back();
+    std::string out;
+    bool up = true;
+    for (char ch : base) {
+        if (ch == '_')
+            out.push_back(' '), up = true;
+        else
+            out.push_back(up ? char(std::toupper(static_cast<unsigned char>(ch))) : char(std::tolower(static_cast<unsigned char>(ch)))), up = false;
+    }
+    if (piece)
+        out += std::string(" ") + piece;
+    return out;
+}
+} // namespace
+
+void FEStartupSequence::PreviewVinylWork()
+{
+    m_fe->SetPreviewVinyls(ToSkinLayers(m_vinylWork));
+}
+
+void FEStartupSequence::HandleVinylLayerLoaded(FEPackage *pkg)
+{
+    Career::OwnedCar *car = ShopCar();
+    m_vinylWork.clear();
+    if (car)
+        m_vinylWork = car->vinyls;
+    m_vinylLayer = std::min<int>(m_vinylLayer, Career::OwnedCar::kMaxVinylLayers - 1);
+    m_vinylBrowser = false;
+    m_fe->EnsureVinylShop();
+    std::vector<FEIconScroller::Def> defs;
+    for (int i = 0; i < Career::OwnedCar::kMaxVinylLayers; ++i)
+        defs.push_back({kVinylLayerIcon + uint32_t(i), 0, false, ""});
+    bool shipped = false;
+    float cx = 0, cy = -149.0f;
+    m_vinylLayerCards = ShippedOrClonedCards(pkg, defs.size(), "VINYL_LAYER_CARD_", cx, cy, shipped);
+    if (m_vinylLayerCards.size() != defs.size()) {
+        printf("[Vinyl] the layer screen has no card slots\n");
+        return;
+    }
+    m_vinylLayerScroller.SetupObjects(pkg, defs, m_vinylLayerCards, size_t(m_vinylLayer), "OPTION_MASTER");
+    if (!shipped)
+        m_vinylLayerScroller.SetLayoutCenter(cx, cy);
+    RefreshVinylLayers(pkg);
+    PreviewVinylWork();
+    printf("[Vinyl] layer screen: %zu layer(s) on %s, catalogue %zu designs\n", m_vinylWork.size(),
+           m_fe->PreviewCarName().c_str(), m_fe->VinylShop().Designs().size());
+}
+
+void FEStartupSequence::RefreshVinylLayers(FEPackage *pkg)
+{
+    for (int i = 0; i < Career::OwnedCar::kMaxVinylLayers; ++i)
+        m_vinylLayerScroller.SetOptionText(size_t(i), size_t(i) < m_vinylWork.size()
+                                                           ? "Layer " + std::to_string(i + 1) + ": " + DisplayName(m_vinylWork[size_t(i)].design)
+                                                           : "Layer " + std::to_string(i + 1) + ": Empty");
+    FENativeInterface::SetString(pkg, 0x2f5e7da3, "00000");
+}
+
+void FEStartupSequence::CycleVinylColors(int direction)
+{
+    Career::OwnedCar *car = ShopCar();
+    if (!car || size_t(m_vinylLayer) >= m_vinylWork.size())
+        return;
+    const size_t count = m_fe->Paint().Count(PaintCatalog::kVinyl);
+    if (count < 3)
+        return;
+    m_vinylScheme = int((m_vinylScheme + direction + int(count)) % int(count));
+    SkinLayer &layer = m_vinylWork[size_t(m_vinylLayer)];
+    for (int k = 0; k < 3; ++k) {
+        const PaintColor &pc = m_fe->Paint().At(PaintCatalog::kVinyl, (size_t(m_vinylScheme) * 5 + 3 + size_t(k) * 9) % count);
+        layer.color[k][0] = pc.r, layer.color[k][1] = pc.g, layer.color[k][2] = pc.b;
+    }
+    car->vinyls = m_vinylWork; // colours are free: kept as chosen
+    Career::SaveCareer(m_profile);
+    PreviewVinylWork();
+    printf("[Vinyl] layer %d colour scheme %d\n", m_vinylLayer + 1, m_vinylScheme);
+}
+
+void FEStartupSequence::HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_vinylLayerScroller.Empty() || m_vinylLayerScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_vinylLayerScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_vinylLayerScroller.HandleMessage(msg, 0.0f);
+        m_vinylLayerScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_vinylLayerScroller.HandleMessage(msg, 0.0f);
+        m_vinylLayer = int(m_vinylLayerScroller.Selected());
+        return;
+    }
+    if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        CycleVinylColors(msg == kMsgPadUp ? -1 : 1);
+        return;
+    }
+    if (msg == kMsgPadLTrigger || msg == kMsgPadRTrigger) { // Reorder Layers: swap with the neighbour
+        const int other = m_vinylLayer + (msg == kMsgPadLTrigger ? -1 : 1);
+        Career::OwnedCar *car = ShopCar();
+        if (car && other >= 0 && size_t(other) < m_vinylWork.size() && size_t(m_vinylLayer) < m_vinylWork.size()) {
+            std::swap(m_vinylWork[size_t(m_vinylLayer)], m_vinylWork[size_t(other)]);
+            car->vinyls = m_vinylWork;
+            Career::SaveCareer(m_profile);
+            RefreshVinylLayers(pkg);
+            PreviewVinylWork();
+            printf("[Vinyl] layers %d and %d swapped\n", m_vinylLayer + 1, other + 1);
+        }
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        if (Career::OwnedCar *car = ShopCar())
+            ApplyOwnedCarPreview(*car); // drop any unsaved preview
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        if (!m_fe->VinylShop().Designs().empty()) {
+            m_vinylBrowser = true;
+            m_vinylGroupSel = 0;
+            m_vinylSel = 0;
+            NavigateTo(pkg->GetName(), "UI_GenericParts_Browser.fng");
+        } else {
+            ShowMessageDialogText("This car has no vinyls");
+        }
+        return;
+    }
+}
+
+// The vinyl mode of UI_GenericParts_Browser.fng: category cards = groups, items = designs.
+void FEStartupSequence::HandleVinylBrowserLoaded(FEPackage *pkg)
+{
+    m_vinylGroups = m_fe->VinylShop().UsedGroups();
+    m_vinylGroupSel = std::min(m_vinylGroupSel, m_vinylGroups.empty() ? size_t(0) : m_vinylGroups.size() - 1);
+    std::vector<FEIconScroller::Def> defs;
+    for (int g : m_vinylGroups) {
+        FEIconScroller::Def d{VinylCatalog::Groups()[size_t(g)].icon, 0, false, ""};
+        d.text = VinylCatalog::Groups()[size_t(g)].debug;
+        for (char &ch : d.text)
+            if (ch == '_')
+                ch = ' ';
+        defs.push_back(d);
+    }
+    m_partsCategoryScroller.Setup(pkg, defs, m_vinylGroupSel, "CATEGORY_MASTER", "CATEGORY_ICON");
+    FENativeInterface::SetString(pkg, 0x42adb44c, "Vinyl Shop");
+    if (FEObject *info = pkg->FindObjectByHash(0x4a1316e9u)) {
+        FENativeInterface::SetObjectVisible(info, true);
+        if (FEObjData *data = info->GetObjData())
+            data->Col.a = 255;
+    }
+    RefreshVinylItems(pkg);
+}
+
+void FEStartupSequence::RefreshVinylItems(FEPackage *pkg)
+{
+    m_vinylItems.clear();
+    m_vinylItems.push_back(nullptr); // "No Vinyl": clears the layer
+    if (m_vinylGroupSel < m_vinylGroups.size())
+        for (const VinylDesign *d : m_fe->VinylShop().InGroup(m_vinylGroups[m_vinylGroupSel]))
+            m_vinylItems.push_back(d);
+    // Start on the design already fitted to the layer, if it is in this group.
+    m_vinylSel = 0;
+    if (size_t(m_vinylLayer) < m_vinylWork.size())
+        for (size_t i = 1; i < m_vinylItems.size(); ++i)
+            if (m_vinylItems[i]->name == m_vinylWork[size_t(m_vinylLayer)].design)
+                m_vinylSel = i;
+    const uint32_t icon = m_vinylGroupSel < m_vinylGroups.size() ? VinylCatalog::Groups()[size_t(m_vinylGroups[m_vinylGroupSel])].icon : 0;
+    std::vector<FEIconScroller::Def> defs(m_vinylItems.size(), FEIconScroller::Def{icon, 0, false, ""});
+    m_partsScroller.Setup(pkg, defs, m_vinylSel, "MINI_MASTER", "PARTS_ICON", 20.0f);
+    RefreshVinylInfo(pkg);
+}
+
+void FEStartupSequence::RefreshVinylInfo(FEPackage *pkg)
+{
+    const VinylDesign *d = m_vinylSel < m_vinylItems.size() ? m_vinylItems[m_vinylSel] : nullptr;
+    if (m_vinylGroupSel < m_vinylGroups.size()) {
+        std::string label = VinylCatalog::Groups()[size_t(m_vinylGroups[m_vinylGroupSel])].debug;
+        for (char &ch : label)
+            if (ch == '_')
+                ch = ' ';
+        FENativeInterface::SetString(pkg, 0x6c9e933e, label.c_str());
+    }
+    char price[32] = "$0", total[16] = "00000";
+    if (d) {
+        snprintf(price, sizeof price, "$%u", unsigned(VinylCatalog::Price(*d)));
+        snprintf(total, sizeof total, "%05u", unsigned(VinylCatalog::Price(*d)));
+    }
+    FENativeInterface::SetString(pkg, 0xd28b9316, d ? (d->set ? d->display + " (set)" : d->display).c_str() : "No Vinyl");
+    FENativeInterface::SetString(pkg, 0x380b632, price);
+    FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    // Preview: the work layers with this design on the edited layer.
+    std::vector<SkinLayer> preview = m_vinylWork;
+    if (d) {
+        const size_t count = m_fe->Paint().Count(PaintCatalog::kVinyl);
+        const char letters[3] = {'A', 'B', 'C'};
+        for (int piece = 0; piece < (d->set ? d->pieces : 1); ++piece) {
+            const size_t slot = size_t(m_vinylLayer) + size_t(piece);
+            if (slot >= size_t(Career::OwnedCar::kMaxVinylLayers))
+                break;
+            SkinLayer layer;
+            layer.design = d->set ? d->name + letters[piece] : d->name;
+            if (count >= 3)
+                for (int k = 0; k < 3; ++k) {
+                    const PaintColor &pc = m_fe->Paint().At(PaintCatalog::kVinyl, (slot * 5 + 3 + size_t(k) * 9) % count);
+                    layer.color[k][0] = pc.r, layer.color[k][1] = pc.g, layer.color[k][2] = pc.b;
+                }
+            if (preview.size() <= slot)
+                preview.resize(slot + 1);
+            preview[slot] = layer;
+        }
+    } else if (size_t(m_vinylLayer) < preview.size()) {
+        preview.erase(preview.begin() + m_vinylLayer);
+    }
+    m_fe->SetPreviewVinyls(ToSkinLayers(preview));
+}
+
+void FEStartupSequence::ApplyVinylDesign(FEPackage *)
+{
+    Career::OwnedCar *car = ShopCar();
+    const VinylDesign *d = m_vinylSel < m_vinylItems.size() ? m_vinylItems[m_vinylSel] : nullptr;
+    if (!car)
+        return;
+    const uint32_t price = d ? VinylCatalog::Price(*d) : 0;
+    if (int(price) > m_profile.money) {
+        ShowMessageDialog(kLabelNotEnoughBank);
+        return;
+    }
+    if (d) {
+        const size_t count = m_fe->Paint().Count(PaintCatalog::kVinyl);
+        const char letters[3] = {'A', 'B', 'C'};
+        for (int piece = 0; piece < (d->set ? d->pieces : 1); ++piece) {
+            const size_t slot = size_t(m_vinylLayer) + size_t(piece);
+            if (slot >= size_t(Career::OwnedCar::kMaxVinylLayers))
+                break;
+            SkinLayer layer;
+            layer.design = d->set ? d->name + letters[piece] : d->name;
+            if (count >= 3)
+                for (int k = 0; k < 3; ++k) {
+                    const PaintColor &pc = m_fe->Paint().At(PaintCatalog::kVinyl, (slot * 5 + 3 + size_t(k) * 9) % count);
+                    layer.color[k][0] = pc.r, layer.color[k][1] = pc.g, layer.color[k][2] = pc.b;
+                }
+            if (m_vinylWork.size() <= slot)
+                m_vinylWork.resize(slot + 1);
+            m_vinylWork[slot] = layer;
+        }
+    } else if (size_t(m_vinylLayer) < m_vinylWork.size()) {
+        m_vinylWork.erase(m_vinylWork.begin() + m_vinylLayer);
+    }
+    m_profile.money -= int(price);
+    car->vinyls = m_vinylWork;
+    Career::SaveCareer(m_profile);
+    printf("[Vinyl] layer %d: %s for $%u (money %d), %zu layer(s)\n", m_vinylLayer + 1, d ? d->name.c_str() : "cleared", price,
+           m_profile.money, m_vinylWork.size());
+    PreviewVinylWork();
+    m_vinylBrowser = false;
+    PopScreen();
+}
+
+void FEStartupSequence::HandleVinylBrowserMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_partsCategoryScroller.Empty() || m_partsCategoryScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_partsCategoryScroller.HandleMessage(msg, TickSeconds());
+        m_partsScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_partsCategoryScroller.HandleMessage(msg, 0.0f);
+        m_partsScroller.HandleMessage(msg, 0.0f);
+        m_partsCategoryScroller.AllowFade();
+        m_partsScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_partsCategoryScroller.HandleMessage(msg, 0.0f);
+        if (m_partsCategoryScroller.Selected() != m_vinylGroupSel) {
+            m_vinylGroupSel = m_partsCategoryScroller.Selected();
+            RefreshVinylItems(pkg);
+        }
+        return;
+    }
+    if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        m_partsScroller.HandleMessage(msg == kMsgPadUp ? kMsgPadLeft : kMsgPadRight, 0.0f);
+        if (m_partsScroller.Selected() != m_vinylSel) {
+            m_vinylSel = m_partsScroller.Selected();
+            RefreshVinylInfo(pkg);
+        }
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        PreviewVinylWork();
+        m_vinylBrowser = false;
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending)
+        ApplyVinylDesign(pkg);
 }
 
 // UI_Paint.fng (ctor 0x002bc1e0, AddOptions 0x002bcff8, fill 0x002bd868): the paint shop's colorable
@@ -3515,6 +3880,7 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewWideBodyPart(car.wideBody);
     m_fe->SetPreviewPerfParts(car.perfParts);
     m_fe->SetPreviewTune(car.tune);
+    m_fe->SetPreviewVinyls(ToSkinLayers(car.vinyls));
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use

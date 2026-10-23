@@ -657,6 +657,20 @@ std::vector<CarSkin::Layer> FENativeInterface::TestVinyls() const
     return layers;
 }
 
+bool FENativeInterface::EnsureVinylShop()
+{
+    if (m_previewCarName.empty())
+        return false;
+    if (m_vinylsCar != m_previewCarName) {
+        m_vinylsCar = m_previewCarName;
+        m_vinyls.Load(m_readFile(("CARS\\" + m_previewCarName + "\\VINYLS.BIN").c_str()), m_previewCarName);
+        m_vinylCatalog = VinylCatalog();
+        if (m_vinyls.Valid())
+            m_vinylCatalog.Build(*m_vinyls.Pack(), m_previewCarName);
+    }
+    return !m_vinylCatalog.Designs().empty();
+}
+
 // The preview's paint skin: the body colour with the vinyl layers over it (ISSUES #223).  Dev aid
 // NFSU2_VINYL_TEST="WILD_172A=ff0000,00ff00,0000ff;STRIPE_052A=..." puts layers on the car.
 void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
@@ -677,10 +691,7 @@ void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
                 key += "," + std::to_string(v);
     }
     if (key != m_skinKey) {
-        if (m_vinylsCar != m_previewCarName) {
-            m_vinylsCar = m_previewCarName;
-            m_vinyls.Load(m_readFile(("CARS\\" + m_previewCarName + "\\VINYLS.BIN").c_str()), m_previewCarName);
-        }
+        EnsureVinylShop();
         if (!m_vinyls.Compose(body.r, body.g, body.b, layers, m_skinPixels))
             fprintf(stderr, "[Vinyl] a design is missing from %s's pack\n", m_previewCarName.c_str());
         m_skinKey = key;
@@ -1362,6 +1373,8 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
             mask |= kPadAccept;
         if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER])
             mask |= kPadStart;
+        if (!typing && keys[SDL_SCANCODE_X])
+            mask |= kPadButton0; // the pad's square ("Repaint" in the vinyl shop)
         if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_ESCAPE])
             mask |= kPadBack;
         if ((!typing && keys[SDL_SCANCODE_Q]) || keys[SDL_SCANCODE_PAGEUP])
