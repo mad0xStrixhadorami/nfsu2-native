@@ -219,8 +219,10 @@ void Vehicle::CollideWorld(const TrackWorld &world, float dt)
         if (world.HitsWall(a.x, a.y, a.z, c.x, c.y, c.z, n)) {
             const Vec3 nn = {n[0], n[1], n[2]};
             const float vn = Dot(b.momentum, nn);
-            if (vn < 0)
+            if (vn < 0) {
+                m_wallImpact = std::max(m_wallImpact, -vn * b.invMass);
                 b.momentum = b.momentum - nn * vn;
+            }
             b.pos = b.pos + nn * 0.02f;
             UpdateDerived();
             return;

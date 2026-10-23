@@ -1430,6 +1430,17 @@ int main(int argc, char **argv)
                 } else {
                     car.Update(world, throttle, brake, steer, dt, true, power);
                 }
+                // Wall hits (ISSUES #221): the swept wall test's closing speed drives the crash sound.
+                {
+                    static Uint32 lastWallCrash = 0;
+                    const float wall = car.TakeWallImpact();
+                    if (wall > 2.0f && SDL_GetTicks() - lastWallCrash > 350) {
+                        engineSound.Crash(wall);
+                        lastWallCrash = SDL_GetTicks();
+                        if (getenv("NFSU2_COLLISION_DEBUG"))
+                            printf("[Collision] wall hit %.1f m/s\n", wall);
+                    }
+                }
                 // Drift race (ISSUES #116): score from the car's cornering, both for the player and
                 // the route-following test aid.
                 if (race.IsDrift())

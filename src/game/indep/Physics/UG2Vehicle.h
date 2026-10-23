@@ -61,6 +61,13 @@ public:
     // The car's rectangle in the ground plane: centre offset along the car's forward axis (from the
     // centre of mass) and half length / width, from the wheel hardpoints plus overhang.
     void Footprint(float &centreX, float &halfLength, float &halfWidth) const;
+    // Speed (m/s) of the hardest wall hit since the last call, 0 if none (read by the crash sound).
+    float TakeWallImpact()
+    {
+        const float v = m_wallImpact;
+        m_wallImpact = 0.0f;
+        return v;
+    }
     Vec3 ForwardAxis() const { return m_body.rot.r[0]; }
     Vec3 LeftAxis() const { return m_body.rot.r[1]; }
 
@@ -169,6 +176,7 @@ private:
         bool active = false;
     };
     Nitrous m_nos;
+    float m_wallImpact = 0.0f;
     void UpdateNitrous(float dt);
     Controls m_in;
     float m_accum = 0;

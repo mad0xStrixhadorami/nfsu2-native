@@ -50,6 +50,7 @@ public:
     bool NitrousActive() const { return m_ug2.NitrousActive(); }
     int NitrousLevel() const { return m_ug2.NitrousLevel(); }
     void AddNitrous(float fraction) { m_ug2.AddNitrous(fraction); }
+    float TakeWallImpact() { return m_ug2.Valid() ? m_ug2.TakeWallImpact() : 0.0f; }
     // The UG2 rigid body, or null for the arcade stand-in (car-to-car contacts, #219).
     UG2Physics::Vehicle *Body() { return m_ug2.Valid() ? &m_ug2 : nullptr; }
     const Performance &GetPerformance() const { return m_perf; }
