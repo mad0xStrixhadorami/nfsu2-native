@@ -84,6 +84,27 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     if (it != m_glTextures.end())
         return it->second;
     unsigned id = m_glWhite;
+    if (IsBeamTexture(hash) && m_textures.find(hash) == m_textures.end()) {
+        // Procedural light beam: the solids map V = 1 at the lamp and V = 0 at the far end, U across the cone.
+        constexpr int w = 32, h = 64;
+        std::vector<uint32_t> px(w * h);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const float fy = float(y) / (h - 1), fx = 2.0f * float(x) / (w - 1) - 1.0f;
+                const float a = 0.42f * std::pow(fy, 1.6f) * std::max(0.0f, 1.0f - fx * fx);
+                px[size_t(y) * w + x] = uint32_t(a * 255.0f) << 24 | 200u << 16 | 238u << 8 | 255u; // ABGR: warm white
+            }
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        m_glTextureMode[id] = 2; // additive
+        m_glTextures[hash] = id;
+        return id;
+    }
     auto src = m_textures.find(hash);
     DecodedTexture decoded;
     const TextureInfo *info = src != m_textures.end() ? &src->second.first->At(src->second.second) : nullptr;

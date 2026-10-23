@@ -29,6 +29,10 @@ public:
     // Parse a STREAM<region>.BUN image. Returns false if no scenery was found. neighbours: other
     // regions' streams, used only for solids the region's scenery names but does not contain
     // (ISSUES.md #121); they are not kept after loading.
+    // A texture pack (0xb3300000) joined to every following Load: the location's dynamic textures
+    // (TRACKS\\LOC<n>DYNTEX.BIN), which the region streams do not carry (ISSUES #254). Must be set before Load,
+    // because triangles resolve their texture at load time.
+    void SetExtraPack(std::vector<uint8_t> data) { m_extraPack = std::move(data); }
     bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
     // Replace the world with a standalone scene file (FRONTEND\\PLATFORMS\\*.BIN: an 0x80134000 solid list plus
     // its own 0xb3300000 texture pack, e.g. the career garage CRIB01.BIN, ISSUES #251). The solids keep their
@@ -175,6 +179,7 @@ private:
     int m_groundSource = 0;
     Camera m_start;
     size_t m_triangleCount = 0;
+    std::vector<uint8_t> m_extraPack;
     bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;
     size_t m_borrowedSolids = 0;
@@ -233,6 +238,9 @@ private:
         int vertices = 0;
         std::vector<GLRange> ranges; // per texture
     };
+    // Light-beam textures the packs do not carry (spotlights / light poles / bridge lights name 0x2e95ce7c and
+    // 0x2e95ce7d): drawn with a procedural additive gradient (ISSUES #254).
+    static bool IsBeamTexture(uint32_t hash) { return hash == 0x2e95ce7cu || hash == 0x2e95ce7du; }
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
     std::vector<uint32_t> m_glTextureStale; // skin hashes whose GL texture must be rebuilt
     std::map<uint32_t, std::vector<uint32_t>> m_skinPixels; // composed 512 x 512 skins by texture hash

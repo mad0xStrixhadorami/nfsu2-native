@@ -379,7 +379,8 @@ void TrackWorld::AddToCells(const Tri &w, const RTri &r, bool physics, bool barr
     cell.tris.push_back(w);
     cell.tris.back().phys = physics;
     cell.tris.back().barrier = barrier ? 1 : 0;
-    cell.render.push_back(r);
+    if (!barrier) // race barriers are invisible collision walls (their texture is not in any pack): physics only
+        cell.render.push_back(r);
     ++m_triangleCount;
 }
 
@@ -857,6 +858,13 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         else if (id == 0xb3300000)
             addPack(d, body, len);
     });
+    if (!m_extraPack.empty()) { // the location's dynamic textures (see SetExtraPack)
+        const uint8_t *e = m_extraPack.data();
+        ForEachChunk(e, 0, m_extraPack.size(), [&](uint32_t id, size_t body, size_t len) {
+            if (id == 0xb3300000)
+                addPack(e, body, len);
+        });
+    }
     for (const std::vector<uint8_t> *extra : neighbours)
         ForEachChunk(extra->data(), 0, extra->size(), [&](uint32_t id, size_t body, size_t len) {
             indexSolids(extra->data(), extra->size(), id, body, len);
@@ -958,6 +966,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         float cx, cy, z, yaw;
     };
     std::vector<RoadSpot> roads;
+    std::map<uint32_t, std::vector<std::string>> missingNames;
+    std::map<uint32_t, size_t> missingTex; // dev aid NFSU2_MISSING_TEX: unresolved texture hash -> triangles
     double sumX = 0, sumY = 0;
     size_t unresolved = 0;
 
@@ -1019,6 +1029,9 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                         }
                         fclose(f);
                         printf("[SolidDump] %s: %zu triangles\n", name, s.tris.size());
+                        for (uint32_t th : s.textures)
+                            printf("[SolidDump]   texture %08x %s %s\n", th, m_textures.count(th) ? "found" : "MISSING",
+                                   m_textures.count(th) ? m_textures[th].first->At(m_textures[th].second).name.c_str() : "");
                     }
                 }
                 if (getenv("NFSU2_SOLID_SCORE") && s.tris.size() >= 40) {
@@ -1061,7 +1074,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             if (const char *near = getenv("NFSU2_INST_NEAR")) {
                 float nx = 0, ny = 0, nr = 0;
                 if (sscanf(near, "%f,%f,%f", &nx, &ny, &nr) == 3 && std::hypot(pos[0] - nx, pos[1] - ny) < nr)
-                    printf("[Inst] %08x kind %d at %.0f %.0f %.0f tris %zu\n", it->first, int(kind), pos[0], pos[1], pos[2], s.tris.size());
+                    printf("[Inst] %08x %s kind %d at %.0f %.0f %.0f tris %zu\n", it->first, name, int(kind), pos[0], pos[1], pos[2], s.tris.size());
             }
             float m[9];
             for (int k = 0; k < 9; ++k)
@@ -1090,6 +1103,16 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 rt.tex = t.tex >= 0 && size_t(t.tex) < s.textures.size() && m_textures.count(s.textures[t.tex])
                              ? s.textures[t.tex]
                              : 0;
+                if (!rt.tex && t.tex >= 0 && size_t(t.tex) < s.textures.size() && IsBeamTexture(s.textures[t.tex]) &&
+                    !getenv("NFSU2_NO_BEAMS"))
+                    rt.tex = s.textures[t.tex];
+                if (!rt.tex && t.tex >= 0 && size_t(t.tex) < s.textures.size() && getenv("NFSU2_MISSING_TEX"))
+                {
+                    ++missingTex[s.textures[t.tex]];
+                    auto &names = missingNames[s.textures[t.tex]];
+                    if (names.size() < 6 && std::find(names.begin(), names.end(), std::string(name)) == names.end())
+                        names.push_back(name);
+                }
                 for (int k = 0; k < 3; ++k) {
                     const SolidMesh::Point &p = t.v[k];
                     RVertex &v = rt.v[k];
@@ -1137,6 +1160,42 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 neededTextures.erase(probe.At(i).nameHash);
             addPack(extra->data(), body, len);
         });
+    if (const char *pre = getenv("NFSU2_TEX_NAMES")) // dev aid: texture names starting with the prefix
+        for (const auto &pk : m_packs)
+            for (size_t i = 0; i < pk->Count(); ++i)
+                if (strncmp(pk->At(i).name.c_str(), pre, strlen(pre)) == 0)
+                {
+                    printf("[TexName] %08x %s %dx%d alpha %d/%d\n", pk->At(i).nameHash, pk->At(i).name.c_str(), pk->At(i).width,
+                           pk->At(i).height, pk->At(i).alphaUsage, pk->At(i).alphaBlend);
+                    DecodedTexture dt;
+                    if (const char *dir = getenv("NFSU2_TEX_DUMPDIR"); dir && pk->Decode(pk->At(i), dt)) { // RGBA as PPM + alpha PGM
+                        char path[512];
+                        snprintf(path, sizeof path, "%s/%s.ppm", dir, pk->At(i).name.c_str());
+                        if (FILE *f = fopen(path, "wb")) {
+                            fprintf(f, "P6 %d %d 255\n", dt.width, dt.height);
+                            for (uint32_t px : dt.rgba) {
+                                const uint8_t rgb[3] = {uint8_t(px), uint8_t(px >> 8), uint8_t(px >> 16)};
+                                fwrite(rgb, 1, 3, f);
+                            }
+                            fclose(f);
+                        }
+                        snprintf(path, sizeof path, "%s/%s_a.pgm", dir, pk->At(i).name.c_str());
+                        if (FILE *f = fopen(path, "wb")) {
+                            fprintf(f, "P5 %d %d 255\n", dt.width, dt.height);
+                            for (uint32_t px : dt.rgba)
+                                fputc(int(px >> 24), f);
+                            fclose(f);
+                        }
+                    }
+                }
+    for (const auto &mt : missingTex)
+        if (mt.second > 200)
+        {
+            printf("[MissingTex] %08x %zu triangles:", mt.first, mt.second);
+            for (const std::string &nm : missingNames[mt.first])
+                printf(" %s", nm.c_str());
+            printf("\n");
+        }
     printf("[World] %zu solids borrowed from neighbouring regions\n", m_borrowedSolids);
     printf("[World] %zu texture packs, %zu textures; strips: %lu exact topology, %lu approximated\n", m_packs.size(),
            m_textures.size(), SolidMesh::g_exactStrips, SolidMesh::g_approxStrips);

@@ -768,6 +768,12 @@ int main(int argc, char **argv)
             }
         for (const auto &n : neighbourData)
             neighbours.push_back(&n);
+        world.SetExtraPack({});
+        // The location's dynamic textures (TRACKS\\LOC<n>DYNTEX.BIN, an 0xb3300000 pack the region streams do not
+        // carry): the tree canopies and other foliage name textures that only live here (ISSUES #254).
+        if (region.size() >= 2 && region[0] == 'L' && isdigit(static_cast<unsigned char>(region[1])) &&
+            !getenv("NFSU2_NO_DYNTEX"))
+            world.SetExtraPack(ReadGameFile(*fs, (std::string("TRACKS\\LOC") + region[1] + "DYNTEX.BIN").c_str()));
         const bool loaded = !stream.empty() && world.Load(stream, neighbours);
         std::vector<std::vector<uint8_t>>().swap(neighbourData);
         if (!loaded) {
