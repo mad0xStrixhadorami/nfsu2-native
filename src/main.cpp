@@ -681,6 +681,18 @@ int main(int argc, char **argv)
     float physTestTime = 0;
     bool musicStarted = false;
     const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
+    if (const char *typeName = getenv("NFSU2_PART_DUMP")) { // dev aid: records of a car type, e.g. SKYLINE
+        const std::vector<CarPart> &ps = fe.Parts().Parts(bStringHash(typeName));
+        printf("[PartDump] %s: %zu records\n", typeName, ps.size());
+        std::map<int, int> byId;
+        for (const CarPart &cp : ps)
+            ++byId[cp.partId];
+        for (auto &kv : byId)
+            printf("[PartDump]   part id 0x%x: %d\n", kv.first, kv.second);
+        for (const CarPart &cp : ps)
+            if ((cp.partId >= 0x40 && cp.partId <= 0x43) || getenv("NFSU2_PART_DUMP_ALL"))
+                printf("[PartDump]   id 0x%x group %u level %u %s\n", cp.partId, cp.group, cp.level, cp.name.c_str());
+    }
     if (const char *ids = getenv("NFSU2_PERF_PARTINFO")) // dev aid: category / level of part ids, e.g. 15,19,24
         for (const char *s = ids; *s;) {
             const uint32_t id = uint32_t(strtoul(s, nullptr, 10));

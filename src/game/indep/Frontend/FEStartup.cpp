@@ -2920,6 +2920,43 @@ void FEStartupSequence::HandleVinylBrowserLoaded(FEPackage *pkg)
     RefreshVinylItems(pkg);
 }
 
+// Vinyl and decal prices come from the car-shop catalogue: GLOBALB type VINYL (part id 0x32) holds one
+// record per design with its shop group (0x002a2d38's numbering) and price tier, DECAL (0x34) one per
+// sponsor (#233).  A group's records share one tier, so the group's tier prices every design in it.
+uint32_t FEStartupSequence::VinylPriceOf(const VinylDesign &d)
+{
+    static const uint32_t kGroupIcons[28] = {0x695654a8, 0x2075eaf3, 0xf7352706, 0x4c12bc51, 0x16b5ce67, 0x6a2c32,
+                                             0x8a07001,  0x43a00acc, 0xf8148554, 0x4ef4919f, 0xf2173020, 0x8ca7c26b,
+                                             0x134c6830, 0x36da827b, 0x694ec516, 0x4eece261, 0x192d84da, 0x4bede425,
+                                             0x69580c2c, 0x31cfc477, 0x694fec66, 0xe22eb851, 0x93ec1ce9, 0x694ca0ca,
+                                             0x1b3a8dd3, 0x960dcab,  0xdd7673a,  0x1ba508fc};
+    const uint32_t icon = VinylCatalog::Groups()[size_t(d.group)].icon;
+    for (uint8_t g = 0; g < 28; ++g)
+        if (kGroupIcons[g] == icon)
+            for (const CarPart &p : m_fe->Parts().Parts(bStringHash("VINYL")))
+                if (p.group == g)
+                    if (const uint32_t price = m_fe->Parts().Price(p))
+                        return price;
+    return VinylCatalog::Price(d);
+}
+
+uint32_t FEStartupSequence::DecalPriceOf(const VinylDesign &d)
+{
+    auto norm = [](const std::string &s) {
+        std::string o;
+        for (char ch : s)
+            if (std::isalnum(static_cast<unsigned char>(ch)))
+                o.push_back(char(std::toupper(static_cast<unsigned char>(ch))));
+        return o;
+    };
+    const std::string want = norm(d.display.size() > 4 ? d.display.substr(4) : d.display); // "Aem Bilstein"
+    for (const CarPart &p : m_fe->Parts().Parts(bStringHash("DECAL")))
+        if (norm(p.name) == want)
+            if (const uint32_t price = m_fe->Parts().Price(p))
+                return price;
+    return 150u;
+}
+
 void FEStartupSequence::RefreshVinylItems(FEPackage *pkg)
 {
     m_vinylItems.clear();
@@ -2958,12 +2995,12 @@ void FEStartupSequence::RefreshVinylInfo(FEPackage *pkg)
     }
     char price[32] = "$0", total[16] = "00000";
     if (d) {
-        snprintf(price, sizeof price, "$%u", unsigned(VinylCatalog::Price(*d)));
-        snprintf(total, sizeof total, "%05u", unsigned(VinylCatalog::Price(*d)));
+        snprintf(price, sizeof price, "$%u", unsigned(VinylPriceOf(*d)));
+        snprintf(total, sizeof total, "%05u", unsigned(VinylPriceOf(*d)));
     }
     if (m_decalMode && d) { // sponsor decals cost a flat stand-in price
-        snprintf(price, sizeof price, "$%u", 150u);
-        snprintf(total, sizeof total, "%05u", 150u);
+        snprintf(price, sizeof price, "$%u", unsigned(DecalPriceOf(*d)));
+        snprintf(total, sizeof total, "%05u", unsigned(DecalPriceOf(*d)));
     }
     std::string title = d ? (d->set ? d->display + " (set)" : d->display) : (m_decalMode ? "No Decal" : "No Vinyl");
     if (m_decalMode && d)
@@ -3016,7 +3053,7 @@ void FEStartupSequence::ApplyVinylDesign(FEPackage *)
     const VinylDesign *d = m_vinylSel < m_vinylItems.size() ? m_vinylItems[m_vinylSel] : nullptr;
     if (!car)
         return;
-    const uint32_t price = m_decalMode ? (d ? 150u : 0u) : (d ? VinylCatalog::Price(*d) : 0);
+    const uint32_t price = m_decalMode ? (d ? DecalPriceOf(*d) : 0u) : (d ? VinylPriceOf(*d) : 0);
     if (int(price) > m_profile.money) {
         ShowMessageDialog(kLabelNotEnoughBank);
         return;

@@ -263,6 +263,8 @@ private:
         uint16_t index = 0;
         uint32_t icon = 0;
     };
+    uint32_t VinylPriceOf(const VinylDesign &d);
+    uint32_t DecalPriceOf(const VinylDesign &d);
     void RefreshRimList(FEPackage *pkg);
     void RefreshRimInfo(FEPackage *pkg);
     void BuyRim();
