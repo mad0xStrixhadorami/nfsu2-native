@@ -234,6 +234,9 @@ private:
         const std::vector<int8_t> *wheelOf = nullptr, *brakeOf = nullptr; // SetCarWheels
         float hub[12] = {}, spin = 0, steer = 0;
         float halfLen = 2.2f, halfWid = 1.0f; // model extent along the car's x (forward) and y (left), for the shadow
+        float shadowGrid[7][5] = {};       // smoothed ground heights under the shadow (0 = unset)
+        bool shadowGridSet = false;
+        float shadowZ = 1e9f;               // low-passed ground height under the car (shadow fallback, no flicker)
         float groundZ = 0.0f;              // lowest point of the car in the world (the shadow's height)
         std::vector<uint8_t> gloss;
     };

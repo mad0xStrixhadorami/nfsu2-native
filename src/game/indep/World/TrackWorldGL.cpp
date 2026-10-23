@@ -337,27 +337,61 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(-4.0f, -8.0f);
         glBindTexture(GL_TEXTURE_2D, m_glShadow);
-        for (const Car &car : m_cars) {
+        for (Car &car : m_cars) {
             if (car.render.empty() || car.groundZ > 1e8f)
                 continue;
             const float *m = car.xf;
+            if (std::hypot(m[3] - cam.x, m[7] - cam.y) > 70.0f)
+                continue; // far cars: no shadow (keeps the per-vertex ground queries cheap)
             float fx = m[0], fy = m[1], lx = m[4], ly = m[5]; // car x (forward) and y (left) axes in the world, flattened
             const float fl = std::max(1e-4f, std::hypot(fx, fy)), ll = std::max(1e-4f, std::hypot(lx, ly));
             fx /= fl, fy /= fl, lx /= ll, ly /= ll;
-            const float cx = m[3], cy = m[7], z = car.groundZ + 0.08f;
-            if (getenv("NFSU2_SHADOW_DEBUG"))
-                printf("[Shadow] car at %.2f %.2f %.2f groundZ %.2f half %.2f x %.2f\n", cx, cy, m[11], car.groundZ, car.halfLen, car.halfWid);
+            const float cx = m[3], cy = m[7];
+            // The shadow lies on the ground, not on the car's lowest vertex: that point moves with pitch, roll, the spin of
+            // a polygonal tyre and the steering, which made the shadow flicker in and out of the road. A low-passed
+            // height is the fallback where the world has no ground query (the garage room).
+            car.shadowZ = car.shadowZ > 1e8f ? car.groundZ : car.shadowZ + (car.groundZ - car.shadowZ) * 0.12f;
             const float hl = car.halfLen * 1.15f, hw = car.halfWid * 1.3f;
+            constexpr int NX = 6, NY = 4;
+            float gz[NX + 1][NY + 1];
+            float centreGround = car.shadowZ;
+            for (int i = 0; i <= NX; ++i)
+                for (int k = 0; k <= NY; ++k) {
+                    const float a = -hl + 2.0f * hl * float(i) / NX, b = -hw + 2.0f * hw * float(k) / NY;
+                    const float wx = cx + fx * a + lx * b, wy = cy + fy * a + ly * b;
+                    float z;
+                    if (!GroundHeight(wx, wy, m[11] + 0.6f, z) || std::fabs(z - car.shadowZ) > 1.5f)
+                        z = car.shadowZ;
+                    // Light smoothing against single-frame steps of the collision mesh; a real jump (> 0.4 m) snaps.
+                    if (car.shadowGridSet && std::fabs(z - car.shadowGrid[i][k]) < 0.4f)
+                        z = car.shadowGrid[i][k] + (z - car.shadowGrid[i][k]) * 0.35f;
+                    car.shadowGrid[i][k] = z;
+                    gz[i][k] = z;
+                    if (i == NX / 2 && k == NY / 2)
+                        centreGround = z;
+                }
+            car.shadowGridSet = true;
+            // Fade with the car's height above the road (jumps), full strength on the ground.
+            const float lift = std::max(0.0f, car.groundZ - centreGround);
+            const uint8_t alpha = uint8_t(255.0f * std::clamp(1.0f - lift / 1.6f, 0.0f, 1.0f));
+            if (getenv("NFSU2_SHADOW_DEBUG") && &car == &m_cars[0])
+                printf("[Shadow] old %.4f new %.4f lift %.3f\n", car.groundZ + 0.08f, centreGround + 0.06f, lift);
+            if (alpha == 0)
+                continue;
             std::vector<Vertex> q;
-            auto vert = [&](float a, float b, float u, float v) {
-                q.push_back({cx + fx * a + lx * b, cy + fy * a + ly * b, z, u, v, 0, 0, 0, 255});
+            auto vert = [&](int i, int k) {
+                const float a = -hl + 2.0f * hl * float(i) / NX, b = -hw + 2.0f * hw * float(k) / NY;
+                q.push_back({cx + fx * a + lx * b, cy + fy * a + ly * b, gz[i][k] + 0.06f, float(i) / NX, float(k) / NY, 0, 0, 0, alpha});
             };
-            vert(-hl, -hw, 0, 0), vert(hl, -hw, 1, 0), vert(hl, hw, 1, 1);
-            vert(-hl, -hw, 0, 0), vert(hl, hw, 1, 1), vert(-hl, hw, 0, 1);
+            for (int i = 0; i < NX; ++i)
+                for (int k = 0; k < NY; ++k) {
+                    vert(i, k), vert(i + 1, k), vert(i + 1, k + 1);
+                    vert(i, k), vert(i + 1, k + 1), vert(i, k + 1);
+                }
             glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &q[0].x);
             glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &q[0].u);
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &q[0].r);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glDrawArrays(GL_TRIANGLES, 0, GLsizei(q.size()));
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glDepthMask(GL_TRUE);
