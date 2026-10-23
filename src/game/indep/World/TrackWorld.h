@@ -91,15 +91,18 @@ public:
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
     void SetCarTransform(size_t car, const float m[12]);
-    // Wheel spin (ISSUES #257): the per-triangle wheel index of the car's model (-1 none; the vector must outlive the
-    // car), the four hubs' car-space (x, z), and the rolling angle applied by the next SetCarTransform.
-    void SetCarWheels(size_t car, const std::vector<int8_t> *wheelOf, const float (*hubs)[2], float angle)
+    // Wheel spin and steering (ISSUES #257 / #258): the per-triangle wheel and brake index of the car's model (-1 none; the
+    // vectors must outlive the car), the four hubs' car-space (x, y, z) as 12 floats, the rolling angle and the front
+    // wheels' steering angle, applied by the next SetCarTransform.
+    void SetCarWheels(size_t car, const std::vector<int8_t> *wheelOf, const std::vector<int8_t> *brakeOf, const float *hubs,
+                      float spin, float steer)
     {
-        if (car < m_cars.size()) {
-            m_cars[car].wheelOf = wheelOf;
-            for (int i = 0; i < 4 && hubs; ++i)
-                m_cars[car].hub[i][0] = hubs[i][0], m_cars[car].hub[i][1] = hubs[i][1];
-            m_cars[car].spin = angle;
+        if (car < m_cars.size() && hubs) {
+            Car &c = m_cars[car];
+            c.wheelOf = wheelOf, c.brakeOf = brakeOf;
+            for (int i = 0; i < 12; ++i)
+                c.hub[i] = hubs[i];
+            c.spin = spin, c.steer = steer;
         }
     }
 
@@ -225,8 +228,8 @@ private:
         std::vector<float> modelNormals; // car space, 9 floats per model triangle (built once)
         std::vector<float> normals, albedo;
         float xf[12] = {};                 // the car-to-world transform of the last SetCarTransform (row-major 3x4)
-        const std::vector<int8_t> *wheelOf = nullptr; // SetCarWheels
-        float hub[4][2] = {}, spin = 0;
+        const std::vector<int8_t> *wheelOf = nullptr, *brakeOf = nullptr; // SetCarWheels
+        float hub[12] = {}, spin = 0, steer = 0;
         float halfLen = 2.2f, halfWid = 1.0f; // model extent along the car's x (forward) and y (left), for the shadow
         float groundZ = 0.0f;              // lowest point of the car in the world (the shadow's height)
         std::vector<uint8_t> gloss;

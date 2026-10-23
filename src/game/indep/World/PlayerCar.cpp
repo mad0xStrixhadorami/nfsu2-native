@@ -625,7 +625,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triCaliper.resize(m_model.size(), 0);
     m_rideHeight = 0;
     m_wheelStart = m_model.size();
-    size_t wheelRange[4][2] = {};
+    size_t wheelRange[4][2] = {}, brakeRange[4][2] = {};
     if (frontWheel && wheels) {
         // Database placement: the wheel solid's detailed rim face is at y ~= 0 (normal -y) and a
         // flat backing quad at y ~= width, so the solid is a right-hand wheel (outboard -y) as
@@ -645,8 +645,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             if (spinSolid)
                 AddWheel(*spinSolid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
             wheelRange[i][1] = m_model.size();
-            m_hub[i][0] = w.x + (solid.bboxMin[0] + solid.bboxMax[0]) * 0.5f;
-            m_hub[i][1] = w.z + (solid.bboxMin[2] + solid.bboxMax[2]) * 0.5f;
+            m_hub[i * 3] = w.x + (solid.bboxMin[0] + solid.bboxMax[0]) * 0.5f;
+            m_hub[i * 3 + 1] = w.y; // the track position: the steering axis passes through the wheel's centre
+            m_hub[i * 3 + 2] = w.z + (solid.bboxMin[2] + solid.bboxMax[2]) * 0.5f;
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
         m_wheelRadius = wheels[0].radius;
@@ -664,8 +665,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             wheelRange[i][0] = m_model.size();
             AddWheel(ws, hubX[i], left ? outboard + ws.bboxMin[1] : -outboard - ws.bboxMin[1], z, left, m_model, m_triTex, m_triRim);
             wheelRange[i][1] = m_model.size();
-            m_hub[i][0] = hubX[i] + (ws.bboxMin[0] + ws.bboxMax[0]) * 0.5f;
-            m_hub[i][1] = z + (ws.bboxMin[2] + ws.bboxMax[2]) * 0.5f;
+            m_hub[i * 3] = hubX[i] + (ws.bboxMin[0] + ws.bboxMax[0]) * 0.5f;
+            m_hub[i * 3 + 1] = left ? outboard - 0.15f : -outboard + 0.15f;
+            m_hub[i * 3 + 2] = z + (ws.bboxMin[2] + ws.bboxMax[2]) * 0.5f;
         }
     }
     // AddWheel only appends the rim mask; pad the caliper mask with the wheel triangles before the
@@ -684,7 +686,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             const float outboard = std::fabs(w.y) + w.width * 0.5f;
             const float wheelY = left ? outboard + wheelSolid->bboxMin[1] : -outboard - wheelSolid->bboxMin[1];
             const float brakeY = left ? wheelY - 0.055f : wheelY + 0.055f;
+            brakeRange[i][0] = m_model.size();
             AddBrake(*brake, w.x, brakeY, w.z, left, m_model, m_triTex, m_triRim, m_triCaliper);
+            brakeRange[i][1] = m_model.size();
         }
     }
     // Installed aftermarket parts (#178).  Universal part files hold every style as a shop display
@@ -767,7 +771,11 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     for (int i = 0; i < 4; ++i)
         for (size_t t = wheelRange[i][0]; t < wheelRange[i][1] && t < m_triWheel.size(); ++t)
             m_triWheel[t] = int8_t(i);
-    m_wheelAngle = 0;
+    m_triBrake.assign(m_model.size(), -1);
+    for (int i = 0; i < 4; ++i)
+        for (size_t t = brakeRange[i][0]; t < brakeRange[i][1] && t < m_triBrake.size(); ++t)
+            m_triBrake[t] = int8_t(i);
+    m_wheelAngle = m_steerAngle = m_steerIn = 0;
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }
@@ -871,6 +879,7 @@ void PlayerCar::Place(float x, float y, float z, float yaw)
 void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, float steer, float dt, bool walls,
                        float power)
 {
+    m_steerIn = steer; // the visible road-wheel angle follows it (AdvanceWheels)
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
 

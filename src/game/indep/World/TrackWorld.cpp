@@ -552,17 +552,29 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     const bool roofed = car.roofs && car.roofs->size() == car.model->size();
     const bool engined = car.engines && car.engines->size() == car.model->size();
     const bool exhausted = car.exhausts && car.exhausts->size() == car.model->size();
-    const bool spinning = car.wheelOf && car.wheelOf->size() == car.model->size() && std::fabs(car.spin) > 1e-5f;
+    const bool haveWheels = car.wheelOf && car.wheelOf->size() == car.model->size();
+    const bool haveBrakes = car.brakeOf && car.brakeOf->size() == car.model->size();
     const float cs = std::cos(car.spin), sn = std::sin(car.spin);
+    const float cd = std::cos(car.steer), sd = std::sin(car.steer);
     for (size_t i : car.order) {
         SolidMesh::Triangle t = (*car.model)[i];
-        if (spinning && (*car.wheelOf)[i] >= 0) {
-            // Roll the wheel about its hub (axis along the car's Y): the top moves forward (+X) for a positive angle.
-            const float hx = car.hub[(*car.wheelOf)[i]][0], hz = car.hub[(*car.wheelOf)[i]][1];
+        const int wheel = haveWheels ? (*car.wheelOf)[i] : -1, brake = haveBrakes ? (*car.brakeOf)[i] : -1;
+        if (wheel >= 0 || brake >= 0) {
+            const int h = wheel >= 0 ? wheel : brake;
+            const float hx = car.hub[h * 3], hy = car.hub[h * 3 + 1], hz = car.hub[h * 3 + 2];
             for (SolidMesh::Point &p : t.v) {
-                const float rx = p.x - hx, rz = p.z - hz;
-                p.x = hx + rx * cs + rz * sn;
-                p.z = hz - rx * sn + rz * cs;
+                if (wheel >= 0 && std::fabs(car.spin) > 1e-5f) {
+                    // Roll about the hub (axis along the car's Y): the top moves toward +X for forward travel.
+                    const float rx = p.x - hx, rz = p.z - hz;
+                    p.x = hx + rx * cs + rz * sn;
+                    p.z = hz - rx * sn + rz * cs;
+                }
+                if (h < 2 && std::fabs(car.steer) > 1e-4f) {
+                    // The front wheels and brakes turn about the vertical axis through the hub (positive = left).
+                    const float rx = p.x - hx, ry = p.y - hy;
+                    p.x = hx + rx * cd - ry * sd;
+                    p.y = hy + rx * sd + ry * cd;
+                }
             }
         }
         float rgb[3];

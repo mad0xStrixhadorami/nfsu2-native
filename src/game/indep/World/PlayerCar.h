@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -135,14 +137,25 @@ public:
     const std::vector<uint8_t> &TriangleRoofScoops() const { return m_triRoof; }
     const std::vector<uint8_t> &TriangleEngines() const { return m_triEngine; }
     const std::vector<uint8_t> &TriangleExhausts() const { return m_triExhaust; }
-    // Wheel spin (ISSUES #257): the wheel (0..3, order FL FR RR RL) each Model() triangle belongs to (-1 = none), the
-    // hub's car-space (x, z) of each wheel, and the rolling angle in radians (speed / radius, integrated).
+    // Wheel spin and steering (ISSUES #257 / #258): the wheel (0..3, order FL FR RR RL) each Model() triangle belongs to
+    // (-1 = none; the tyre, rim and spinner pieces) and each brake triangle belongs to (-1 = none; it steers but does not
+    // spin), the hubs' car-space (x, y, z) as 12 floats, the rolling angle in radians (speed / radius, integrated) and the
+    // front wheels' steering angle (radians, positive = left).
     const std::vector<int8_t> &TriangleWheels() const { return m_triWheel; }
-    const float (*WheelHubs() const)[2] { return m_hub; }
+    const std::vector<int8_t> &TriangleBrakes() const { return m_triBrake; }
+    const float *WheelHubs() const { return m_hub.data(); }
     float WheelAngle() const { return m_wheelAngle; }
+    float WheelSteer() const { return m_steerAngle; }
     void AdvanceWheels(float dt)
     {
         m_wheelAngle = std::fmod(m_wheelAngle + m_speed / std::max(0.1f, m_wheelRadius) * dt, 6.2831853f);
+        // The road wheels follow the steering input with the same lock rule as the arcade model (less lock at speed),
+        // eased so a keyboard tap does not snap the wheels.
+        const float lock = 0.55f / (1.0f + std::fabs(m_speed) * 0.05f);
+        const float target = std::clamp(m_steerIn, -1.0f, 1.0f) * lock;
+        m_steerAngle += (target - m_steerAngle) * std::min(1.0f, std::max(dt, 0.0f) * 14.0f);
+        if (const char *t = getenv("NFSU2_STEER_TEST")) // dev aid: a fixed road-wheel angle in radians
+            m_steerAngle = float(atof(t));
     }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
@@ -189,9 +202,7 @@ public:
                                                  m_bodyStyles = other.m_bodyStyles,
                                                  m_rideHeight = other.m_rideHeight,
                                                  m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius,
-                                                 m_triWheel = other.m_triWheel, m_hub[0][0] = other.m_hub[0][0], m_hub[0][1] = other.m_hub[0][1],
-                                                 m_hub[1][0] = other.m_hub[1][0], m_hub[1][1] = other.m_hub[1][1], m_hub[2][0] = other.m_hub[2][0],
-                                                 m_hub[2][1] = other.m_hub[2][1], m_hub[3][0] = other.m_hub[3][0], m_hub[3][1] = other.m_hub[3][1]; }
+                                                 m_triWheel = other.m_triWheel, m_triBrake = other.m_triBrake, m_hub = other.m_hub; }
 
 private:
     void UpdateEngine(float throttle, float brake, float dt, float power);
@@ -213,9 +224,9 @@ private:
     float m_slip = 0;
     float m_rideHeight = 0;
     size_t m_wheelStart = 0;
-    std::vector<int8_t> m_triWheel;
-    float m_hub[4][2] = {};
-    float m_wheelAngle = 0;
+    std::vector<int8_t> m_triWheel, m_triBrake;
+    std::array<float, 12> m_hub{};
+    float m_wheelAngle = 0, m_steerAngle = 0, m_steerIn = 0;
     Performance m_perf;
     int m_gear = 1;
     float m_rpm = 0;
