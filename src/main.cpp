@@ -39,6 +39,7 @@
 #include "game/indep/Sound/UiSound.h"
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
+#include "game/indep/World/CarCollision.h"
 #include "game/indep/World/RaceRoute.h"
 #include "game/indep/World/Traffic.h"
 #include "game/indep/World/RaceSession.h"
@@ -1463,8 +1464,35 @@ int main(int argc, char **argv)
                                car.Yaw(), car.Speed(), nd);
                     }
                 }
+                // Dev aid NFSU2_COLLISION_TEST: the first opponent is held parked 45 m ahead of the
+                // player's start, off-centre by 0.6 m, so a straight run hits it.
+                if (getenv("NFSU2_COLLISION_TEST") && !opponentCars.empty() && race.GetPhase() == RaceSession::kRacing) {
+                    static bool set = false;
+                    static float px, py, pz, pyaw;
+                    if (!set) {
+                        set = true;
+                        pyaw = car.Yaw();
+                        px = car.X() + std::cos(pyaw) * 45.0f - std::sin(pyaw) * 0.6f;
+                        py = car.Y() + std::sin(pyaw) * 45.0f + std::cos(pyaw) * 0.6f;
+                        pz = car.Z();
+                    }
+                    opponentCars[0].Place(px, py, pz, pyaw);
+                }
                 for (size_t i = 0; i < cars.size(); ++i)
                     for (size_t j = i + 1; j < cars.size(); ++j) {
+                        // Rigid-body contacts when both cars have UG2 bodies (ISSUES #219); the arcade
+                        // fallback below handles cars without one.
+                        const float closing = ResolveCarContact(*cars[i], *cars[j]);
+                        if (getenv("NFSU2_COLLISION_DEBUG") && closing < 0.0f && i == 0 && j == 1) {
+                            static bool once = false;
+                            if (!once)
+                                once = true, printf("[Collision] cars 0/1 have no rigid body: %d %d\n", cars[0]->Body() != nullptr, cars[1]->Body() != nullptr);
+                        }
+                        if (closing >= 0.0f) {
+                            if (closing > 0.0f && getenv("NFSU2_COLLISION_DEBUG"))
+                                printf("[Collision] cars %zu/%zu closing %.1f m/s\n", i, j, closing);
+                            continue;
+                        }
                         float dx = cars[j]->X() - cars[i]->X(), dy = cars[j]->Y() - cars[i]->Y();
                         float d = std::hypot(dx, dy);
                         if (d >= 4.0f || d < 1e-3f || std::fabs(cars[j]->Z() - cars[i]->Z()) > 2.0f)

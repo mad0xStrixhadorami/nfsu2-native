@@ -719,6 +719,36 @@ bool Vehicle::Airborne() const
     return true;
 }
 
+Vec3 Vehicle::VelocityAt(const Vec3 &p) const
+{
+    return m_body.vel + Cross(m_body.omega, p - m_body.pos);
+}
+
+float Vehicle::InverseMassAlong(const Vec3 &p, const Vec3 &n) const
+{
+    const Vec3 rn = Cross(p - m_body.pos, n);
+    const Vec3 lb = ToBody(rn);
+    const Vec3 wb = {lb.x * m_body.invInertia.x, lb.y * m_body.invInertia.y, lb.z * m_body.invInertia.z};
+    return m_body.invMass + Dot(rn, ToWorld(wb));
+}
+
+void Vehicle::ApplyImpulse(const Vec3 &J, const Vec3 &p)
+{
+    m_body.momentum = m_body.momentum + J;
+    m_body.angMomentum = m_body.angMomentum + Cross(p - m_body.pos, J);
+    UpdateDerived();
+}
+
+void Vehicle::Footprint(float &centreX, float &halfLength, float &halfWidth) const
+{
+    // Wheel hardpoints are relative to the centre of mass (FL, FR, RR, RL).
+    const float front = m_wheel[0].local.x, rear = m_wheel[3].local.x;
+    const float track = m_wheel[0].local.y - m_wheel[1].local.y;
+    centreX = (front + rear) * 0.5f;
+    halfLength = (front - rear) * 0.5f + 0.95f; // overhang past the axles
+    halfWidth = track * 0.5f + 0.2f;            // body past the tyres
+}
+
 void Vehicle::ScaleSpeed(float f)
 {
     m_body.momentum = m_body.momentum * f;

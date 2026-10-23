@@ -50,6 +50,8 @@ public:
     bool NitrousActive() const { return m_ug2.NitrousActive(); }
     int NitrousLevel() const { return m_ug2.NitrousLevel(); }
     void AddNitrous(float fraction) { m_ug2.AddNitrous(fraction); }
+    // The UG2 rigid body, or null for the arcade stand-in (car-to-car contacts, #219).
+    UG2Physics::Vehicle *Body() { return m_ug2.Valid() ? &m_ug2 : nullptr; }
     const Performance &GetPerformance() const { return m_perf; }
     int Gear() const { return m_gear; }  // 1.. forward, -1 reverse, 0 neutral
     float Rpm() const { return m_rpm; }
@@ -144,8 +146,20 @@ public:
     float Speed() const { return m_speed; }
     float Slip() const { return m_slip; } // tyre slip 0..1 (cornering at the limit / hard braking)
     // Car-to-car contact (resolved by the caller): move without physics, scale the speed.
-    void Nudge(float dx, float dy) { m_x += dx, m_y += dy; }
-    void ScaleSpeed(float f) { m_speed *= f; }
+    // With a UG2 body these act on the body (its pose is rewritten from it every update).
+    void Nudge(float dx, float dy)
+    {
+        m_x += dx, m_y += dy;
+        if (m_ug2.Valid())
+            m_ug2.Nudge(dx, dy);
+    }
+    void ScaleSpeed(float f)
+    {
+        m_speed *= f;
+        if (m_ug2.Valid())
+            m_ug2.ScaleSpeed(f);
+    }
+    void AddSpeed(float dv) { m_speed += dv; } // arcade model: along the heading
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
                                                  m_triCaliper = other.m_triCaliper, m_triMirror = other.m_triMirror,

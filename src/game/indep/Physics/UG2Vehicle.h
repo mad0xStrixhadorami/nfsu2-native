@@ -49,6 +49,21 @@ public:
     void Nudge(float dx, float dy) { m_body.pos.x += dx, m_body.pos.y += dy; }
     void ScaleSpeed(float f);
 
+    // Rigid-body access for car-to-car contacts (ISSUES #219).  Positions and velocities are world
+    // space, mass in tonnes.
+    Vec3 CogPosition() const { return m_body.pos; }
+    Vec3 VelocityAt(const Vec3 &p) const;
+    float Mass() const { return m_body.mass; }
+    // Effective inverse mass along the unit direction n for an impulse at the world point p.
+    float InverseMassAlong(const Vec3 &p, const Vec3 &n) const;
+    // Adds the impulse J (tonne*m/s) at the world point p to the body's linear and angular momentum.
+    void ApplyImpulse(const Vec3 &J, const Vec3 &p);
+    // The car's rectangle in the ground plane: centre offset along the car's forward axis (from the
+    // centre of mass) and half length / width, from the wheel hardpoints plus overhang.
+    void Footprint(float &centreX, float &halfLength, float &halfWidth) const;
+    Vec3 ForwardAxis() const { return m_body.rot.r[0]; }
+    Vec3 LeftAxis() const { return m_body.rot.r[1]; }
+
     // Nitrous (ISSUES #217).  The tank holds `capacity` seconds (record +0x3b8, 4000 ticks per
     // second in the original) and drains in real time while a burst runs; its fraction (0.305400)
     // can be filled past 1 (up to 2 by 0x003054a8), and the burst level 1..3 comes from the fraction
