@@ -144,7 +144,7 @@ void TrackWorld::InitShaders()
     if (!GLShader::Load())
         return;
     m_progWorld = GLShader::Build("world", Shaders::kWorldVS, Shaders::kWorldFS);
-    m_progCar = GLShader::Build("car", Shaders::kCarVS, Shaders::kCarFS, {{1, "aNormal"}, {2, "aGloss"}});
+    m_progCar = GLShader::Build("car", Shaders::kCarVS, Shaders::kCarFS, {{1, "aNormal"}, {2, "aGloss"}, {3, "aAO"}});
     m_progBright = GLShader::Build("bright", Shaders::kPostVS, Shaders::kBrightFS);
     m_progBlur = GLShader::Build("blur", Shaders::kPostVS, Shaders::kBlurFS);
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
@@ -562,7 +562,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         struct CarVertex {
             float x, y, z, u, v;
             uint8_t r, g, b, a;
-            float nx, ny, nz, gloss;
+            float nx, ny, nz, gloss, ao;
         };
         static std::vector<CarVertex> cv;
         GLShader::Use(m_progCar);
@@ -573,22 +573,28 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progCar, "uFogEnd"), kDrawDistance);
         GLShader::EnableAttrib(1);
         GLShader::EnableAttrib(2);
+        GLShader::EnableAttrib(3);
+        const GLint blurLoc = GLShader::Uniform(m_progCar, "uBlur");
         for (const Car &car : m_cars) {
             if (car.render.empty())
                 continue;
             cv.clear();
             const bool lit = car.gloss.size() == car.render.size() && car.normals.size() == car.render.size() * 9 && !getenv("NFSU2_CAR_FLAT");
+            // Spoke blur: the faster the wheels turn the more the rim fades into a disc (full at ~12 turns per second).
+            GLShader::Set1f(blurLoc, std::clamp((std::fabs(car.spinRate) - 25.0f) / 55.0f, 0.0f, 1.0f));
             for (size_t ti = 0; ti < car.render.size(); ++ti) {
                 const RTri &t = car.render[ti];
                 const uint8_t g = lit ? car.gloss[ti] : 0;
                 for (int k = 0; k < 3; ++k) {
                     const RVertex &v = t.v[k];
-                    CarVertex o{v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a, 0, 0, 1, float(g)};
+                    CarVertex o{v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a, 0, 0, 1, float(g), 1.0f};
                     if (g) {
                         const float *a = &car.albedo[ti * 3], *n3 = &car.normals[ti * 9 + size_t(k) * 3];
                         o.r = uint8_t(std::clamp(a[0], 0.0f, 1.0f) * 255.0f), o.g = uint8_t(std::clamp(a[1], 0.0f, 1.0f) * 255.0f),
                         o.b = uint8_t(std::clamp(a[2], 0.0f, 1.0f) * 255.0f);
                         o.nx = n3[0], o.ny = n3[1], o.nz = n3[2];
+                        if (car.ao.size() == car.render.size() * 3)
+                            o.ao = car.ao[ti * 3 + size_t(k)];
                     }
                     cv.push_back(o);
                 }
@@ -598,6 +604,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(CarVertex), &cv[0].r);
             GLShader::AttribPointer(1, 3, GL_FLOAT, false, sizeof(CarVertex), &cv[0].nx);
             GLShader::AttribPointer(2, 1, GL_FLOAT, false, sizeof(CarVertex), &cv[0].gloss);
+            GLShader::AttribPointer(3, 1, GL_FLOAT, false, sizeof(CarVertex), &cv[0].ao);
             for (size_t first = 0; first < car.render.size();) {
                 size_t last = first;
                 while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
@@ -609,6 +616,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         }
         GLShader::DisableAttrib(1);
         GLShader::DisableAttrib(2);
+        GLShader::DisableAttrib(3);
         GLShader::Use(0);
     } else {
         for (const Car &car : m_cars) {
@@ -621,7 +629,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 for (int k = 0; k < 3; ++k) {
                     const RVertex &v = t.v[k];
                     uint8_t cr = v.r, cg = v.g, cb = v.b;
-                    if (lit && car.gloss[ti]) {
+                    if (lit && (car.gloss[ti] == 1 || car.gloss[ti] == 2)) {
                         // Per-vertex paint lighting: hemisphere ambient + sun diffuse + sun specular + a sky reflection with
                         // a Fresnel term (the original reflects an environment map on the body, ISSUES #253).
                         const float *n3 = &car.normals[ti * 9 + size_t(k) * 3];

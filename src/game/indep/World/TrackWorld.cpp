@@ -467,7 +467,8 @@ uint32_t TrackWorld::CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) c
 // Smooth per-vertex normals of a car model (car space): the area-weighted sum of the faces that meet at a position
 // and lie within ~60 degrees of this face, so the body's curvature shades smoothly while creases stay sharp.
 // Face normals are turned to point away from the model's centre (the body panels are not wound consistently).
-static void BuildSmoothNormals(const std::vector<SolidMesh::Triangle> &model, std::vector<float> &out)
+static void BuildSmoothNormals(const std::vector<SolidMesh::Triangle> &model, std::vector<float> &out, std::vector<float> &aoOut,
+                               const std::vector<int8_t> *wheelOf, const std::vector<int8_t> *brakeOf, const float *hub)
 {
     const size_t n = model.size();
     out.assign(n * 9, 0.0f);
@@ -493,8 +494,17 @@ static void BuildSmoothNormals(const std::vector<SolidMesh::Triangle> &model, st
         const float ux = t.v[1].x - t.v[0].x, uy = t.v[1].y - t.v[0].y, uz = t.v[1].z - t.v[0].z;
         const float vx = t.v[2].x - t.v[0].x, vy = t.v[2].y - t.v[0].y, vz = t.v[2].z - t.v[0].z;
         float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        const float cx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f - mid[0], cy = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f - mid[1],
-                    cz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f - mid[2];
+        // Wheels and brakes face away from their own hub (the radial tread, the outboard rim face), the rest of the car away
+        // from the model's centre.
+        int hubIdx = -1;
+        if (wheelOf && wheelOf->size() == n && (*wheelOf)[i] >= 0)
+            hubIdx = (*wheelOf)[i];
+        else if (brakeOf && brakeOf->size() == n && (*brakeOf)[i] >= 0)
+            hubIdx = (*brakeOf)[i];
+        const float rx0 = hubIdx >= 0 && hub ? hub[hubIdx * 3] : mid[0], ry0 = hubIdx >= 0 && hub ? hub[hubIdx * 3 + 1] : mid[1],
+                    rz0 = hubIdx >= 0 && hub ? hub[hubIdx * 3 + 2] : mid[2];
+        const float cx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f - rx0, cy = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f - ry0,
+                    cz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f - rz0;
         if (nx * cx + ny * cy + nz * cz < 0.0f)
             nx = -nx, ny = -ny, nz = -nz;
         fn[i * 3] = nx, fn[i * 3 + 1] = ny, fn[i * 3 + 2] = nz;
@@ -520,6 +530,24 @@ static void BuildSmoothNormals(const std::vector<SolidMesh::Triangle> &model, st
             out[i * 9 + k * 3] = sx / l, out[i * 9 + k * 3 + 1] = sy / l, out[i * 9 + k * 3 + 2] = sz / l;
         }
     }
+    // Ambient occlusion for the wheels: the deeper a point lies inside the rim (measured along the axle from the outboard
+    // lip) the darker it is.
+    aoOut.assign(n * 3, 1.0f);
+    if (wheelOf && wheelOf->size() == n && hub) {
+        float maxOff[4] = {-1e9f, -1e9f, -1e9f, -1e9f};
+        auto offset = [&](const SolidMesh::Point &p, int w) { return (p.y - hub[w * 3 + 1]) * (hub[w * 3 + 1] >= 0 ? 1.0f : -1.0f); };
+        for (size_t i = 0; i < n; ++i)
+            if ((*wheelOf)[i] >= 0)
+                for (int k = 0; k < 3; ++k)
+                    maxOff[(*wheelOf)[i]] = std::max(maxOff[(*wheelOf)[i]], offset(model[i].v[k], (*wheelOf)[i]));
+        for (size_t i = 0; i < n; ++i)
+            if ((*wheelOf)[i] >= 0)
+                for (int k = 0; k < 3; ++k) {
+                    const int w = (*wheelOf)[i];
+                    const float depth = maxOff[w] - offset(model[i].v[k], w);
+                    aoOut[i * 3 + size_t(k)] = 1.0f - 0.62f * std::clamp(depth / 0.17f, 0.0f, 1.0f);
+                }
+    }
 }
 
 void TrackWorld::SetCarTransform(size_t index, const float m[12])
@@ -531,8 +559,9 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.render.clear();
     car.tris.reserve(car.model->size());
     car.render.reserve(car.model->size());
-    if (car.modelNormals.size() != car.model->size() * 9) {
-        BuildSmoothNormals(*car.model, car.modelNormals);
+    if (car.modelNormals.size() != car.model->size() * 9 || car.normalsHadWheels != (car.wheelOf != nullptr)) {
+        BuildSmoothNormals(*car.model, car.modelNormals, car.modelAO, car.wheelOf, car.brakeOf, car.hub);
+        car.normalsHadWheels = car.wheelOf != nullptr;
         float lx = 0, ly = 0;
         for (const SolidMesh::Triangle &t : *car.model)
             for (const SolidMesh::Point &p : t.v)
@@ -544,6 +573,7 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.normals.clear();
     car.albedo.clear();
     car.gloss.clear();
+    car.ao.clear();
     const bool textured = car.textures && car.textures->size() == car.model->size();
     const bool rimmed = car.rims && car.rims->size() == car.model->size();
     const bool calipered = car.calipers && car.calipers->size() == car.model->size();
@@ -628,6 +658,11 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             skinned = true;
             gloss = 1;
         }
+        // Wheel materials (#264): the rim face is metal (3), the tyre rubber (4), a brake disc metal (5); calipers stay paint.
+        if (wheel >= 0)
+            gloss = (rimmed && (*car.rims)[i]) ? 3 : 4;
+        else if (brake >= 0 && !(calipered && (*car.calipers)[i]))
+            gloss = 5;
         Tri w;
         for (int k = 0; k < 3; ++k)
             for (int a = 0; a < 3; ++a)
@@ -649,9 +684,19 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         car.render.push_back(r);
         // World-space smooth normals (rotation of m) and the unlit colour, for RenderGL's per-vertex lighting.
         for (int k = 0; k < 3; ++k) {
-            const float *nc = &car.modelNormals[i * 9 + size_t(k) * 3];
+            float nc[3] = {car.modelNormals[i * 9 + size_t(k) * 3], car.modelNormals[i * 9 + size_t(k) * 3 + 1],
+                           car.modelNormals[i * 9 + size_t(k) * 3 + 2]};
+            if (wheel >= 0 && std::fabs(car.spin) > 1e-5f) { // the normals roll and steer with the wheel
+                const float nx = nc[0] * cs + nc[2] * sn, nz = -nc[0] * sn + nc[2] * cs;
+                nc[0] = nx, nc[2] = nz;
+            }
+            if ((wheel >= 0 || brake >= 0) && (wheel >= 0 ? wheel : brake) < 2 && std::fabs(car.steer) > 1e-4f) {
+                const float nx = nc[0] * cd - nc[1] * sd, ny = nc[0] * sd + nc[1] * cd;
+                nc[0] = nx, nc[1] = ny;
+            }
             for (int a = 0; a < 3; ++a)
                 car.normals.push_back(nc[0] * m[a] + nc[1] * m[4 + a] + nc[2] * m[8 + a]);
+            car.ao.push_back(car.modelAO.size() == car.model->size() * 3 ? car.modelAO[i * 3 + size_t(k)] : 1.0f);
         }
         car.albedo.push_back(rgb[0]);
         car.albedo.push_back(rgb[1]);

@@ -43,6 +43,8 @@ void main() {
 inline const char *kCarVS = R"(#version 120
 attribute vec3 aNormal;
 attribute float aGloss;
+attribute float aAO;
+varying float vAO;
 varying vec4 vColor;
 varying vec2 vUV;
 varying vec3 vNormal;
@@ -56,6 +58,7 @@ void main() {
     vNormal = aNormal;
     vPos = gl_Vertex.xyz;
     vGloss = aGloss;
+    vAO = aAO;
     vDist = length((gl_ModelViewMatrix * gl_Vertex).xyz);
 }
 )";
@@ -67,6 +70,8 @@ uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uTime;
+uniform float uBlur;
+varying float vAO;
 varying vec4 vColor;
 varying vec2 vUV;
 varying vec3 vNormal;
@@ -101,6 +106,46 @@ void main() {
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCam - vPos);
     vec3 L = normalize(vec3(0.40, 0.30, 0.866));
+    if (vGloss > 2.5) {
+        // ---- wheels (ISSUES #264): 3 alloy rim, 4 rubber tyre, 5 brake disc ----------------------------------------------
+        float NdV = max(dot(N, V), 0.0);
+        float NdL = max(dot(N, L), 0.0);
+        vec3 H = normalize(L + V);
+        float NdH = max(dot(N, H), 0.0);
+        vec3 R = reflect(-V, N);
+        vec3 env = environment(R);
+        vec3 col;
+        if (vGloss < 3.5) {
+            // alloy: metal reflection tinted by the rim paint, bevel highlights, occlusion deep in the barrel
+            vec3 paint = clamp(vColor.rgb, 0.0, 1.0);
+            vec3 F0 = mix(vec3(0.62), paint * 0.8 + 0.2, 0.5);
+            vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdV, 5.0);
+            float diffuse = 0.22 + 0.40 * NdL;
+            col = paint * diffuse * 0.9 + env * F * 2.1 + F0 * (pow(NdH, 90.0) * 1.6 + pow(NdH, 14.0) * 0.25) * (0.35 + 0.65 * NdL);
+            col *= vAO;
+            // spoke blur: at speed the spokes fade into a translucent disc of the average rim tone
+            vec3 disc = (paint * 0.35 + env * F0 * 0.35) * (0.55 + 0.45 * vAO);
+            col = mix(col, disc, uBlur * 0.8);
+        } else if (vGloss < 4.5) {
+            // rubber: near-black with the sidewall print kept, a broad grazing sheen and a faint tread glint
+            vec3 print = tex.rgb * vColor.rgb;
+            float luma = dot(print, vec3(0.299, 0.587, 0.114));
+            vec3 rubber = vec3(0.022, 0.022, 0.025) + vec3(luma) * 0.42;
+            float sheen = pow(1.0 - NdV, 3.0) * 0.14 + pow(NdH, 24.0) * 0.07;
+            col = rubber * (0.55 + 0.55 * NdL) + env * (0.03 + sheen) + vec3(sheen * 0.4);
+            col *= mix(1.0, vAO, 0.6);
+        } else {
+            // brake disc: brushed grey steel, darker inside the wheel
+            vec3 steel = vec3(0.34, 0.34, 0.36);
+            float groove = 0.9 + 0.1 * sin(length(vPos.xz) * 520.0);
+            vec3 F = vec3(0.5) + 0.5 * pow(1.0 - NdV, 5.0);
+            col = steel * (0.25 + 0.4 * NdL) * groove + env * F * 0.55 + vec3(pow(NdH, 40.0) * 0.5);
+            col *= 0.55 + 0.45 * vAO;
+        }
+        float fw = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+        gl_FragColor = vec4(mix(col, uFogColor, fw * fw * (3.0 - 2.0 * fw)), (vGloss < 3.5 || vGloss > 4.5) ? 1.0 : tex.a); // the tyre keeps its alpha-tested corners
+        return;
+    }
     float NdV = max(dot(N, V), 0.0);
     float NdL = max(dot(N, L), 0.0);
     bool glass = vGloss > 1.5;

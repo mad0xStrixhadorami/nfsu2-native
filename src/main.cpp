@@ -1261,6 +1261,7 @@ int main(int argc, char **argv)
                         g.Place(slot[0], slot[1], 0.15f, slot[2]);
                         float m[12];
                         g.Transform(m);
+                        world.SetCarWheels(idx, &g.TriangleWheels(), &g.TriangleBrakes(), g.WheelHubs(), 0.0f, 0.0f);
                         world.SetCarTransform(idx, m);
                         printf("[Garage] %s on disc %zu\n", oc.model.c_str(), garageCars.size());
                     }
@@ -1897,7 +1898,9 @@ int main(int argc, char **argv)
                     }
                     const float k = std::min(1.0f, 2.2f * std::max(dt, 0.016f));
                     fx += (tx - fx) * k, fy += (ty - fy) * k;
-                    const float a = -1.5707963f + 0.6f * std::sin(float(now) * 0.00035f);
+                    float a = -1.5707963f + 0.6f * std::sin(float(now) * 0.00035f);
+                    if (const char *ga = getenv("NFSU2_GARAGE_YAW")) // dev aid: a fixed camera angle (radians from the front view)
+                        a = -1.5707963f + float(atof(ga));
                     camera.x = fx + std::cos(a) * 7.0f;
                     camera.y = fy + std::sin(a) * 7.0f;
                     camera.z = car.Z() + 1.7f;

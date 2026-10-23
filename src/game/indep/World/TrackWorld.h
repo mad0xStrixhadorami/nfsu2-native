@@ -102,6 +102,15 @@ public:
             c.wheelOf = wheelOf, c.brakeOf = brakeOf;
             for (int i = 0; i < 12; ++i)
                 c.hub[i] = hubs[i];
+            const unsigned now = SDL_GetTicks();
+            if (c.prevTicks && now > c.prevTicks) { // angular speed from the angle change (the angle wraps at 2 pi)
+                float d = spin - c.prevSpin;
+                if (d > 3.1415927f) d -= 6.2831853f;
+                if (d < -3.1415927f) d += 6.2831853f;
+                const float rate = d / (float(now - c.prevTicks) * 0.001f);
+                c.spinRate += (rate - c.spinRate) * 0.25f;
+            }
+            c.prevSpin = spin, c.prevTicks = now;
             c.spin = spin, c.steer = steer;
         }
     }
@@ -229,7 +238,11 @@ private:
         // triangle), the unlit colour (3 floats) and the gloss class (0 none, 1 paint, 2 glass). RenderGL lights
         // glossy triangles with the camera known.
         std::vector<float> modelNormals; // car space, 9 floats per model triangle (built once)
-        std::vector<float> normals, albedo;
+        std::vector<float> modelAO;               // per model vertex, 3 per triangle (built with modelNormals)
+        std::vector<float> normals, albedo, ao; // ao: per vertex ambient occlusion (wheels: depth inside the rim), 3 per triangle
+        bool normalsHadWheels = false;           // modelNormals were built with the wheel hubs known (#264)
+        float prevSpin = 0, spinRate = 0;        // rad/s, smoothed: the wheel shader blurs the spokes with it
+        unsigned prevTicks = 0;
         float xf[12] = {};                 // the car-to-world transform of the last SetCarTransform (row-major 3x4)
         const std::vector<int8_t> *wheelOf = nullptr, *brakeOf = nullptr; // SetCarWheels
         float hub[12] = {}, spin = 0, steer = 0;
