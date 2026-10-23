@@ -120,6 +120,16 @@ void Traffic::Update(const TrackWorld &world, float dt, const std::vector<const 
         }
         if (m_net->NearJunction(car.X(), car.Y(), 22.0f))
             target = std::min(target, 7.0f); // ease through junctions
+        // Keep a gap to other traffic ahead in the same lane (the loop above covers only the player and rivals).
+        for (const Driver &o : m_drivers) {
+            if (&o == &d || o.link < 0)
+                continue;
+            const float ox = o.car->X() - car.X(), oy = o.car->Y() - car.Y();
+            const float fwd = ox * std::cos(car.Yaw()) + oy * std::sin(car.Yaw());
+            const float side = -ox * std::sin(car.Yaw()) + oy * std::cos(car.Yaw());
+            if (fwd > 0 && fwd < 22.0f && std::fabs(side) < 3.0f)
+                target = std::min(target, std::max(0.0f, (fwd - 7.0f) * 0.6f));
+        }
         // Signals (stand-in for TrafficIntersection, #220): each junction gives its direction axis the
         // green for 9 s, then the cross axis; a car approaching on a red axis stops 7 m short.
         const auto &junctions = m_net->Junctions();
