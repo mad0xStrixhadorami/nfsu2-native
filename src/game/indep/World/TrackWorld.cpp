@@ -462,6 +462,64 @@ uint32_t TrackWorld::CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) c
     return 0;
 }
 
+// Smooth per-vertex normals of a car model (car space): the area-weighted sum of the faces that meet at a position
+// and lie within ~60 degrees of this face, so the body's curvature shades smoothly while creases stay sharp.
+// Face normals are turned to point away from the model's centre (the body panels are not wound consistently).
+static void BuildSmoothNormals(const std::vector<SolidMesh::Triangle> &model, std::vector<float> &out)
+{
+    const size_t n = model.size();
+    out.assign(n * 9, 0.0f);
+    std::vector<float> fn(n * 3);
+    float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+    for (const SolidMesh::Triangle &t : model)
+        for (const SolidMesh::Point &p : t.v) {
+            const float c[3] = {p.x, p.y, p.z};
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::min(lo[a], c[a]);
+                hi[a] = std::max(hi[a], c[a]);
+            }
+        }
+    const float mid[3] = {(lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f};
+    std::unordered_map<int64_t, std::vector<uint32_t>> at;
+    auto key = [](const SolidMesh::Point &p) {
+        const int64_t x = int64_t(std::lround(p.x * 100.0f)), y = int64_t(std::lround(p.y * 100.0f)),
+                      z = int64_t(std::lround(p.z * 100.0f));
+        return (x & 0xfffff) | ((y & 0xfffff) << 20) | ((z & 0xfffff) << 40);
+    };
+    for (size_t i = 0; i < n; ++i) {
+        const SolidMesh::Triangle &t = model[i];
+        const float ux = t.v[1].x - t.v[0].x, uy = t.v[1].y - t.v[0].y, uz = t.v[1].z - t.v[0].z;
+        const float vx = t.v[2].x - t.v[0].x, vy = t.v[2].y - t.v[0].y, vz = t.v[2].z - t.v[0].z;
+        float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const float cx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f - mid[0], cy = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f - mid[1],
+                    cz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f - mid[2];
+        if (nx * cx + ny * cy + nz * cz < 0.0f)
+            nx = -nx, ny = -ny, nz = -nz;
+        fn[i * 3] = nx, fn[i * 3 + 1] = ny, fn[i * 3 + 2] = nz;
+        for (int k = 0; k < 3; ++k)
+            at[key(t.v[k])].push_back(uint32_t(i));
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const float *a = &fn[i * 3];
+        const float al = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        for (int k = 0; k < 3; ++k) {
+            float sx = 0, sy = 0, sz = 0;
+            for (uint32_t j : at[key(model[i].v[k])]) {
+                const float *b = &fn[j * 3];
+                const float bl = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+                if (al < 1e-12f || bl < 1e-12f)
+                    continue;
+                if ((a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (al * bl) > 0.5f)
+                    sx += b[0], sy += b[1], sz += b[2];
+            }
+            float l = std::sqrt(sx * sx + sy * sy + sz * sz);
+            if (l < 1e-12f)
+                sx = a[0], sy = a[1], sz = a[2], l = std::max(al, 1e-12f);
+            out[i * 9 + k * 3] = sx / l, out[i * 9 + k * 3 + 1] = sy / l, out[i * 9 + k * 3 + 2] = sz / l;
+        }
+    }
+}
+
 void TrackWorld::SetCarTransform(size_t index, const float m[12])
 {
     if (index >= m_cars.size())
@@ -471,6 +529,11 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.render.clear();
     car.tris.reserve(car.model->size());
     car.render.reserve(car.model->size());
+    if (car.modelNormals.size() != car.model->size() * 9)
+        BuildSmoothNormals(*car.model, car.modelNormals);
+    car.normals.clear();
+    car.albedo.clear();
+    car.gloss.clear();
     const bool textured = car.textures && car.textures->size() == car.model->size();
     const bool rimmed = car.rims && car.rims->size() == car.model->size();
     const bool calipered = car.calipers && car.calipers->size() == car.model->size();
@@ -484,19 +547,33 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         float rgb[3];
         bool skinned = false;
         uint32_t tex = CarMaterial(textured ? (*car.textures)[i] : 0, car.paint, rgb);
+        // Gloss class: the body paint (no texture, no fixed slot colour) is glossy, window slots reflect more.
+        uint8_t gloss = 0;
+        if (tex == 0) {
+            float tmp[3];
+            if (!CarMaterial::SlotColour(textured ? (*car.textures)[i] : 0, tmp))
+                gloss = 1;
+            else if (textured && ((*car.textures)[i] == CarMaterial::NameHash("WINDOW_FRONT") || (*car.textures)[i] == CarMaterial::NameHash("WINDOW_REAR") ||
+                                  (*car.textures)[i] == CarMaterial::NameHash("WINDOW_LEFT_FRONT") || (*car.textures)[i] == CarMaterial::NameHash("WINDOW_RIGHT_FRONT") ||
+                                  (*car.textures)[i] == CarMaterial::NameHash("WINDOW_LEFT_REAR") || (*car.textures)[i] == CarMaterial::NameHash("WINDOW_RIGHT_REAR")))
+                gloss = 2;
+        }
         if (spoilered && (*car.spoilers)[i]) {
             rgb[0] = car.spoilerPaint.r / 255.0f, rgb[1] = car.spoilerPaint.g / 255.0f,
             rgb[2] = car.spoilerPaint.b / 255.0f;
             tex = 0;
+            gloss = 1;
         } else if (mirrored && (*car.mirrors)[i]) {
             rgb[0] = car.mirrorPaint.r / 255.0f, rgb[1] = car.mirrorPaint.g / 255.0f,
             rgb[2] = car.mirrorPaint.b / 255.0f;
             tex = 0;
+            gloss = 1;
         } else if (rimmed && (*car.rims)[i]) {
             // The wheel texture's rim area is dark and would swallow the paint; draw the rim face
             // untextured so the chosen colour reads like the car-shop preview (#172).
             rgb[0] = car.rimPaint.r / 255.0f, rgb[1] = car.rimPaint.g / 255.0f, rgb[2] = car.rimPaint.b / 255.0f;
             tex = 0;
+            gloss = 0;
         } else if (calipered && (*car.calipers)[i]) {
             rgb[0] = car.caliperPaint.r / 255.0f, rgb[1] = car.caliperPaint.g / 255.0f,
             rgb[2] = car.caliperPaint.b / 255.0f;
@@ -516,6 +593,7 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             rgb[0] = rgb[1] = rgb[2] = 1.0f; // the skin carries the paint
             tex = car.skinHash;
             skinned = true;
+            gloss = 1;
         }
         Tri w;
         for (int k = 0; k < 3; ++k)
@@ -534,6 +612,16 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         }
         car.tris.push_back(w);
         car.render.push_back(r);
+        // World-space smooth normals (rotation of m) and the unlit colour, for RenderGL's per-vertex lighting.
+        for (int k = 0; k < 3; ++k) {
+            const float *nc = &car.modelNormals[i * 9 + size_t(k) * 3];
+            for (int a = 0; a < 3; ++a)
+                car.normals.push_back(nc[0] * m[a] + nc[1] * m[4 + a] + nc[2] * m[8 + a]);
+        }
+        car.albedo.push_back(rgb[0]);
+        car.albedo.push_back(rgb[1]);
+        car.albedo.push_back(rgb[2]);
+        car.gloss.push_back(gloss);
     }
 }
 
@@ -673,9 +761,10 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
                 RVertex &v = rt.v[k];
                 v.x = w.v[k * 3], v.y = w.v[k * 3 + 1], v.z = w.v[k * 3 + 2];
                 v.u = p.u, v.v = p.v;
+                static const float gain = getenv("NFSU2_SCENE_GAIN") ? float(atof(getenv("NFSU2_SCENE_GAIN"))) : 2.0f;
                 if (rt.tex) {
-                    v.r = uint8_t(std::min(255, p.r * 2)), v.g = uint8_t(std::min(255, p.g * 2));
-                    v.b = uint8_t(std::min(255, p.b * 2));
+                    v.r = uint8_t(std::min(255.0f, p.r * gain)), v.g = uint8_t(std::min(255.0f, p.g * gain));
+                    v.b = uint8_t(std::min(255.0f, p.b * gain));
                 } else {
                     v.r = w.shade[0], v.g = w.shade[1], v.b = w.shade[2];
                 }

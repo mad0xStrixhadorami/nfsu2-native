@@ -202,6 +202,12 @@ private:
         std::vector<size_t> order;  // model triangles grouped by texture
         std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
         std::vector<RTri> render;   // same, textured and lit, in `order`
+        // Per-vertex lighting data parallel to `render` (ISSUES #253): world-space smooth normals (9 floats per
+        // triangle), the unlit colour (3 floats) and the gloss class (0 none, 1 paint, 2 glass). RenderGL lights
+        // glossy triangles with the camera known.
+        std::vector<float> modelNormals; // car space, 9 floats per model triangle (built once)
+        std::vector<float> normals, albedo;
+        std::vector<uint8_t> gloss;
     };
     // Car material slot -> texture (0 = untextured) and base colour.
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;

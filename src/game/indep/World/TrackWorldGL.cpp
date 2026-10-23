@@ -286,9 +286,49 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         if (car.render.empty())
             continue;
         scratch.clear();
-        for (const RTri &t : car.render)
-            for (const RVertex &v : t.v)
-                scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
+        const bool lit = car.gloss.size() == car.render.size() && !getenv("NFSU2_CAR_FLAT");
+        for (size_t ti = 0; ti < car.render.size(); ++ti) {
+            const RTri &t = car.render[ti];
+            for (int k = 0; k < 3; ++k) {
+                const RVertex &v = t.v[k];
+                uint8_t cr = v.r, cg = v.g, cb = v.b;
+                if (lit && car.gloss[ti]) {
+                    // Per-vertex paint lighting: hemisphere ambient + sun diffuse + sun specular + a sky reflection with
+                    // a Fresnel term (the original reflects an environment map on the body, ISSUES #253).
+                    const float *n3 = &car.normals[ti * 9 + size_t(k) * 3];
+                    float nx = n3[0], ny = n3[1], nz = n3[2];
+                    const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    if (nl > 1e-6f)
+                        nx /= nl, ny /= nl, nz /= nl;
+                    float vx = cam.x - v.x, vy = cam.y - v.y, vz = cam.z - v.z;
+                    const float vl = std::max(1e-6f, std::sqrt(vx * vx + vy * vy + vz * vz));
+                    vx /= vl, vy /= vl, vz /= vl;
+                    constexpr float lx = 0.40f, ly = 0.30f, lz = 0.866f;
+                    const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+                    const float ndl = std::max(0.0f, (nx * lx + ny * ly + nz * lz) / ll);
+                    const float ndv = std::max(0.0f, nx * vx + ny * vy + nz * vz);
+                    const float hemi = 0.30f + 0.32f * (0.5f + 0.5f * nz);
+                    const float gl = car.gloss[ti] == 2 ? 1.0f : 0.6f;
+                    // Blinn specular
+                    float hx = lx / ll + vx, hy = ly / ll + vy, hz = lz / ll + vz;
+                    const float hl = std::max(1e-6f, std::sqrt(hx * hx + hy * hy + hz * hz));
+                    const float ndh = std::max(0.0f, (nx * hx + ny * hy + nz * hz) / hl);
+                    const float spec = std::pow(ndh, 48.0f) * 0.55f * gl;
+                    // Reflection of a sky gradient
+                    const float rz = 2.0f * ndv * nz - vz;
+                    const float sky = std::clamp(0.5f + 0.5f * rz, 0.0f, 1.0f);
+                    const float fres = (0.04f + 0.55f * std::pow(1.0f - ndv, 3.0f)) * gl;
+                    const float er = 0.10f + 0.55f * sky, eg = 0.11f + 0.64f * sky, eb = 0.13f + 0.80f * sky;
+                    const float diff = hemi + 0.62f * ndl;
+                    const float *alb = &car.albedo[ti * 3];
+                    auto mix = [&](float a, float e) {
+                        return uint8_t(std::clamp((a * diff * (1.0f - fres) + e * fres + spec) * 255.0f, 0.0f, 255.0f));
+                    };
+                    cr = mix(alb[0], er), cg = mix(alb[1], eg), cb = mix(alb[2], eb);
+                }
+                scratch.push_back({v.x, v.y, v.z, v.u, v.v, cr, cg, cb, v.a});
+            }
+        }
         glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &scratch[0].x);
         glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &scratch[0].u);
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &scratch[0].r);
