@@ -138,8 +138,12 @@ bool DecodeStrip(const uint8_t *d, size_t dataSize, size_t start, size_t size, u
     for (unsigned i = 0; i < nverts && i < out.size(); ++i) {
         Point &pt = out[out.size() - nverts + i];
         const Vec4s &uv = positions[0x1d - 5 + i / 2];
-        pt.u = uv.v[(i & 1) * 2] / 4096.0f;
-        pt.v = uv.v[(i & 1) * 2 + 1] / 4096.0f;
+        // The odd vertex of each qword stores its pair the other way round: (u0, v0, v1, u1). Found on the garage
+        // room (CRIB01: the same vertex read (u, v) in one strip and (v, u) in the next, ISSUES #252); it is the cause
+        // of the "smeared" world textures of #208.
+        const bool odd = (i & 1) != 0 && !getenv("NFSU2_UV_NOSWAP");
+        pt.u = uv.v[odd ? 3 : (i & 1) * 2] / 4096.0f;
+        pt.v = uv.v[odd ? 2 : (i & 1) * 2 + 1] / 4096.0f;
         if (haveColours && i < 32) {
             pt.r = colours[i][0], pt.g = colours[i][1], pt.b = colours[i][2], pt.a = colours[i][3];
         }

@@ -616,6 +616,26 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
             m_packs.push_back(std::move(pack));
         }
     });
+    if (const char *dir = getenv("NFSU2_SCENE_TEXDIR")) // dev aid: every texture of the scene as <dir>/<hash>.ppm
+        for (const auto &pack : m_packs)
+            for (size_t i = 0; i < pack->Count(); ++i) {
+                const TextureInfo &ti = pack->At(i);
+                DecodedTexture dt;
+                if (!pack->Decode(ti, dt))
+                    continue;
+                char path[512];
+                snprintf(path, sizeof path, "%s/%08x.ppm", dir, ti.nameHash);
+                if (FILE *f = fopen(path, "wb")) {
+                    fprintf(f, "P6 %d %d 255\n", dt.width, dt.height);
+                    for (uint32_t px : dt.rgba) {
+                        const uint8_t rgb[3] = {uint8_t(px), uint8_t(px >> 8), uint8_t(px >> 16)};
+                        fwrite(rgb, 1, 3, f);
+                    }
+                    fclose(f);
+                }
+                printf("[Scene] texture %08x '%s' %dx%d %d bpp alpha %d/%d\n", ti.nameHash, ti.name.c_str(), ti.width, ti.height,
+                       ti.bitsPerPixel, ti.alphaUsage, ti.alphaBlend);
+            }
     const std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(d, n);
     for (const SolidMesh::NamedSolid &s : solids) {
         ++m_instances;
@@ -626,6 +646,14 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
                     const SolidMesh::Point p = SolidMesh::TransformPoint(s, q);
                     const float c[3] = {p.x, p.y, p.z};
                     for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c[k]); hi[k] = std::max(hi[k], c[k]); }
+                }
+            if (getenv("NFSU2_SCENE_UV"))
+                for (size_t i = 0; i < s.tris.size() && i < 40; ++i) {
+                    const SolidMesh::Triangle &t = s.tris[i];
+                    printf("[SceneUV] %s tri %zu tex %d:", s.name.c_str(), i, t.tex);
+                    for (int k = 0; k < 3; ++k)
+                        printf("  (%.2f %.2f %.2f | %.3f %.3f)", t.v[k].x, t.v[k].y, t.v[k].z, t.v[k].u, t.v[k].v);
+                    printf("\n");
                 }
             printf("[Scene] solid %08x '%s' %zu tris bbox %.2f %.2f %.2f .. %.2f %.2f %.2f\n", s.hash, s.name.c_str(), s.tris.size(),
                    lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
