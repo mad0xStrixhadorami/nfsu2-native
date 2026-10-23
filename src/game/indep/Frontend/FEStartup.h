@@ -144,6 +144,7 @@ public:
     // A world session started from a career screen (m_raceMode 1 = Resume, 8 = new career's car
     // select); quick race uses 2/4 and never pays career money.
     bool IsCareerRun() const { return m_raceMode == 1 || m_raceMode == 8; }
+    const Career::Profile &CareerProfile() const { return m_profile; } // the garage room shows its cars (#252)
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
     // its purse/respect, marking it complete on a win. Called from the results screen.

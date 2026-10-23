@@ -635,6 +635,7 @@ int main(int argc, char **argv)
     PlayerCar car;
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
+    std::vector<PlayerCar> garageCars; // the career's other cars on the garage room's discs (#252)
     std::vector<AiDriver> ai;
     TrafficNet trafficNet;
     std::vector<PlayerCar> trafficCars;
@@ -1200,6 +1201,35 @@ int main(int argc, char **argv)
                 car.Place(0.0f, 5.4f, 0.15f, -1.5707963f); // nose toward the entrance
                 camera = TrackWorld::Camera();
                 camera.x = 0.0f, camera.y = -2.0f, camera.z = 1.8f, camera.yaw = 1.5707963f, camera.pitch = -0.1f;
+                // The other two discs hold the career's other garage cars (stock look plus their paint).
+                garageCars.clear();
+                garageCars.reserve(2); // the world keeps pointers to the models
+                if (cribSession || getenv("NFSU2_GARAGE_CARS")) {
+                    static const float kDisc[2][3] = {{4.7f, -2.7f, -1.15f}, {-4.7f, -2.7f, -2.0f}}; // x, y, yaw
+                    const Career::Profile &prof = startup.CareerProfile();
+                    for (size_t i = 0; i < prof.cars.size() && garageCars.size() < 2; ++i) {
+                        if (int(i) == prof.currentCar)
+                            continue;
+                        const Career::OwnedCar &oc = prof.cars[i];
+                        garageCars.emplace_back();
+                        PlayerCar &g = garageCars.back();
+                        PlayerCar::Wheel gw[4];
+                        if (!g.LoadModel(ReadCarGeometry(*fs, oc.model), fe.CarWheels(oc.model, gw) ? gw : nullptr)) {
+                            garageCars.pop_back();
+                            continue;
+                        }
+                        const SDL_Color paint = fe.ColorForPaint(oc.paintSet ? oc.paintSet : PaintCatalog::kGloss, oc.paint,
+                                                                 SDL_Color{40, 90, 200, 255});
+                        const size_t idx = world.AddCar(&g.Model(), &g.TriangleTextures(), paint, &g.TriangleRims());
+                        world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + oc.model + "\\TEXTURES.BIN").c_str()));
+                        const float *slot = kDisc[garageCars.size() - 1];
+                        g.Place(slot[0], slot[1], 0.15f, slot[2]);
+                        float m[12];
+                        g.Transform(m);
+                        world.SetCarTransform(idx, m);
+                        printf("[Garage] %s on disc %zu\n", oc.model.c_str(), garageCars.size());
+                    }
+                }
             }
         }
         if (const char *devPkg = getenv("NFSU2_WORLD_PKG")) { // dev aid: show an in-game bundle screen over the world
@@ -1810,13 +1840,30 @@ int main(int argc, char **argv)
                 camera.z = std::max(car.Z(), camGround) + kCamUp[camSetting];
                 camera.yaw = viewYaw;
                 camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
-                if (sceneMode && cribPkg) { // garage showroom: sway in front of the car on its disc
-                    const float cx = car.X(), cy = car.Y();
-                    const float a = -1.5707963f + 0.75f * std::sin(float(now) * 0.00035f);
-                    camera.x = cx + std::cos(a) * 7.0f;
-                    camera.y = cy + std::sin(a) * 7.0f;
+                if (sceneMode && cribPkg) {
+                    // Garage showroom: sway 7 m in front of a car on its disc. On the crib's own menu the focus
+                    // visits each car in the garage in turn (16 s round: the player's car 9 s, the others 3.5 s
+                    // each); the shop screens stay on the player's car.
+                    static float fx = 0, fy = 0;
+                    static bool fInit = false;
+                    float tx = car.X(), ty = car.Y();
+                    const bool topMenu = startup.LastMenu() && strcasecmp(startup.LastMenu(), "UI_CareerCrib.fng") == 0;
+                    if (topMenu && !garageCars.empty()) {
+                        const float phase = std::fmod(float(now) * 0.001f, 16.0f);
+                        const size_t which = phase < 9.0f ? 0 : phase < 12.5f ? 1 : 2;
+                        if (which >= 1 && which <= garageCars.size())
+                            tx = garageCars[which - 1].X(), ty = garageCars[which - 1].Y();
+                    }
+                    if (!fInit) {
+                        fx = tx, fy = ty, fInit = true;
+                    }
+                    const float k = std::min(1.0f, 2.2f * std::max(dt, 0.016f));
+                    fx += (tx - fx) * k, fy += (ty - fy) * k;
+                    const float a = -1.5707963f + 0.6f * std::sin(float(now) * 0.00035f);
+                    camera.x = fx + std::cos(a) * 7.0f;
+                    camera.y = fy + std::sin(a) * 7.0f;
                     camera.z = car.Z() + 1.7f;
-                    camera.yaw = std::atan2(cy - camera.y, cx - camera.x);
+                    camera.yaw = std::atan2(fy - camera.y, fx - camera.x);
                     camera.pitch = -0.1f;
                 }
             }
