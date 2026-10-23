@@ -29,11 +29,13 @@ public:
         // Options > Player / Gameplay (ISSUES #239): HUD elements and the minimap mode (0 off, 1 static, 2 rotate).
         bool showGauges = true, showPosition = true, showLapInfo = true, showLeaderboard = true;
         int raceMapMode = 2, exploreMapMode = 2;
+        float introSeconds = 0;   // the cinematic pre-race camera (ISSUES #265): the countdown starts after it
     };
     enum Phase { kCountdown, kRacing, kFinished };
 
     void Begin(FEPackage *hud, const Config &config);
     int m_gaugeLines = 8500;    // the dial's full scale in rpm (7500 / 8500 / 10500)
+    float m_intro = 0, m_introTotal = 0;
     bool m_gaugeSkinned = false; // the tachometer's custom textures are set (UpdateHud, ISSUES #260)
     // Advances the race; returns whether the player may drive. opponents: each opponent's race
     // distance (metres past the start line along the route) for the position display.
@@ -46,6 +48,11 @@ public:
     bool Running() const { return m_phase == kRacing; }
     float PlayerDistance() const { return RaceDistance(m_startS, m_progress); }
     Phase GetPhase() const { return m_phase; }
+    // The pre-race cinematic: while it runs the HUD is hidden, the countdown waits and the car is held.
+    bool InIntro() const { return m_phase == kCountdown && m_intro > 0.0f; }
+    float IntroElapsed() const { return m_introTotal - m_intro; }
+    float IntroTotal() const { return m_introTotal; }
+    void SkipIntro();
     float TotalTime() const { return m_totalTime; }
     float BestLap() const { return m_bestLap; }
 

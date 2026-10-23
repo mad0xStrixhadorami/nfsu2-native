@@ -43,6 +43,7 @@
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/CarCollision.h"
+#include "game/indep/World/IntroCamera.h"
 #include "game/indep/World/Minimap.h"
 #include "game/indep/World/RaceRoute.h"
 #include "game/indep/World/Traffic.h"
@@ -644,6 +645,7 @@ int main(int argc, char **argv)
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
     std::vector<std::vector<uint8_t>> hudTexturePacks; // kept alive: the front end keeps pointers into them
+    float introBars = 0.0f; // letterbox amount of the pre-race camera (#265)
     Minimap minimap; // the HUD's round map (#259)
     std::vector<uint32_t> minimapPixels;
     bool minimapBound = false;
@@ -829,6 +831,12 @@ int main(int argc, char **argv)
         raceConfig.type = startup.RaceType();
         if (const char *t = getenv("NFSU2_RACETYPE"))
             raceConfig.type = atoi(t);
+        // The cinematic pre-race camera (ISSUES #265): 7 s before the countdown for real races. Scripted test runs
+        // (autodrive, injected drive / input) keep the old 3 s start; NFSU2_INTRO=1 forces it, NFSU2_NO_INTRO=1 removes it.
+        raceConfig.introSeconds = (getenv("NFSU2_INTRO") || (!getenv("NFSU2_NO_INTRO") && !getenv("NFSU2_AUTODRIVE") &&
+                                                            !getenv("NFSU2_DRIVE") && !getenv("NFSU2_NOINPUT") && raceConfig.type != 2))
+                                      ? 7.0f
+                                      : 0.0f;
         for (const RaceInfo &r : fe.Races())
             if (r.number == raceNumber)
                 raceConfig.trackLength = float(r.length);
@@ -1879,6 +1887,35 @@ int main(int argc, char **argv)
                 camera.z = std::max(car.Z(), camGround) + kCamUp[camSetting];
                 camera.yaw = viewYaw;
                 camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
+                introBars = 0.0f;
+                if (race.InIntro() && !sceneMode) {
+                    const TrackWorld::Camera chaseCam = camera;
+                    const IntroCamera::Result shot = IntroCamera::Evaluate(race.IntroElapsed(), race.IntroTotal(),
+                                                                           {car.X(), car.Y(), car.Z(), car.Yaw()}, chaseCam);
+                    camera = shot.camera;
+                    introBars = shot.bars;
+                    // Keep the lens out of the buildings: pull the camera in along the line to the car until the segment
+                    // is clear of walls, and above the road.
+                    {
+                        const float ax = car.X(), ay = car.Y(), az = car.Z() + 0.7f;
+                        const float dx = camera.x - ax, dy = camera.y - ay, dz = camera.z - az;
+                        float k = 1.0f;
+                        for (; k > 0.18f; k -= 0.06f)
+                            if (!world.HitsWall(ax, ay, az, ax + dx * (k + 0.04f), ay + dy * (k + 0.04f), az + dz * (k + 0.04f)))
+                                break;
+                        static float smoothK = 1.0f; // eased so a passing pillar does not jerk the shot
+                        smoothK += (k - smoothK) * std::min(1.0f, 12.0f * std::max(dt, 0.016f));
+                        k = std::min(k, std::max(smoothK, k));
+                        camera.x = ax + dx * k, camera.y = ay + dy * k, camera.z = az + dz * k;
+                        float g = camera.z - 1.0f;
+                        if (world.GroundHeight(camera.x, camera.y, camera.z + 1.5f, g))
+                            camera.z = std::max(camera.z, g + 0.35f);
+                    }
+                    if ((pressed & FENativeInterface::kPadAccept) && race.IntroElapsed() > 0.8f)
+                        race.SkipIntro(); // Accept skips the cinematic (not the press that started the race)
+                } else {
+                    camera.fov = 70.0f;
+                }
                 if (sceneMode && cribPkg) {
                     // Garage showroom: sway 7 m in front of a car on its disc. On the crib's own menu the focus
                     // visits each car in the garage in turn (16 s round: the player's car 9 s, the others 3.5 s
@@ -2020,6 +2057,13 @@ int main(int argc, char **argv)
                     const SDL_Rect border{ix - k, iy - k, iw + 2 * k, ih + 2 * k};
                     SDL_RenderDrawRect(ren, &border);
                 }
+            }
+            if (introBars > 0.01f) { // the letterbox of the pre-race cinematic
+                const int bh = int(float(h) * 0.105f * introBars);
+                SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+                const SDL_Rect top{0, 0, w, bh}, bottom{0, h - bh, w, bh};
+                SDL_RenderFillRect(ren, &top);
+                SDL_RenderFillRect(ren, &bottom);
             }
             SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             engine->Render();

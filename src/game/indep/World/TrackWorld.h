@@ -24,6 +24,7 @@ public:
         float x = 0, y = 0, z = 0; // world position (Z up, metres)
         float yaw = 0;             // radians, 0 = +X
         float pitch = -0.12f;      // radians, negative looks down
+        float fov = 70.0f;         // horizontal field of view in degrees (the pre-race cameras change it, ISSUES #265)
     };
 
     // Parse a STREAM<region>.BUN image. Returns false if no scenery was found. neighbours: other

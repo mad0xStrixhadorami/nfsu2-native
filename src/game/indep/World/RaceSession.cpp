@@ -107,6 +107,7 @@ void RaceSession::Begin(FEPackage *hud, const Config &config)
     // Free run (type 9): drive at once, no countdown (ISSUES #118).
     m_phase = IsFreeRun() ? kRacing : kCountdown;
     m_countdown = IsFreeRun() ? 0.0f : 3.0f;
+    m_intro = m_introTotal = IsFreeRun() ? 0.0f : std::max(0.0f, m_config.introSeconds);
     m_goShown = 0;
     m_lap = 1;
     m_lapTime = m_totalTime = m_bestLap = m_lapDistance = 0;
@@ -430,6 +431,15 @@ void RaceSession::UpdateLine(const PlayerCar &car)
 
 bool RaceSession::Update(const PlayerCar &car, const std::vector<float> &opponents, float dt)
 {
+    if (m_phase == kCountdown && m_intro > 0.0f) { // the cinematic camera runs; nothing else moves
+        if (m_intro == m_introTotal && m_hud)
+            for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext())
+                FENativeInterface::SetObjectVisible(o, false);
+        m_intro -= dt;
+        if (m_intro <= 0.0f)
+            SkipIntro();
+        return false;
+    }
     if (m_phase == kCountdown) {
         m_countdown -= dt;
         if (m_countdown <= 0) {
@@ -673,5 +683,14 @@ void RaceSession::UpdateHud(const PlayerCar &car)
             snprintf(text, sizeof(text), "%d%s PLACE  %s", m_position,
                      kNth[m_position >= 1 && m_position <= 3 ? m_position : 0], FormatTime(m_totalTime).c_str());
         FENativeInterface::SetString(m_hud, kRaceOverMessage, text);
+    }
+}
+
+void RaceSession::SkipIntro()
+{
+    if (m_intro > 0.0f || m_introTotal > 0.0f) {
+        m_intro = 0.0f;
+        m_introTotal = 0.0f;
+        SetupHud(); // shows the HUD again
     }
 }

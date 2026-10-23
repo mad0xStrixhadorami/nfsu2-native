@@ -325,7 +325,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float r[3] = {sy, -cy, 0.0f};
     const float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
     const float c[3] = {cam.x, cam.y, cam.z};
-    const float tanHalf = std::tan(35.0f * 3.14159265f / 180.0f); // 70 degree horizontal FOV
+    const float tanHalf = std::tan(std::clamp(cam.fov, 20.0f, 120.0f) * 0.5f * 3.14159265f / 180.0f); // horizontal FOV (70 by default)
     const float aspect = float(height) / float(std::max(width, 1));
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
