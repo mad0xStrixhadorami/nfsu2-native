@@ -962,6 +962,8 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleDecalMainMessage(kMsgPadAccept, top);
         else if (pressed & FENativeInterface::kPadBack)
             HandleDecalMainMessage(kMsgPadBack, top);
+        else if (pressed & FENativeInterface::kPadButton0)
+            HandleDecalMainMessage(kMsgPadSquare, top); // "Decal Color"
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -3414,6 +3416,15 @@ void FEStartupSequence::HandleDecalMainMessage(uint32_t msg, FEPackage *pkg)
         m_vinylLayer = int(m_vinylLayerScroller.Selected());
         return;
     }
+    if (msg == kMsgPadSquare && !m_navPending) { // Decal Color: the slot's three colour regions (the shared repaint screen)
+        if (size_t(m_vinylLayer) < m_decalWork.size()) {
+            m_paintVinyl = true;
+            NavigateTo(pkg->GetName(), "UI_Paint.fng");
+        } else {
+            ShowMessageDialogText("This decal slot is empty");
+        }
+        return;
+    }
     if (msg == kMsgPadBack && !m_navPending) {
         if (Career::OwnedCar *car = ShopCar())
             ApplyOwnedCarPreview(*car);
@@ -3642,9 +3653,9 @@ void FEStartupSequence::RefreshSpoilerPreview()
 void FEStartupSequence::PreviewPaintPart(size_t part, uint32_t set, uint32_t index)
 {
     if (m_paintVinyl) {
-        if (part < 3 && size_t(m_vinylLayer) < m_vinylWork.size() && index > 0 && index <= m_fe->Paint().Count(set)) {
+        if (part < 3 && size_t(m_vinylLayer) < PaintLayers().size() && index > 0 && index <= m_fe->Paint().Count(set)) {
             const PaintColor &pc = m_fe->Paint().At(set, index - 1);
-            SkinLayer &layer = m_vinylWork[size_t(m_vinylLayer)];
+            SkinLayer &layer = PaintLayers()[size_t(m_vinylLayer)];
             layer.color[part][0] = pc.r, layer.color[part][1] = pc.g, layer.color[part][2] = pc.b;
             PreviewVinylWork();
         }
@@ -3672,7 +3683,7 @@ void FEStartupSequence::HandleVinylPaintLoaded(FEPackage *pkg)
 {
     Career::OwnedCar *car = ShopCar();
     if (car)
-        m_vinylWork = car->vinyls;
+        PaintLayers() = m_decalMode ? car->decals : car->vinyls;
     std::vector<FEIconScroller::Def> defs;
     std::vector<FEObject *> slots;
     for (int k = 0; k < 3; ++k) {
@@ -3687,8 +3698,8 @@ void FEStartupSequence::HandleVinylPaintLoaded(FEPackage *pkg)
         m_partSet[k] = PaintCatalog::kVinyl;
         m_partSel[k] = 0;
         m_partPaintIndex[k] = 0;
-        if (size_t(m_vinylLayer) < m_vinylWork.size() && count) { // the palette entry nearest the layer's colour
-            const SkinLayer &layer = m_vinylWork[size_t(m_vinylLayer)];
+        if (size_t(m_vinylLayer) < PaintLayers().size() && count) { // the palette entry nearest the layer's colour
+            const SkinLayer &layer = PaintLayers()[size_t(m_vinylLayer)];
             int best = 1 << 30;
             for (size_t i = 0; i < count; ++i) {
                 const PaintColor &pc = m_fe->Paint().At(PaintCatalog::kVinyl, i);
@@ -3761,9 +3772,9 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
     m_paintGridActive = true;
     ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
-    if (m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < m_vinylWork.size())
+    if (m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < PaintLayers().size())
         for (int ch = 0; ch < 3; ++ch)
-            m_vinylBackup[m_paintPart][ch] = m_vinylWork[size_t(m_vinylLayer)].color[m_paintPart][ch];
+            m_vinylBackup[m_paintPart][ch] = PaintLayers()[size_t(m_vinylLayer)].color[m_paintPart][ch];
     PreviewPaintPart(m_paintPart, m_paintSet, m_paintSel + 1);
     printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
            kPaintParts[m_paintPart].id, count);
@@ -3773,9 +3784,9 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
 {
     if (m_paintPart < kPaintPartCount)
         m_partSel[m_paintPart] = m_paintSel; // the original keeps the grid's cursor per filter
-    if (restorePreview && m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < m_vinylWork.size()) {
+    if (restorePreview && m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < PaintLayers().size()) {
         for (int ch = 0; ch < 3; ++ch)
-            m_vinylWork[size_t(m_vinylLayer)].color[m_paintPart][ch] = m_vinylBackup[m_paintPart][ch];
+            PaintLayers()[size_t(m_vinylLayer)].color[m_paintPart][ch] = m_vinylBackup[m_paintPart][ch];
         PreviewVinylWork();
     }
     if (restorePreview && !m_paintVinyl && m_paintPart == 0)
@@ -4024,7 +4035,7 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
     if (m_paintVinyl) { // a vinyl region colour: free, stored on the layer
         PreviewPaintPart(part, set, index);
         if (Career::OwnedCar *car = ShopCar(); car && part < 3) {
-            car->vinyls = m_vinylWork;
+            (m_decalMode ? car->decals : car->vinyls) = PaintLayers();
             Career::SaveCareer(m_profile);
             printf("[Vinyl] layer %d colour %zu = palette %u saved\n", m_vinylLayer + 1, part + 1, index);
         }

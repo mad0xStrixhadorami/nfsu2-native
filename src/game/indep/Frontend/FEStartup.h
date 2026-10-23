@@ -220,6 +220,7 @@ private:
     void RefreshGraph(FEPackage *pkg);
     // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
     void HandleVinylLayerLoaded(FEPackage *pkg);
+    std::vector<Career::OwnedCar::VinylLayer> &PaintLayers() { return m_decalMode ? m_decalWork : m_vinylWork; } // the layers the repaint edits
     void HandleSpecialtyLoaded(FEPackage *pkg);
     void HandleSpecialtyMessage(uint32_t msg, FEPackage *pkg);
     void PreviewSpecialty();
