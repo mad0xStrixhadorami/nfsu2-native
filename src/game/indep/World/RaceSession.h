@@ -26,6 +26,9 @@ public:
         // free projection would pick the nearest lap, not the one the race starts on.
         float startS = -1.0f;             // <0: project the car when the race begins
         int racers = 1;                   // player + opponents
+        // Options > Player / Gameplay (ISSUES #239): HUD elements and the minimap mode (0 off, 1 static, 2 rotate).
+        bool showGauges = true, showPosition = true, showLapInfo = true, showLeaderboard = true;
+        int raceMapMode = 2, exploreMapMode = 2;
     };
     enum Phase { kCountdown, kRacing, kFinished };
 

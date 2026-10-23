@@ -175,6 +175,21 @@ void RaceSession::SetupHud()
         if (FEObject *o = m_hud->FindObjectByHash(h))
             if (FEObjData *d = o->GetObjData())
                 d->Col.a = IsOutrun() ? 255 : 0;
+    // Player options hide whole HUD groups.
+    auto hide = [this](std::initializer_list<uint32_t> hashes) {
+        for (uint32_t h : hashes)
+            FENativeInterface::SetVisible(m_hud, h, false);
+    };
+    if (!m_config.showGauges)
+        hide({kGaugeCluster, kGaugeBacking});
+    if (!m_config.showPosition)
+        hide({kPosition, kPositionBacking});
+    if (!m_config.showLapInfo)
+        hide({kLapGroup, kLapTimeGroup});
+    if (!m_config.showLeaderboard)
+        hide({kLeaderBoardGroup});
+    if ((IsFreeRun() ? m_config.exploreMapMode : m_config.raceMapMode) == 0)
+        hide({kMinimapMask, kMinimapNorth, kTrackMap});
     // Free run keeps only the gauges and minimap (ISSUES #118).
     if (IsFreeRun())
         for (uint32_t h : {kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText,

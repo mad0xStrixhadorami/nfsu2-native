@@ -778,6 +778,12 @@ int main(int argc, char **argv)
             raceNumber = atoi(n);
         raceConfig = RaceSession::Config();
         raceConfig.laps = startup.RaceLaps();
+        raceConfig.showGauges = startup.ShowGauges();
+        raceConfig.showPosition = startup.ShowRacePosition();
+        raceConfig.showLapInfo = startup.ShowLapInfo();
+        raceConfig.showLeaderboard = startup.ShowLeaderboard();
+        raceConfig.raceMapMode = startup.RaceMapMode();
+        raceConfig.exploreMapMode = startup.ExploreMapMode();
         raceConfig.type = startup.RaceType();
         if (const char *t = getenv("NFSU2_RACETYPE"))
             raceConfig.type = atoi(t);

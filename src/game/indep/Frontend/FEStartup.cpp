@@ -143,6 +143,9 @@ FEStartupSequence::FEStartupSequence(FEngine *engine, FENativeInterface *fe, boo
     : m_engine(engine), m_fe(fe), m_isPal(isPal)
 {
     m_careerDifficulty = 1; // Medium
+    m_pGauges = m_pRacePosition = m_pLapInfo = m_pScore = m_pLeaderboard = true; // HUD elements on by default
+    m_exploreMapMode = m_raceMapMode = 2; // Rotate
+    m_pCamera = 3;                        // Far: the chase view the port always used
     m_speedoUnits = isPal ? 1 : 0; // PAL shows km/h by default (0x004f12e8: 0 MPH / 1 KM-H)
     LoadOptions();
     // 0x0023ae10: iterate the 12-entry region table and append non-empty package names.
