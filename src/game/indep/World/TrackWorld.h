@@ -91,6 +91,17 @@ public:
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
     void SetCarTransform(size_t car, const float m[12]);
+    // Wheel spin (ISSUES #257): the per-triangle wheel index of the car's model (-1 none; the vector must outlive the
+    // car), the four hubs' car-space (x, z), and the rolling angle applied by the next SetCarTransform.
+    void SetCarWheels(size_t car, const std::vector<int8_t> *wheelOf, const float (*hubs)[2], float angle)
+    {
+        if (car < m_cars.size()) {
+            m_cars[car].wheelOf = wheelOf;
+            for (int i = 0; i < 4 && hubs; ++i)
+                m_cars[car].hub[i][0] = hubs[i][0], m_cars[car].hub[i][1] = hubs[i][1];
+            m_cars[car].spin = angle;
+        }
+    }
 
     // Race barriers (XO_TrackBarrier* scenery) are kept out of the world until a race enables the
     // ones it needs (UG2 selects barrier groups per race; see ISSUES.md #107). keep(bbox[6]).
@@ -214,6 +225,8 @@ private:
         std::vector<float> modelNormals; // car space, 9 floats per model triangle (built once)
         std::vector<float> normals, albedo;
         float xf[12] = {};                 // the car-to-world transform of the last SetCarTransform (row-major 3x4)
+        const std::vector<int8_t> *wheelOf = nullptr; // SetCarWheels
+        float hub[4][2] = {}, spin = 0;
         float halfLen = 2.2f, halfWid = 1.0f; // model extent along the car's x (forward) and y (left), for the shadow
         float groundZ = 0.0f;              // lowest point of the car in the world (the shadow's height)
         std::vector<uint8_t> gloss;

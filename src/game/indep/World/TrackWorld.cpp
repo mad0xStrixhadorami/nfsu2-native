@@ -552,8 +552,19 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     const bool roofed = car.roofs && car.roofs->size() == car.model->size();
     const bool engined = car.engines && car.engines->size() == car.model->size();
     const bool exhausted = car.exhausts && car.exhausts->size() == car.model->size();
+    const bool spinning = car.wheelOf && car.wheelOf->size() == car.model->size() && std::fabs(car.spin) > 1e-5f;
+    const float cs = std::cos(car.spin), sn = std::sin(car.spin);
     for (size_t i : car.order) {
-        const SolidMesh::Triangle &t = (*car.model)[i];
+        SolidMesh::Triangle t = (*car.model)[i];
+        if (spinning && (*car.wheelOf)[i] >= 0) {
+            // Roll the wheel about its hub (axis along the car's Y): the top moves forward (+X) for a positive angle.
+            const float hx = car.hub[(*car.wheelOf)[i]][0], hz = car.hub[(*car.wheelOf)[i]][1];
+            for (SolidMesh::Point &p : t.v) {
+                const float rx = p.x - hx, rz = p.z - hz;
+                p.x = hx + rx * cs + rz * sn;
+                p.z = hz - rx * sn + rz * cs;
+            }
+        }
         float rgb[3];
         bool skinned = false;
         uint32_t tex = CarMaterial(textured ? (*car.textures)[i] : 0, car.paint, rgb);
@@ -695,9 +706,7 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
     m_panorama.clear();
     m_panoramaVertices = 0;
     m_barriers.clear();
-    m_packs.clear();
-    m_tpkData.clear();
-    m_textures.clear();
+    // The texture packs stay: the cars' own packs (tyres, badges) were added before the scene replaced the world.
     m_collision.clear();
     m_csections.clear();
     m_csectionGrid.clear();

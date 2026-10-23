@@ -625,6 +625,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triCaliper.resize(m_model.size(), 0);
     m_rideHeight = 0;
     m_wheelStart = m_model.size();
+    size_t wheelRange[4][2] = {};
     if (frontWheel && wheels) {
         // Database placement: the wheel solid's detailed rim face is at y ~= 0 (normal -y) and a
         // flat backing quad at y ~= width, so the solid is a right-hand wheel (outboard -y) as
@@ -639,9 +640,13 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             const SolidMesh::NamedSolid &solid = (i < 2 || !rearWheel) ? *frontWheel : *rearWheel;
             const float outboard = std::fabs(w.y) + w.width * 0.5f;
             const float yMin = solid.bboxMin[1];
+            wheelRange[i][0] = m_model.size();
             AddWheel(solid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
             if (spinSolid)
                 AddWheel(*spinSolid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
+            wheelRange[i][1] = m_model.size();
+            m_hub[i][0] = w.x + (solid.bboxMin[0] + solid.bboxMax[0]) * 0.5f;
+            m_hub[i][1] = w.z + (solid.bboxMin[2] + solid.bboxMax[2]) * 0.5f;
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
         m_wheelRadius = wheels[0].radius;
@@ -652,10 +657,16 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // same mirror/placement rule as above (rim face outboard on both sides).
         float outboard = std::max(0.3f, body->bboxMax[1] - 0.05f);
         float z = radius;
-        AddWheel(*frontWheel, front, outboard + frontWheel->bboxMin[1], z, true, m_model, m_triTex, m_triRim);
-        AddWheel(*frontWheel, front, -outboard - frontWheel->bboxMin[1], z, false, m_model, m_triTex, m_triRim);
-        AddWheel(*rearWheel, rear, outboard + rearWheel->bboxMin[1], z, true, m_model, m_triTex, m_triRim);
-        AddWheel(*rearWheel, rear, -outboard - rearWheel->bboxMin[1], z, false, m_model, m_triTex, m_triRim);
+        const float hubX[4] = {front, front, rear, rear};
+        for (int i = 0; i < 4; ++i) { // FL FR RR RL
+            const SolidMesh::NamedSolid &ws = i < 2 ? *frontWheel : *rearWheel;
+            const bool left = (i == 0 || i == 3);
+            wheelRange[i][0] = m_model.size();
+            AddWheel(ws, hubX[i], left ? outboard + ws.bboxMin[1] : -outboard - ws.bboxMin[1], z, left, m_model, m_triTex, m_triRim);
+            wheelRange[i][1] = m_model.size();
+            m_hub[i][0] = hubX[i] + (ws.bboxMin[0] + ws.bboxMax[0]) * 0.5f;
+            m_hub[i][1] = z + (ws.bboxMin[2] + ws.bboxMax[2]) * 0.5f;
+        }
     }
     // AddWheel only appends the rim mask; pad the caliper mask with the wheel triangles before the
     // brake triangles are appended, otherwise the caliper flags shift onto the first wheel faces.
@@ -752,6 +763,11 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triRoof.resize(m_model.size(), 0);
     m_triEngine.resize(m_model.size(), 0);
     m_triExhaust.resize(m_model.size(), 0);
+    m_triWheel.assign(m_model.size(), -1);
+    for (int i = 0; i < 4; ++i)
+        for (size_t t = wheelRange[i][0]; t < wheelRange[i][1] && t < m_triWheel.size(); ++t)
+            m_triWheel[t] = int8_t(i);
+    m_wheelAngle = 0;
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }

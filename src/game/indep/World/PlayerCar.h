@@ -1,4 +1,6 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -133,6 +135,15 @@ public:
     const std::vector<uint8_t> &TriangleRoofScoops() const { return m_triRoof; }
     const std::vector<uint8_t> &TriangleEngines() const { return m_triEngine; }
     const std::vector<uint8_t> &TriangleExhausts() const { return m_triExhaust; }
+    // Wheel spin (ISSUES #257): the wheel (0..3, order FL FR RR RL) each Model() triangle belongs to (-1 = none), the
+    // hub's car-space (x, z) of each wheel, and the rolling angle in radians (speed / radius, integrated).
+    const std::vector<int8_t> &TriangleWheels() const { return m_triWheel; }
+    const float (*WheelHubs() const)[2] { return m_hub; }
+    float WheelAngle() const { return m_wheelAngle; }
+    void AdvanceWheels(float dt)
+    {
+        m_wheelAngle = std::fmod(m_wheelAngle + m_speed / std::max(0.1f, m_wheelRadius) * dt, 6.2831853f);
+    }
     // Model() triangles from this index on are the four wheels.
     size_t WheelTrianglesStart() const { return m_wheelStart; }
     // Body-panel styles actually present in the loaded car file (#192).  The shop hides catalogue
@@ -177,7 +188,10 @@ public:
                                                  m_triEngine = other.m_triEngine, m_triExhaust = other.m_triExhaust,
                                                  m_bodyStyles = other.m_bodyStyles,
                                                  m_rideHeight = other.m_rideHeight,
-                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius; }
+                                                 m_wheelStart = other.m_wheelStart, m_wheelRadius = other.m_wheelRadius,
+                                                 m_triWheel = other.m_triWheel, m_hub[0][0] = other.m_hub[0][0], m_hub[0][1] = other.m_hub[0][1],
+                                                 m_hub[1][0] = other.m_hub[1][0], m_hub[1][1] = other.m_hub[1][1], m_hub[2][0] = other.m_hub[2][0],
+                                                 m_hub[2][1] = other.m_hub[2][1], m_hub[3][0] = other.m_hub[3][0], m_hub[3][1] = other.m_hub[3][1]; }
 
 private:
     void UpdateEngine(float throttle, float brake, float dt, float power);
@@ -199,6 +213,9 @@ private:
     float m_slip = 0;
     float m_rideHeight = 0;
     size_t m_wheelStart = 0;
+    std::vector<int8_t> m_triWheel;
+    float m_hub[4][2] = {};
+    float m_wheelAngle = 0;
     Performance m_perf;
     int m_gear = 1;
     float m_rpm = 0;
