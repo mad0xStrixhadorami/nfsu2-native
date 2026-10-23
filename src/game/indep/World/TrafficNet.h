@@ -20,7 +20,7 @@ public:
     const std::vector<Link> &Links() const { return m_links; }
     // Intersection centres (chunk 0x3414a, 100-byte records: u32 type (6/20); float centre x, y; float dir x, y;
     // float id; ...; u16 arm count (+0x40) = 4, s16 record size (+0x42); then 4 arms of 2 points).
-    struct Junction { float x, y; };
+    struct Junction { float x, y, dx, dy; }; // dx, dy: the record's direction vector (unit, 0 if absent)
     const std::vector<Junction> &Junctions() const { return m_junctions; }
     bool NearJunction(float x, float y, float radius) const;
     // Position and unit direction at distance t along link i.

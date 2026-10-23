@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "game/indep/World/TrackWorld.h"
 
@@ -60,10 +62,18 @@ void Traffic::Update(const TrackWorld &world, float dt, const std::vector<const 
 {
     if (!m_net || !m_net->Valid() || others.empty())
         return;
+    m_clock += dt;
     m_px = others[0]->X();
     m_py = others[0]->Y();
     m_pz = others[0]->Z();
     const auto &links = m_net->Links();
+    if (getenv("NFSU2_TRAFFIC_DEBUG") && int(m_clock) != m_lastDebug && int(m_clock) % 5 == 0) {
+        m_lastDebug = int(m_clock);
+        int stopped = 0;
+        for (const Driver &d : m_drivers)
+            stopped += d.link >= 0 && d.car->Speed() < 0.8f;
+        printf("[Traffic] t=%d: %d of %zu stopped\n", m_lastDebug, stopped, m_drivers.size());
+    }
     for (Driver &d : m_drivers) {
         PlayerCar &car = *d.car;
         bool initial = d.link < 0 && car.X() == 0.0f && car.Y() == 0.0f;
@@ -110,6 +120,23 @@ void Traffic::Update(const TrackWorld &world, float dt, const std::vector<const 
         }
         if (m_net->NearJunction(car.X(), car.Y(), 22.0f))
             target = std::min(target, 7.0f); // ease through junctions
+        // Signals (stand-in for TrafficIntersection, #220): each junction gives its direction axis the
+        // green for 9 s, then the cross axis; a car approaching on a red axis stops 7 m short.
+        const auto &junctions = m_net->Junctions();
+        for (size_t ji = 0; ji < junctions.size(); ++ji) {
+            const TrafficNet::Junction &j = junctions[ji];
+            const float jx = j.x - car.X(), jy = j.y - car.Y();
+            const float dist = std::hypot(jx, jy);
+            if (dist > 30.0f || dist < 7.0f)
+                continue;
+            const float hx = std::cos(car.Yaw()), hy = std::sin(car.Yaw());
+            if (jx * hx + jy * hy < 0.5f * dist)
+                continue; // not heading at it
+            const bool alongAxis = std::fabs(hx * j.dx + hy * j.dy) > 0.7f;
+            const bool green = ((int(m_clock / 9.0f) + int(ji)) % 2 == 0) == alongAxis;
+            if (!green)
+                target = std::min(target, std::max(0.0f, (dist - 8.0f) * 0.6f));
+        }
         float speed = std::max(0.0f, car.Speed());
         float throttle = speed < target ? 0.6f : 0.0f;
         float brake = speed > target + 1.0f ? std::min(1.0f, (speed - target) / 6.0f) : 0.0f;

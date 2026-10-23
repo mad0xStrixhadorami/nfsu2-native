@@ -32,4 +32,6 @@ private:
     std::vector<Driver> m_drivers;
     unsigned m_seed = 1;
     float m_px = 0, m_py = 0, m_pz = 0;
+    int m_lastDebug = -1;
+    float m_clock = 0; // signal phase clock (seconds)
 };

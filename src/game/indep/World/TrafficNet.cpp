@@ -32,6 +32,12 @@ bool TrafficNet::Load(const std::vector<uint8_t> &paths)
                 Junction j;
                 memcpy(&j.x, p + 4, 4);
                 memcpy(&j.y, p + 8, 4);
+                float dx = 0, dy = 0;
+                memcpy(&dx, p + 12, 4);
+                memcpy(&dy, p + 16, 4);
+                const float len = std::sqrt(dx * dx + dy * dy);
+                j.dx = len > 0.01f ? dx / len : 1.0f;
+                j.dy = len > 0.01f ? dy / len : 0.0f;
                 m_junctions.push_back(j);
                 r += size_t(rec);
             }
