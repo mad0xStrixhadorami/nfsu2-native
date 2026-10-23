@@ -50,6 +50,15 @@ struct OwnedCar {
     // The tuning slider bytes of the car (Performance Tuning, ISSUES #214): 41 bytes, 100 = neutral;
     // empty = never tuned.
     std::vector<uint8_t> tune;
+    // The vinyl layers on the car's paint skin (Graphics Shop, ISSUES #223), bottom layer first,
+    // at most kMaxVinylLayers.  `design` is the pack texture name without the car prefix
+    // (e.g. "WILD_172B"); `color` the red / green / blue region colours.
+    static constexpr int kMaxVinylLayers = 4;
+    struct VinylLayer {
+        std::string design;
+        uint8_t color[3][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
+    };
+    std::vector<VinylLayer> vinyls;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

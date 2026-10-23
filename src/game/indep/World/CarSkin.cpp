@@ -1,6 +1,7 @@
 #include "game/indep/World/CarSkin.h"
 
 #include <algorithm>
+#include <map>
 #include <cstdlib>
 
 #include "game/indep/World/CarMaterial.h"
@@ -67,6 +68,54 @@ bool Vinyls::Compose(uint8_t paintR, uint8_t paintG, uint8_t paintB, const std::
         }
     }
     return ok;
+}
+
+uint32_t DetectBodySlot(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &slots,
+                        const std::string &carName)
+{
+    if (slots.size() != model.size())
+        return 0;
+    struct Extent {
+        float lo = 1e9f, hi = -1e9f;
+        int count = 0;
+    };
+    std::map<uint32_t, Extent> ext;
+    float all[2] = {1e9f, -1e9f};
+    for (size_t i = 0; i < model.size(); ++i) {
+        Extent &e = ext[slots[i]];
+        ++e.count;
+        for (const SolidMesh::Point &p : model[i].v) {
+            e.lo = std::min(e.lo, p.x), e.hi = std::max(e.hi, p.x);
+            all[0] = std::min(all[0], p.x), all[1] = std::max(all[1], p.x);
+        }
+    }
+    const uint32_t tire = CarMaterial::NameHash((carName + "_TIRE").c_str());
+    const uint32_t skin1 = CarMaterial::NameHash((carName + "_SKIN1").c_str());
+    uint32_t best = 0;
+    int bestCount = 0;
+    for (const auto &kv : ext) {
+        if (kv.first == tire || kv.first == skin1)
+            continue;
+        if (kv.second.hi - kv.second.lo < 0.9f * (all[1] - all[0]))
+            continue;
+        if (kv.second.count > bestCount)
+            best = kv.first, bestCount = kv.second.count;
+    }
+    return best;
+}
+
+Projection Projection::ForBody(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &slots,
+                               uint32_t bodySlot)
+{
+    float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f;
+    for (size_t i = 0; i < model.size() && i < slots.size(); ++i)
+        if (slots[i] == bodySlot)
+            for (const SolidMesh::Point &p : model[i].v)
+                x0 = std::min(x0, p.x), x1 = std::max(x1, p.x), z0 = std::min(z0, p.z);
+    Projection pr;
+    pr.x0 = x0, pr.z0 = z0;
+    pr.scale = (0.925f - 0.043f) / std::max(x1 - x0, 0.1f);
+    return pr;
 }
 
 } // namespace CarSkin

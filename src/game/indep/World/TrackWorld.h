@@ -5,11 +5,13 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <map>
 #include <vector>
 
 #include <SDL.h>
 
 #include "game/indep/World/SolidMesh.h"
+#include "game/indep/World/CarSkin.h"
 
 // Native stand-in for UG2's in-game world: the RegionLoader (0x002ddbc0) streams
 // TRACKS\STREAM<region>.BUN, whose 0x80034100 scenery sections place 0x80134000 solids
@@ -66,6 +68,10 @@ public:
                   SDL_Color enginePaint = {128, 64, 48, 255},
                   const std::vector<uint8_t> *exhausts = nullptr,
                   SDL_Color exhaustPaint = {150, 150, 150, 255});
+    // Puts a composed 512 x 512 skin (CarSkin, R in the low byte) on the painted body slot of car
+    // `index`; an empty vector removes it.  The car's triangles of that slot are then textured by the
+    // planar side projection.
+    void SetCarSkin(size_t index, uint32_t bodySlot, std::vector<uint32_t> rgba);
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
@@ -180,6 +186,8 @@ private:
         SDL_Color enginePaint = {128, 64, 48, 255};
         const std::vector<uint8_t> *exhausts = nullptr; // 1 = installed muffler tip (#178)
         SDL_Color exhaustPaint = {150, 150, 150, 255};
+        uint32_t skinSlot = 0, skinHash = 0; // vinyl skin on the painted body (SetCarSkin, #223)
+        CarSkin::Projection skinProj;
         std::vector<size_t> order;  // model triangles grouped by texture
         std::vector<Tri> tris;      // model in world space, rebuilt by SetCarTransform
         std::vector<RTri> render;   // same, textured and lit, in `order`
@@ -209,6 +217,8 @@ private:
         std::vector<GLRange> ranges; // per texture
     };
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
+    std::vector<uint32_t> m_glTextureStale; // skin hashes whose GL texture must be rebuilt
+    std::map<uint32_t, std::vector<uint32_t>> m_skinPixels; // composed 512 x 512 skins by texture hash
     void ReleaseGL();
     std::unordered_map<uint32_t, unsigned> m_glTextures;
     std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode

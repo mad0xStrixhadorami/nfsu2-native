@@ -881,7 +881,7 @@ int main(int argc, char **argv)
                                         fe.CarWheels(fe.PreviewCarName(), wheels) ? wheels : nullptr,
                                         &installedParts)) {
             // The career/QR paint (OwnedCar::paintSet/paint) selects a GLOBALB color (#167/#168).
-            world.AddCar(&car.Model(), &car.TriangleTextures(),
+            const size_t playerCarIndex = world.AddCar(&car.Model(), &car.TriangleTextures(),
                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
                                           SDL_Color{40, 90, 200, 255}),
                          &car.TriangleRims(),
@@ -908,6 +908,19 @@ int main(int argc, char **argv)
                          &car.TriangleExhausts(),
                          fe.ColorForPaint(fe.PreviewExhaustSet(), fe.PreviewExhaustPaint(),
                                           SDL_Color{150, 150, 150, 255}));
+            // Vinyl layers (Graphics Shop, ISSUES #223): the composed skin replaces the flat paint.
+            if (!fe.PreviewVinyls().empty() || getenv("NFSU2_VINYL_TEST")) {
+                std::vector<CarSkin::Layer> layers = fe.PreviewVinyls().empty() ? fe.TestVinyls() : fe.PreviewVinyls();
+                CarSkin::Vinyls vinyls;
+                if (vinyls.Load(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\VINYLS.BIN").c_str()), fe.PreviewCarName())) {
+                    const SDL_Color body = fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(), SDL_Color{40, 90, 200, 255});
+                    std::vector<uint32_t> skin;
+                    vinyls.Compose(body.r, body.g, body.b, layers, skin);
+                    world.SetCarSkin(playerCarIndex, CarSkin::DetectBodySlot(car.Model(), car.TriangleTextures(), fe.PreviewCarName()),
+                                     std::move(skin));
+                    printf("[Vinyl] %zu layer(s) on the race car\n", layers.size());
+                }
+            }
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/SolidMesh.h"
 
 namespace CarSkin {
 
@@ -35,6 +36,26 @@ private:
     std::vector<uint8_t> m_bytes;
     std::unique_ptr<TexturePack> m_pack;
     std::string m_car;
+};
+
+// The material slot of the painted body shell: the slot with the most triangles that spans the car's
+// length, without the tyre and "<CAR>_SKIN1" (trim shell) slots.  0 if none.
+uint32_t DetectBodySlot(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &slots,
+                        const std::string &carName);
+
+// The planar side projection of the vinyl atlas (ISSUES #223): the left side's profile is the top
+// strip, the right side's the bottom strip; car length maps to u 0.043 .. 0.925, height uses the
+// same scale from the lowest body point.
+struct Projection {
+    float x0 = 0, z0 = 0, scale = 1;
+    static Projection ForBody(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &slots,
+                              uint32_t bodySlot);
+    void Map(float x, float z, bool leftSide, float &s, float &t) const
+    {
+        s = 0.043f + (x - x0) * scale;
+        const float up = (z - z0) * scale;
+        t = leftSide ? up : 0.752f - up;
+    }
 };
 
 } // namespace CarSkin

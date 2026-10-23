@@ -50,6 +50,36 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     }
     if (!hash)
         return m_glWhite;
+    // Skins composed at runtime (SetCarSkin): rebuilt when replaced.
+    for (uint32_t stale : m_glTextureStale) {
+        auto old = m_glTextures.find(stale);
+        if (old != m_glTextures.end()) {
+            if (old->second != m_glWhite)
+                glDeleteTextures(1, &old->second);
+            m_glTextures.erase(old);
+        }
+    }
+    m_glTextureStale.clear();
+    if (auto skin = m_skinPixels.find(hash); skin != m_skinPixels.end()) {
+        auto have = m_glTextures.find(hash);
+        if (have != m_glTextures.end())
+            return have->second;
+        unsigned id = 0;
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, CarSkin::kSize, CarSkin::kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     skin->second.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        m_glTextureMode[id] = 0;
+        m_glTextures[hash] = id;
+        return id;
+    }
     auto it = m_glTextures.find(hash);
     if (it != m_glTextures.end())
         return it->second;

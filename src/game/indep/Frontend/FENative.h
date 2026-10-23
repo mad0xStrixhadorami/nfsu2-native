@@ -445,6 +445,10 @@ private:
     std::string m_skinKey;
     uint32_t m_skinVersion = 0;
     void UpdatePreviewSkin(SDL_Color body);
+ public:
+    // Layers from the dev environment NFSU2_VINYL_TEST (empty when unset).
+    std::vector<CarSkin::Layer> TestVinyls() const;
+ private:
     uint32_t BodySlot() const;
     Tune::Table m_tuneTable;                       // chunk 0x34a1a slider definitions (#207)
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)

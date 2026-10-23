@@ -617,47 +617,13 @@ void FENativeInterface::CycleCarPreview(int direction)
 // "<CAR>_SKIN1" slot only holds trim edges, ISSUES #223).
 uint32_t FENativeInterface::BodySlot() const
 {
-    if (m_carPreviewSlots.size() != m_carPreviewModel.size())
-        return 0;
-    struct Extent {
-        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
-        int count = 0;
-    };
-    std::map<uint32_t, Extent> slots;
-    float all[2] = {1e9f, -1e9f};
-    for (size_t i = 0; i < m_carPreviewModel.size(); ++i) {
-        Extent &e = slots[m_carPreviewSlots[i]];
-        ++e.count;
-        for (const SolidMesh::Point &p : m_carPreviewModel[i].v) {
-            const float c[3] = {p.x, p.y, p.z};
-            for (int a = 0; a < 3; ++a)
-                e.lo[a] = std::min(e.lo[a], c[a]), e.hi[a] = std::max(e.hi[a], c[a]);
-            all[0] = std::min(all[0], p.x), all[1] = std::max(all[1], p.x);
-        }
-    }
-    uint32_t best = 0;
-    int bestCount = 0;
-    for (const auto &kv : slots) {
-        if (kv.first == CarMaterial::NameHash((m_previewCarName + "_TIRE").c_str()) || kv.first == CarMaterial::NameHash((m_previewCarName + "_SKIN1").c_str()))
-            continue;
-        const Extent &e = kv.second;
-        if (e.hi[0] - e.lo[0] < 0.9f * (all[1] - all[0]))
-            continue; // does not span the car's length
-        if (e.count > bestCount)
-            best = kv.first, bestCount = e.count;
-    }
-    if (getenv("NFSU2_SLOT_DEBUG"))
-        printf("[Skin] body slot %08x (%d triangles)\n", best, bestCount);
-    return best;
+    return CarSkin::DetectBodySlot(m_carPreviewModel, m_carPreviewSlots, m_previewCarName);
 }
 
-// The preview's paint skin: the body colour with the vinyl layers over it (ISSUES #223).  Dev aid
-// NFSU2_VINYL_TEST="WILD_172A=ff0000,00ff00,0000ff;STRIPE_052A=..." puts layers on the car.
-void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
+std::vector<CarSkin::Layer> FENativeInterface::TestVinyls() const
 {
-    std::vector<CarSkin::Layer> layers = m_previewVinyls;
-    if (layers.empty())
-        if (const char *test = getenv("NFSU2_VINYL_TEST")) {
+    std::vector<CarSkin::Layer> layers;
+    if (const char *test = getenv("NFSU2_VINYL_TEST")) {
             std::string spec = test;
             for (size_t b = 0; b < spec.size();) {
                 size_t e = spec.find(';', b);
@@ -688,6 +654,16 @@ void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
                 layers.push_back(layer);
             }
         }
+    return layers;
+}
+
+// The preview's paint skin: the body colour with the vinyl layers over it (ISSUES #223).  Dev aid
+// NFSU2_VINYL_TEST="WILD_172A=ff0000,00ff00,0000ff;STRIPE_052A=..." puts layers on the car.
+void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
+{
+    std::vector<CarSkin::Layer> layers = m_previewVinyls;
+    if (layers.empty())
+        layers = TestVinyls();
     if (layers.empty()) {
         SetModelViewSkin(0, nullptr, 0, 0);
         m_skinKey.clear();

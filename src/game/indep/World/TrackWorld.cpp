@@ -418,6 +418,24 @@ size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const s
     return m_cars.size() - 1;
 }
 
+void TrackWorld::SetCarSkin(size_t index, uint32_t bodySlot, std::vector<uint32_t> rgba)
+{
+    if (index >= m_cars.size())
+        return;
+    Car &car = m_cars[index];
+    const uint32_t hash = 0xA5000000u + uint32_t(index);
+    if (rgba.empty() || !bodySlot || !car.textures) {
+        car.skinSlot = car.skinHash = 0;
+        m_skinPixels.erase(hash);
+    } else {
+        car.skinSlot = bodySlot;
+        car.skinHash = hash;
+        car.skinProj = CarSkin::Projection::ForBody(*car.model, *car.textures, bodySlot);
+        m_skinPixels[hash] = std::move(rgba);
+    }
+    m_glTextureStale.push_back(hash); // the GL copy is rebuilt on next use
+}
+
 void TrackWorld::AddTexturePack(std::vector<uint8_t> data)
 {
     auto owned = std::make_unique<std::vector<uint8_t>>(std::move(data));
@@ -464,6 +482,7 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     for (size_t i : car.order) {
         const SolidMesh::Triangle &t = (*car.model)[i];
         float rgb[3];
+        bool skinned = false;
         uint32_t tex = CarMaterial(textured ? (*car.textures)[i] : 0, car.paint, rgb);
         if (spoilered && (*car.spoilers)[i]) {
             rgb[0] = car.spoilerPaint.r / 255.0f, rgb[1] = car.spoilerPaint.g / 255.0f,
@@ -493,6 +512,10 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             rgb[0] = car.exhaustPaint.r / 255.0f, rgb[1] = car.exhaustPaint.g / 255.0f,
             rgb[2] = car.exhaustPaint.b / 255.0f;
             tex = 0;
+        } else if (car.skinSlot && textured && (*car.textures)[i] == car.skinSlot) {
+            rgb[0] = rgb[1] = rgb[2] = 1.0f; // the skin carries the paint
+            tex = car.skinHash;
+            skinned = true;
         }
         Tri w;
         for (int k = 0; k < 3; ++k)
@@ -502,9 +525,13 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             continue;
         RTri r;
         r.tex = tex;
-        for (int k = 0; k < 3; ++k)
-            r.v[k] = {w.v[k * 3], w.v[k * 3 + 1], w.v[k * 3 + 2], t.v[k].u, t.v[k].v, w.shade[0], w.shade[1],
-                      w.shade[2], 255};
+        const bool leftSide = (t.v[0].y + t.v[1].y + t.v[2].y) > 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            float u = t.v[k].u, v = t.v[k].v;
+            if (skinned)
+                car.skinProj.Map(t.v[k].x, t.v[k].z, leftSide, u, v);
+            r.v[k] = {w.v[k * 3], w.v[k * 3 + 1], w.v[k * 3 + 2], u, v, w.shade[0], w.shade[1], w.shade[2], 255};
+        }
         car.tris.push_back(w);
         car.render.push_back(r);
     }

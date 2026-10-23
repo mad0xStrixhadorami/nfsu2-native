@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "game/indep/World/CarMaterial.h"
+#include "game/indep/World/CarSkin.h"
 #include "game/indep/World/GLBridge.h"
 
 namespace {
@@ -170,15 +171,8 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
         glPolygonOffset(-2.0f, -4.0f); // the trim shell lies on the body: the skin wins the tie
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, g_skin.tex);
-        // The vinyl atlas is a planar side projection (ISSUES #223): the left side's profile fills the
-        // top strip (ground at the top edge, up is down the image) and the right side's the bottom
-        // strip (ground at row 0.752, up is up the image).  Car length maps to u 0.043 .. 0.925 and
-        // the same scale applies to the height.
-        float bx0 = 1e30f, bx1 = -1e30f, bz0 = 1e30f;
-        for (size_t i : skinTris)
-            for (const SolidMesh::Point &p : model[i].v)
-                bx0 = std::min(bx0, p.x), bx1 = std::max(bx1, p.x), bz0 = std::min(bz0, p.z);
-        const float u0 = 0.043f, u1 = 0.925f, scale = (u1 - u0) / std::max(bx1 - bx0, 0.1f);
+        // The vinyl atlas is a planar side projection of the body (CarSkin::Projection, ISSUES #223).
+        const CarSkin::Projection proj = CarSkin::Projection::ForBody(model, *textures, g_skin.slot);
         // Strip-decode bridge slivers (very long edges) would smear the texture: those stay flat paint.
         std::vector<size_t> flatTris;
         auto longEdge = [](const SolidMesh::Triangle &t) {
@@ -204,8 +198,9 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
             glColor3ub(GLubyte(255 * lit), GLubyte(255 * lit), GLubyte(255 * lit));
             const bool left = (a.y + b.y + c.y) > 0.0f;
             for (const SolidMesh::Point *p : {&a, &b, &c}) {
-                const float s = u0 + (p->x - bx0) * scale, up = (p->z - bz0) * scale;
-                glTexCoord2f(s, left ? up : 0.752f - up);
+                float s, tc;
+                proj.Map(p->x, p->z, left, s, tc);
+                glTexCoord2f(s, tc);
                 glVertex3f(p->x, p->y, p->z);
             }
         }

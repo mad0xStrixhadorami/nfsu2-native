@@ -157,6 +157,12 @@ int main()
     p.cars[0].skirt = 9;
     p.cars[0].tune.assign(41, 100);
     p.cars[0].tune[3] = 130;              // tuning slider bytes (ISSUES #214)
+    {
+        Career::OwnedCar::VinylLayer l;
+        l.design = "WILD_172B";
+        l.color[1][2] = 77;
+        p.cars[0].vinyls.push_back(l);
+    }
     p.cars[0].perfParts = {2, 3, 17};     // Performance Shop parts (ISSUES #198)
     p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
     p.ownedParts = {0x00000c01u, 0x02000701u, 0x00001004u}; // spoiler / roof OFFSET / exhaust (#187)
@@ -208,6 +214,9 @@ int main()
         return Fail("fitted bumpers and side skirts must round-trip (v11)");
     if (q.cars[0].tune.size() != 41 || q.cars[0].tune[3] != 130 || q.cars[0].tune[0] != 100)
         return Fail("tuning bytes round-trip");
+    if (q.cars[0].vinyls.size() != 1 || q.cars[0].vinyls[0].design != "WILD_172B" || q.cars[0].vinyls[0].color[1][2] != 77 ||
+        q.cars[0].vinyls[0].color[0][0] != 255)
+        return Fail("vinyl layers round-trip (v15)");
     if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
         return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)
