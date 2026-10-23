@@ -215,6 +215,8 @@ public:
     void SetPreviewVinyls(const std::vector<CarSkin::Layer> &layers) { m_previewVinyls = layers; }
     const std::vector<CarSkin::Layer> &PreviewVinyls() const { return m_previewVinyls; }
     // Rims on the previewed car (ISSUES #226): brand key ("" = stock) and style.
+    // Specialties on the previewed car (ISSUES #227).
+    void SetPreviewSpecialties(int neon, int tint);
     void SetPreviewRim(const std::string &brand, int style);
     const std::string &PreviewRimBrand() const { return m_previewRimBrand; }
     int PreviewRimStyle() const { return m_previewRimStyle; }
@@ -453,6 +455,7 @@ private:
     std::vector<CarSkin::Layer> m_previewVinyls;
     CarSkin::Vinyls m_vinyls;
     VinylCatalog m_vinylCatalog;
+    int m_previewNeon = 0, m_previewTint = 0;
     std::string m_previewRimBrand;
     int m_previewRimStyle = 0;
     const std::vector<uint8_t> &RimGeometryFor(const std::string &brand) const;

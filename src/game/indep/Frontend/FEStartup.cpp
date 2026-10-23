@@ -403,6 +403,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleVinylLayerLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_ICEMAIN.fng") == 0 || strcasecmp(name, "UI_CustomNeonMain.fng") == 0) {
+        HandleSpecialtyLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_DecalMain.fng") == 0) {
         HandleDecalMainLoaded(pkg);
         return;
@@ -583,7 +587,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0 ||
-        strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0 || strcasecmp(name, "UI_DecalMain.fng") == 0)
+        strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0 || strcasecmp(name, "UI_DecalMain.fng") == 0 ||
+        strcasecmp(name, "UI_ICEMAIN.fng") == 0 || strcasecmp(name, "UI_CustomNeonMain.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -837,6 +842,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             }
         } else if ((pressed & FENativeInterface::kPadBack) && !chart)
             PopScreen();
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        (strcasecmp(top->GetName(), "UI_ICEMAIN.fng") == 0 || strcasecmp(top->GetName(), "UI_CustomNeonMain.fng") == 0)) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleSpecialtyMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleSpecialtyMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleSpecialtyMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleSpecialtyMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -1614,6 +1631,8 @@ void FEStartupSequence::HandleQRCarSelectLoaded(FEPackage *pkg)
             m_fe->SetPreviewSkirtPart(0);
         if (!getenv("NFSU2_PART_WIDEBODY"))
             m_fe->SetPreviewWideBodyPart(0);
+        m_fe->SetPreviewRim("", 0);
+        m_fe->SetPreviewSpecialties(0, 0);
         m_fe->SetPreviewPerfParts({}); // a Quick Race car is stock (#200)
         m_fe->SetPreviewTune({});
     }
@@ -1714,7 +1733,7 @@ void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
     };
     std::vector<FEIconScroller::Def> defs;
     for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
-        defs.push_back({kOptions[i].tex, kOptions[i].label, i != 0 && i != 1 && i != 2 && i != 4});
+        defs.push_back({kOptions[i].tex, kOptions[i].label, false});
     printf("[Customize] category picker: %zu options (body parts, paint)\n", defs.size());
     m_scroller.Setup(pkg, defs, m_customizeCategorySel);
 }
@@ -1759,6 +1778,12 @@ void FEStartupSequence::HandleCustomizeCategoryMessage(uint32_t msg, FEPackage *
                 run = DynoRun();
             m_dynoRuns = 0;
             NavigateTo(pkg->GetName(), "UI_PerformanceDyno_MAIN.fng");
+            return;
+        }
+        if (m_customizeCategorySel == 3) {
+            m_specKind = 0;
+            m_specSel = 0;
+            NavigateTo(pkg->GetName(), "UI_ICEMAIN.fng");
             return;
         }
         printf("[Customize] category %zu is not ported yet\n", m_customizeCategorySel);
@@ -2177,6 +2202,7 @@ void FEStartupSequence::PreviewOwnedParts(const Career::OwnedCar *car)
     m_fe->SetPreviewSkirtPart(car ? car->skirt : 0);
     m_fe->SetPreviewWideBodyPart(car ? car->wideBody : 0);
     m_fe->SetPreviewRim(car ? car->rimBrand : std::string(), car ? car->rimStyle : 0);
+    m_fe->SetPreviewSpecialties(car ? car->neon : 0, car ? car->tint : 0);
 }
 
 // The Rims card (0x002a7860, ISSUES #226).  The original goes through UI_ChooseRimBrand and
@@ -3060,6 +3086,133 @@ void FEStartupSequence::HandleVinylBrowserMessage(uint32_t msg, FEPackage *pkg)
 // original's decal zones: hood, doors, quarter panels, windshield).  The sponsor artwork of the
 // port's data is pre-placed on the body (the AEM_<SPONSOR> vinyl images), so the cards are four
 // decal slots; Accept opens the browser in decal mode with every sponsor's DECAL_ICON logo.
+// Specialties (ISSUES #227).  Change Interiors / Car Specialties opens UI_ICEMAIN.fng (DAT_0051456c
+// == 3, 0x002a4558).  The original lists the ICE shop's items; the port offers the two it can show
+// on the car: Neon (underglow, UI_CustomNeonMain.fng with the ten NEON_COLOR icons) and Window
+// Tint.  Neon colours, the tint levels and their prices are stand-ins.
+namespace {
+constexpr uint32_t kNeonIcons[10] = {0xa9817b5e, 0xa9817b5f, 0xa9817b60, 0xa9817b61, 0xa9817b62,
+                                     0xa9817b63, 0xa9817b64, 0xa9817b65, 0xa9817b66, 0xd9b0e74e};
+constexpr uint32_t kNeonPrice = 500, kTintPrice = 250;
+} // namespace
+
+void FEStartupSequence::HandleSpecialtyLoaded(FEPackage *pkg)
+{
+    const bool neonPkg = strcasecmp(pkg->GetName(), "UI_CustomNeonMain.fng") == 0;
+    if (!neonPkg)
+        m_specKind = 0;
+    const Career::OwnedCar *car = ShopCar();
+    std::vector<FEIconScroller::Def> defs;
+    auto add = [&defs](uint32_t icon, const std::string &text) {
+        FEIconScroller::Def d{icon, 0, false, ""};
+        d.text = text;
+        defs.push_back(d);
+    };
+    size_t sel = 0;
+    const char *title = "Specialties";
+    if (m_specKind == 0) {
+        add(0x02929058, "Neon");
+        add(0x3f23165c, "Window Tint");
+        sel = std::min<size_t>(m_specMain, 1);
+    } else if (m_specKind == 1) {
+        title = "Custom Neon";
+        add(0x02929058, "No Neon");
+        for (int i = 0; i < 10; ++i)
+            add(kNeonIcons[i], "Neon Color " + std::to_string(i + 1));
+        sel = car ? car->neon : 0;
+    } else {
+        title = "Window Tint";
+        static const char *kTint[4] = {"Stock Glass", "Light Tint", "Medium Tint", "Dark Tint"};
+        for (int i = 0; i < 4; ++i)
+            add(0x3f23165c, kTint[i]);
+        sel = car ? car->tint : 0;
+    }
+    FENativeInterface::SetString(pkg, 0x42adb44c, title);
+    bool shipped = false;
+    float cx = 0, cy = -149.0f;
+    m_specCards = ShippedOrClonedCards(pkg, defs.size(), "SPECIALTY_CARD_", cx, cy, shipped);
+    if (m_specCards.size() != defs.size()) {
+        printf("[Specialty] no card slots for %zu cards\n", defs.size());
+        return;
+    }
+    m_specSel = sel;
+    m_specScroller.SetupObjects(pkg, defs, m_specCards, sel, "OPTION_MASTER");
+    if (!shipped)
+        m_specScroller.SetLayoutCenter(cx, cy);
+    printf("[Specialty] %s: %zu cards, selected %zu\n", title, defs.size(), sel);
+    PreviewSpecialty();
+}
+
+// Show the highlighted choice on the previewed car; the main list shows what is fitted.
+void FEStartupSequence::PreviewSpecialty()
+{
+    const Career::OwnedCar *car = ShopCar();
+    int neon = car ? car->neon : 0, tint = car ? car->tint : 0;
+    if (m_specKind == 1)
+        neon = int(m_specSel);
+    else if (m_specKind == 2)
+        tint = int(m_specSel);
+    m_fe->SetPreviewSpecialties(neon, tint);
+}
+
+void FEStartupSequence::HandleSpecialtyMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_specScroller.Empty() || m_specScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_specScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_specScroller.HandleMessage(msg, 0.0f);
+        m_specScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_specScroller.HandleMessage(msg, 0.0f);
+        m_specSel = m_specScroller.Selected();
+        PreviewSpecialty();
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        if (m_specKind != 0) {
+            m_specKind = 0; // back to the specialties list with the fitted parts shown
+            if (const Career::OwnedCar *car = ShopCar())
+                m_fe->SetPreviewSpecialties(car->neon, car->tint);
+        }
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        if (m_specKind == 0) {
+            m_specMain = m_specScroller.Selected();
+            m_specKind = m_specMain == 0 ? 1 : 2;
+            m_specSel = 0;
+            NavigateTo(pkg->GetName(), "UI_CustomNeonMain.fng");
+            return;
+        }
+        Career::OwnedCar *car = ShopCar();
+        if (!car)
+            return;
+        uint8_t &field = m_specKind == 1 ? car->neon : car->tint;
+        const uint32_t price = m_specSel == 0 || field == m_specSel ? 0 : (m_specKind == 1 ? kNeonPrice : kTintPrice);
+        if (field == m_specSel) {
+            printf("[Specialty] already fitted\n");
+            return;
+        }
+        if (int(price) > m_profile.money) {
+            ShowMessageDialog(kLabelNotEnoughBank);
+            return;
+        }
+        m_profile.money -= int(price);
+        field = uint8_t(m_specSel);
+        Career::SaveCareer(m_profile);
+        printf("[Specialty] %s %zu for $%u, career $%d\n", m_specKind == 1 ? "neon" : "window tint", m_specSel, price, m_profile.money);
+        m_specKind = 0;
+        PopScreen();
+    }
+}
+
 void FEStartupSequence::HandleDecalMainLoaded(FEPackage *pkg)
 {
     Career::OwnedCar *car = ShopCar();
@@ -4209,6 +4362,8 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewRearBumperPart(car.rearBumper);
     m_fe->SetPreviewSkirtPart(car.skirt);
     m_fe->SetPreviewWideBodyPart(car.wideBody);
+    m_fe->SetPreviewRim(car.rimBrand, car.rimStyle);
+    m_fe->SetPreviewSpecialties(car.neon, car.tint);
     m_fe->SetPreviewPerfParts(car.perfParts);
     m_fe->SetPreviewTune(car.tune);
     m_fe->SetPreviewVinyls(CarSkinLayers(car.vinyls, car.decals));

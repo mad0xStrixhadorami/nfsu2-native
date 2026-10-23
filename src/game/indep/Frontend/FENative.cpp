@@ -181,6 +181,10 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         installedParts.skirt = m_previewPartSkirt;
     if (m_previewPartWideBody > 0)
         installedParts.wideBody = m_previewPartWideBody;
+    if (m_previewNeon > 0)
+        installedParts.neon = m_previewNeon;
+    if (m_previewTint > 0)
+        installedParts.tint = m_previewTint;
     if (m_previewRimStyle > 0 && !m_previewRimBrand.empty())
         installedParts.rimBrand = m_previewRimBrand, installedParts.rimStyle = m_previewRimStyle,
         installedParts.rimGeometry = RimGeometryFor(m_previewRimBrand);
@@ -228,6 +232,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
             if (strcasecmp(candidate->GetName(), "UI_QRCarSelect.fng") == 0 ||
                 strcasecmp(candidate->GetName(), "UI_ChooseCustomizeCategory.fng") == 0 ||
                 strcasecmp(candidate->GetName(), "UI_Paint.fng") == 0 ||
+                strcasecmp(candidate->GetName(), "UI_ICEMAIN.fng") == 0 ||
+                strcasecmp(candidate->GetName(), "UI_CustomNeonMain.fng") == 0 ||
                 strcasecmp(candidate->GetName(), "UI_GenericParts_Browser.fng") == 0) {
                 pkg = candidate;
                 break;
@@ -673,6 +679,15 @@ const std::vector<uint8_t> &FENativeInterface::RimGeometryFor(const std::string 
     return m_rimCache;
 }
 
+void FENativeInterface::SetPreviewSpecialties(int neon, int tint)
+{
+    if (neon == m_previewNeon && tint == m_previewTint)
+        return;
+    m_previewNeon = neon;
+    m_previewTint = tint;
+    SetPreviewCar(m_previewCarName);
+}
+
 void FENativeInterface::SetPreviewRim(const std::string &brand, int style)
 {
     if (brand == m_previewRimBrand && style == m_previewRimStyle)
@@ -869,6 +884,10 @@ PlayerCar::InstalledParts FENativeInterface::InstalledPartsForPreview() const
 {
     PlayerCar::InstalledParts parts = PlayerCar::InstalledPartsFromEnvironment(
         [this](const char *path) { return m_readFile(path); });
+    if (m_previewNeon > 0)
+        parts.neon = m_previewNeon;
+    if (m_previewTint > 0)
+        parts.tint = m_previewTint;
     if (m_previewRimStyle > 0 && !m_previewRimBrand.empty()) {
         parts.rimBrand = m_previewRimBrand;
         parts.rimStyle = m_previewRimStyle;

@@ -1,4 +1,5 @@
 #include "game/indep/World/PlayerCar.h"
+#include "game/indep/World/CarMaterial.h"
 
 #include <algorithm>
 #include <cmath>
@@ -301,6 +302,10 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
             parts.rimGeometry = read(("CARS\\WHEELS\\GEOMETRY_" + std::string(parts.rimBrand == "OZ" ? "P9" : parts.rimBrand) + ".BIN").c_str());
         }
     }
+    if (const char *neon = getenv("NFSU2_PART_NEON")) // 1..10
+        parts.neon = atoi(neon);
+    if (const char *tint = getenv("NFSU2_PART_TINT")) // 1..3
+        parts.tint = atoi(tint);
     if (const char *wide = getenv("NFSU2_PART_WIDEBODY"))
         parts.wideBody = atoi(wide);
     if (parts.roof || parts.exhaust || parts.engine || parts.spoiler)
@@ -573,6 +578,41 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     if (body && getenv("NFSU2_WHEEL_DEBUG"))
         printf("[Wheel] body bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", body->bboxMin[0], body->bboxMin[1],
                body->bboxMin[2], body->bboxMax[0], body->bboxMax[1], body->bboxMax[2]);
+    // Specialties (#227): tint retags the glass slots; the underglow is a flat ring of emissive
+    // triangles just above the road around the body.
+    if (parts && parts->tint > 0 && parts->tint <= 3) {
+        char slotName[24];
+        snprintf(slotName, sizeof slotName, "WINDOW_TINT%d", parts->tint);
+        const uint32_t tinted = CarMaterial::NameHash(slotName);
+        const uint32_t windows[] = {CarMaterial::NameHash("WINDOW_FRONT"), CarMaterial::NameHash("WINDOW_REAR"),
+                                    CarMaterial::NameHash("WINDOW_LEFT_FRONT"), CarMaterial::NameHash("WINDOW_RIGHT_FRONT"),
+                                    CarMaterial::NameHash("WINDOW_LEFT_REAR"), CarMaterial::NameHash("WINDOW_RIGHT_REAR")};
+        for (uint32_t &t : m_triTex)
+            for (uint32_t w : windows)
+                if (t == w)
+                    t = tinted;
+    }
+    if (parts && parts->neon > 0 && parts->neon <= 10 && body) {
+        char slotName[24];
+        snprintf(slotName, sizeof slotName, "NEON_GLOW_%d", parts->neon);
+        const uint32_t glow = CarMaterial::NameHash(slotName);
+        const float x0 = body->bboxMin[0] + 0.25f, x1 = body->bboxMax[0] - 0.25f;
+        const float yo = std::max(std::fabs(body->bboxMin[1]), std::fabs(body->bboxMax[1])) + 0.18f, yi = yo - 0.32f;
+        const float z = 0.07f;
+        auto vert = [](float x, float y, float zz) { SolidMesh::Point p; p.x = x; p.y = y; p.z = zz; p.u = p.v = 0; return p; };
+        auto quad = [&](float xa, float ya, float xb, float yb) {
+            SolidMesh::Triangle t;
+            t.tex = -1;
+            t.v[0] = vert(xa, ya, z); t.v[1] = vert(xb, ya, z); t.v[2] = vert(xb, yb, z);
+            m_model.push_back(t); m_triTex.push_back(glow);
+            t.v[0] = vert(xa, ya, z); t.v[1] = vert(xb, yb, z); t.v[2] = vert(xa, yb, z);
+            m_model.push_back(t); m_triTex.push_back(glow);
+        };
+        quad(x0, yi, x1, yo);   // left strip
+        quad(x0, -yo, x1, -yi); // right strip
+        quad(x1, -yo, x1 + 0.3f, yo); // front
+        quad(x0 - 0.3f, -yo, x0, yo); // rear
+    }
     m_triRim.resize(m_model.size(), 0);
     m_triCaliper.resize(m_model.size(), 0);
     m_rideHeight = 0;

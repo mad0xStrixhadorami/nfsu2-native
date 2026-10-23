@@ -203,6 +203,13 @@ private:
     void RefreshGraph(FEPackage *pkg);
     // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
     void HandleVinylLayerLoaded(FEPackage *pkg);
+    void HandleSpecialtyLoaded(FEPackage *pkg);
+    void HandleSpecialtyMessage(uint32_t msg, FEPackage *pkg);
+    void PreviewSpecialty();
+    FEIconScroller m_specScroller;
+    std::vector<FEObject *> m_specCards;
+    int m_specKind = 0; // 0 main (Neon / Window Tint), 1 neon colours, 2 window tint
+    size_t m_specSel = 0, m_specMain = 0;
     void HandleDecalMainLoaded(FEPackage *pkg);
     void HandleDecalMainMessage(uint32_t msg, FEPackage *pkg);
     void RefreshDecalSlots(FEPackage *pkg);

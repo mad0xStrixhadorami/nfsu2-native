@@ -96,6 +96,8 @@ public:
         std::vector<uint8_t> rimGeometry;
         std::string rimBrand;
         int rimStyle = 0;
+        int neon = 0; // underglow colour 1..10 (ISSUES #227)
+        int tint = 0; // window tint 1..3
     };
     // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n>,
     // NFSU2_PART_ENGINE=<n>, NFSU2_PART_SPOILER=<n>[_CF], NFSU2_PART_HOOD=<n>[_CF],

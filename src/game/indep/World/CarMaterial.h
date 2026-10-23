@@ -25,6 +25,20 @@ inline bool SlotColour(uint32_t hash, float rgb[3])
         return set(0.92f, 0.92f, 0.86f);
     case NameHash("BRAKELIGHT_LEFT"): case NameHash("BRAKELIGHT_RIGHT"):
         return set(0.75f, 0.08f, 0.06f);
+    case NameHash("WINDOW_TINT1"): return set(0.06f, 0.07f, 0.09f);
+    case NameHash("WINDOW_TINT2"): return set(0.03f, 0.035f, 0.045f);
+    case NameHash("WINDOW_TINT3"): return set(0.005f, 0.005f, 0.01f);
+    // Underglow (ISSUES #227): NEON_GLOW_<1..10>, the shop's ten colours (stand-in palette).
+    case NameHash("NEON_GLOW_1"): return set(1.00f, 0.10f, 0.10f);
+    case NameHash("NEON_GLOW_2"): return set(1.00f, 0.50f, 0.05f);
+    case NameHash("NEON_GLOW_3"): return set(1.00f, 0.95f, 0.10f);
+    case NameHash("NEON_GLOW_4"): return set(0.30f, 1.00f, 0.15f);
+    case NameHash("NEON_GLOW_5"): return set(0.05f, 1.00f, 0.60f);
+    case NameHash("NEON_GLOW_6"): return set(0.10f, 0.90f, 1.00f);
+    case NameHash("NEON_GLOW_7"): return set(0.15f, 0.30f, 1.00f);
+    case NameHash("NEON_GLOW_8"): return set(0.60f, 0.20f, 1.00f);
+    case NameHash("NEON_GLOW_9"): return set(1.00f, 0.20f, 0.80f);
+    case NameHash("NEON_GLOW_10"): return set(1.00f, 1.00f, 1.00f);
     case NameHash("CARBONFIBRE"):
         return set(0.12f, 0.12f, 0.13f);
     default:

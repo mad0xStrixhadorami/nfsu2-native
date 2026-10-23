@@ -16,7 +16,7 @@ constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187), v10 the fitted
 // hood, headlights and taillights (#188), v11 the fitted front/rear bumpers and side skirts (#190),
 // v12 the fitted wide-body kit (#193), v13 the fitted performance parts (#198), v14 the tuning slider bytes (#214).
-constexpr uint32_t kVersion = 17;
+constexpr uint32_t kVersion = 18;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -197,6 +197,9 @@ std::vector<uint8_t> Serialize(const Profile &p)
             PutU32(payload, uint8_t(ch));
         PutU32(payload, c.rimStyle);
     }
+    // v18: specialties (#227), one word per car: neon | tint << 8.
+    for (const OwnedCar &c : p.cars)
+        PutU32(payload, uint32_t(c.neon) | uint32_t(c.tint) << 8);
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -218,7 +221,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 17) || o + size > data.size())
+    if ((version < 1 || version > 18) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -498,6 +501,14 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             c.rimStyle = uint8_t(style);
         }
     }
+    if (version >= 18)
+        for (OwnedCar &c : p.cars) {
+            uint32_t w = 0;
+            if (!GetU32(payload, q, w))
+                return false;
+            c.neon = uint8_t(w & 0xff);
+            c.tint = uint8_t((w >> 8) & 0xff);
+        }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;
     p.valid = true;

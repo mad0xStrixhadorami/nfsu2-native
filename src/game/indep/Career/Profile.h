@@ -66,6 +66,8 @@ struct OwnedCar {
     // Rims fitted by the Rims shop (ISSUES #226): brand key ("" = the car's stock wheels) and style 1..N.
     std::string rimBrand;
     uint8_t rimStyle = 0;
+    // Specialties (ISSUES #227): underglow colour 1..10 (0 none) and window tint level 0..3.
+    uint8_t neon = 0, tint = 0;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per
