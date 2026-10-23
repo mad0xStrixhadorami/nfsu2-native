@@ -2905,6 +2905,9 @@ void FEStartupSequence::HandleVinylBrowserLoaded(FEPackage *pkg)
         for (char &ch : d.text)
             if (ch == '_')
                 ch = ' ';
+        if (const uint32_t label = VinylCatalog::Groups()[size_t(g)].label) // the game's own group name
+            if (const std::string t = m_fe->LanguageText(label); !t.empty())
+                d.text = t;
         defs.push_back(d);
     }
     m_partsCategoryScroller.Setup(pkg, defs, m_vinylGroupSel, "CATEGORY_MASTER", "CATEGORY_ICON");
@@ -2948,6 +2951,9 @@ void FEStartupSequence::RefreshVinylInfo(FEPackage *pkg)
         for (char &ch : label)
             if (ch == '_')
                 ch = ' ';
+        if (const uint32_t l = VinylCatalog::Groups()[size_t(m_vinylGroups[m_vinylGroupSel])].label)
+            if (const std::string t = m_fe->LanguageText(l); !t.empty())
+                label = t;
         FENativeInterface::SetString(pkg, 0x6c9e933e, label.c_str());
     }
     char price[32] = "$0", total[16] = "00000";

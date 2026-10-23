@@ -9,20 +9,20 @@ namespace {
 
 // VINYL_GROUP_* texture hashes (FRONTB, the Graphics Shop's category cards).
 const std::vector<VinylGroup> kGroups = {
-    {"FLAMES", 0xf8148554, 0, false},         {"FLAMES_SET", 0x4ef4919f, 0, true},
-    {"LIGHTNING", 0xf2173020, 0, false},      {"LIGHTNING_S", 0x8ca7c26b, 0, true},
-    {"TRIBAL", 0x192d84da, 0, false},         {"TRIBAL_SET", 0x4bede425, 0, true},
-    {"STRIPES", 0xf7352706, 0, false},        {"STRIPES_SET", 0x4c12bc51, 0, true},
-    {"WILD", 0x69580c2c, 0, false},           {"WILD_SET", 0x31cfc477, 0, true},
-    {"TEAR", 0x695654a8, 0, false},           {"TEAR_SET", 0x2075eaf3, 0, true},
-    {"MODERN", 0x08a07001, 0, false},         {"MODERN_SET", 0x43a00acc, 0, true},
-    {"FLAG", 0x694ec516, 0, false},           {"FLAG_SET", 0x4eece261, 0, true},
-    {"SPLASH", 0x16b5ce67, 0, false},         {"SPLASH_SET", 0x006a2c32, 0, true},
-    {"RACING", 0x134c6830, 0, false},         {"RACING_SET", 0x36da827b, 0, true},
-    {"ART_FACTORY", 0x0dd7673a, 0, false},    {"TOP_LAYER", 0x0960dcab, 0, false},
-    {"UNIQUE", 0x1b3a8dd3, 0, false},         {"CONTEST", 0x1ba508fc, 0, false},
-    {"AFTER_MARKET", 0xe22eb851, 0, false},   {"HOOD", 0x694fec66, 0, false},
-    {"BODY", 0x694ca0ca, 0, false},
+    {"FLAMES", 0xf8148554, 0xb3ab0d65, false},         {"FLAMES_SET", 0x4ef4919f, 0x4aa403de, true},
+    {"LIGHTNING", 0xf2173020, 0x588a0a91, false},      {"LIGHTNING_S", 0x8ca7c26b, 0x0a16b73d, true},
+    {"TRIBAL", 0x192d84da, 0xd4c40ceb, false},         {"TRIBAL_SET", 0x4bede425, 0xd55ad357, true},
+    {"STRIPES", 0xf7352706, 0xd2982464, false},        {"STRIPES_SET", 0x4c12bc51, 0xff8de430, true},
+    {"WILD", 0x69580c2c, 0xb6db5bfd, false},           {"WILD_SET", 0x31cfc477, 0x3f6da129, true},
+    {"TEAR", 0x695654a8, 0xb6d9a479, false},           {"TEAR_SET", 0x2075eaf3, 0x4e6ae825, true},
+    {"MODERN", 0x08a07001, 0xc436f812, false},         {"MODERN_SET", 0x43a00acc, 0x687f411e, true},
+    {"FLAG", 0x694ec516, 0xb6d214e7, false},           {"FLAG_SET", 0x4eece261, 0x2909a9d3, true},
+    {"SPLASH", 0x16b5ce67, 0xd24c5678, false},         {"SPLASH_SET", 0x006a2c32, 0x6e37cdc4, true},
+    {"RACING", 0x134c6830, 0xcee2f041, false},         {"RACING_SET", 0x36da827b, 0x7f61feed, true},
+    {"ART_FACTORY", 0x0dd7673a, 0x8e076bec, false},    {"TOP_LAYER", 0x0960dcab, 0x6fd3b71c, false},
+    {"UNIQUE", 0x1b3a8dd3, 0xd6d115e4, false},         {"CONTEST", 0x1ba508fc, 0x4a0c932d, false},
+    {"AFTER_MARKET", 0xe22eb851, 0x64cf99a3, false},   {"HOOD", 0x694fec66, 0x913ac36a, false},
+    {"BODY", 0x694ca0ca, 0xb6cff09b, false},
 };
 
 int GroupIndex(const std::string &name)
