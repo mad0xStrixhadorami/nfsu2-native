@@ -835,6 +835,10 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         LoadOptions();
     if (m_statusPushTicks > 0 && --m_statusPushTicks == 0)
         SwitchStatusPage(0);
+    if (m_profile.valid && nowMs - m_dvdCheckMs > 1500) { // the covers are checked about every second and a half
+        m_dvdCheckMs = nowMs;
+        UpdateDvdUnlocks();
+    }
     if (m_profile.valid) {
         const std::string key = m_profile.name + "/" + std::to_string(m_profile.cars.size());
         if (key == m_statKey && m_profile.money < m_statMoney)
@@ -3387,7 +3391,13 @@ void FEStartupSequence::BuildStatusRows()
     }
     row(text(0x11f7ac44), "", true); // Rewards
     row(text(0xc35dd09e), "0");      // Magazines Won: (the port has no magazine rewards)
-    row(text(0x678144ae), "0");      // DVD Covers Won:
+    {
+        int dvds = 0;
+        for (const Career::MediaRecord &m : table.Media())
+            dvds += m.dvd;
+        snprintf(b, sizeof b, "%d/%d", DvdCoversWon(), dvds);
+        row(text(0x678144ae), b); // DVD Covers Won:
+    }
     snprintf(b, sizeof b, "%d/%d", m_profile.SignedSponsorCount(), Career::OwnedCar::kMaxDecals * 2);
     row(text(0x5f77bb60), b); // Sponsorships Signed:
     row(text(0xa49003ba), "", true); // Total Reputation
@@ -3436,7 +3446,23 @@ void FEStartupSequence::HandleStatusPageLoaded(FEPackage *pkg)
         for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext())
             if (o->FindScript(0x249db7b7))
                 FENativeInterface::SetScript(pkg, o->NameHash, 0x249db7b7, true);
-        // The list's scroll arrows and the visual-rating strip are not driven by this list.
+        // The visual-rating strip: ten stars (x = 40 + 25.5 n); the lit ones are those below the rating.
+        static const uint32_t kStarsA[10] = {0x413f8f2a, 0x413f8f2c, 0x413f8f2e, 0x413f8f30, 0x69317479,
+                                             0x6931747b, 0x6931747d, 0x6931747f, 0x69317481, 0x6931749a};
+        static const uint32_t kStarsB[10] = {0x413f8f29, 0x413f8f2b, 0x413f8f2d, 0x413f8f2f, 0x413f8f31,
+                                             0x6931747a, 0x6931747c, 0x6931747e, 0x69317480, 0x69317482};
+        const Career::OwnedCar *car = ShopCar();
+        const float rating = car ? VisualRating(*car) : 0.0f;
+        printf("[Status] visual rating %.2f\n", rating);
+        for (int s = 0; s < 10; ++s) {
+            const bool lit = float(s) + 0.5f <= rating;
+            for (uint32_t h : {kStarsA[s], kStarsB[s], 0x6ec2f0deu + uint32_t(s)})
+                if (FEObject *o = pkg->FindObjectByHash(h)) {
+                    FENativeInterface::SetObjectVisible(o, lit);
+                    if (FEObjData *d = o->GetObjData())
+                        d->Col.a = lit ? 255 : 0;
+                }
+        }
     } else if (name == "UI_Status_Region.fng") {
         m_statusPage = 1;
         const Career::EventTable &table = Career::EventTable::Get();
@@ -3465,7 +3491,38 @@ void FEStartupSequence::HandleStatusPageLoaded(FEPackage *pkg)
         FENativeInterface::SetString(pkg, 0x317ad6f6, "0%"); // DVD Covers: none won in the port
     } else {
         m_statusPage = 2;
-        FENativeInterface::SetString(pkg, 0x42e73d71, "Not Available");
+        // The covers of the stage the player is working on (0x34a16: stage 2 has #1, 3 has #2-#3, 4 has #4-#6,
+        // 5 has #7-#10): "DVD Cover #n  x.x Star Car" and "Achieve x.x star rating".
+        int stage = 2;
+        while (stage < 5 && Career::EventTable::Get().StageCleared(stage, m_profile.completedEvents))
+            ++stage;
+        int number = 0, shown = 0;
+        static const uint32_t kTitle[4] = {0x2734fb0e, 0x2734fb0f, 0x2734fb10, 0x2734fb11};
+        static const uint32_t kSub[4] = {0xb62767f2, 0xb62767f3, 0xb62767f4, 0xb62767f5};
+        bool allWon = true;
+        for (const Career::MediaRecord &m : Career::EventTable::Get().Media()) {
+            if (!m.dvd)
+                continue;
+            ++number;
+            if (m.stage != stage || shown >= 4)
+                continue;
+            const bool won = std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), m.id) != m_profile.completedEvents.end();
+            allWon = allWon && won;
+            char t[64], u[64];
+            snprintf(t, sizeof t, "DVD Cover #%d  %.1f Star Car", number, double(m.threshold));
+            snprintf(u, sizeof u, won ? "Won" : "Achieve %.1f star rating", double(m.threshold));
+            FENativeInterface::SetString(pkg, kTitle[shown], t);
+            FENativeInterface::SetString(pkg, kSub[shown], u);
+            ++shown;
+        }
+        (void)allWon;
+        for (int i = shown; i < 4; ++i) { // the stage has fewer covers than the page has rows
+            FENativeInterface::SetString(pkg, kTitle[i], "");
+            FENativeInterface::SetString(pkg, kSub[i], "");
+        }
+        FENativeInterface::SetVisible(pkg, 0x42e73d71, shown == 0);
+        if (shown == 0)
+            FENativeInterface::SetString(pkg, 0x42e73d71, "Not Available");
     }
 }
 
@@ -3887,6 +3944,100 @@ void PaintRowRange(int row, size_t count, int &lo, int &hi)
     }
 }
 } // namespace
+
+float FEStartupSequence::VisualRating(const Career::OwnedCar &car)
+{
+    uint32_t total = 0;
+    // Body parts: the price of the fitted record of each slot card (the wide-body kit replaces the bumpers and
+    // skirt, which the original then skips, 0x002c8fc8).
+    const std::string model = car.model;
+    const uint32_t carType = bStringHash(model.c_str());
+    for (size_t c = 0; c < kPartsCardCount; ++c) {
+        const PartsCardDef &card = kPartsCards[c];
+        if (card.carbon || c == kPartsRimsCard)
+            continue;
+        if (car.wideBody && (card.partId == 1 || card.partId == 2 || card.partId == 0xb))
+            continue;
+        const uint32_t type = card.universal ? UniversalPartsType(card.partId) : carType;
+        for (const CarPart &p : m_fe->Parts().Parts(type))
+            if (p.partId == card.partId && p.level > 0 && OwnedCarHasPart(car, p)) {
+                total += m_fe->Parts().Price(p);
+                break;
+            }
+    }
+    // Paint: the base colour and each part colour at their tier prices.
+    auto paintPrice = [this](uint32_t partId, uint32_t set, uint32_t index) -> uint32_t {
+        if (index == 0 || !m_fe->Paint().Has(set) || index > m_fe->Paint().Count(set))
+            return 0;
+        return m_fe->Paint().Price(partId, set, m_fe->Paint().At(set, index - 1));
+    };
+    total += paintPrice(kPaintParts[0].id, car.paintSet, car.paint);
+    for (int k = 0; k < Career::OwnedCar::kPaintParts && size_t(k + 1) < kPaintPartCount; ++k)
+        total += paintPrice(kPaintParts[k + 1].id, car.partPaintSet[k], car.partPaint[k]);
+    // Graphics: vinyl layers and decals (the catalogue is the previewed car's).
+    if (model == m_fe->PreviewCarName() && m_fe->EnsureVinylShop()) {
+        auto find = [this](const std::string &name) -> const VinylDesign * {
+            for (const VinylDesign &d : m_fe->VinylShop().Designs())
+                if (d.name == name)
+                    return &d;
+            return nullptr;
+        };
+        for (const auto &l : car.vinyls)
+            if (const VinylDesign *d = find(l.design))
+                total += VinylPriceOf(*d);
+        for (const auto &l : car.decals)
+            if (const VinylDesign *d = find(l.design))
+                total += DecalPriceOf(*d);
+    }
+    // Rims, neon and tint (the port's own shop prices).
+    if (car.rimStyle > 0)
+        for (size_t b = 1; b < RimCatalog::Brands().size(); ++b)
+            if (car.rimBrand == RimCatalog::Brands()[b].key)
+                total += RimCatalog::Price(b, car.rimStyle);
+    if (car.neon)
+        total += kNeonPrice;
+    if (car.tint)
+        total += kTintPrice;
+    return std::min(10.0f, float(total) / 500.0f); // 0x00516530: 0 -> 0 stars ... 5000 points -> 10 stars
+}
+
+int FEStartupSequence::DvdCoversWon() const
+{
+    int won = 0;
+    for (const Career::MediaRecord &m : Career::EventTable::Get().Media())
+        if (m.dvd && std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), m.id) != m_profile.completedEvents.end())
+            ++won;
+    return won;
+}
+
+// 0x0026ac88: a DVD cover of a stage the career has reached is won when the car's Visual Rating reaches its
+// threshold.  Saves from before the covers existed keep their progress: a stage whose gate event is done
+// already has its covers.
+void FEStartupSequence::UpdateDvdUnlocks()
+{
+    if (!m_profile.valid || m_profile.cars.empty() || m_profile.currentCar < 0 || m_profile.currentCar >= int(m_profile.cars.size()))
+        return;
+    const Career::EventTable &table = Career::EventTable::Get();
+    if (table.Media().empty())
+        return;
+    const float rating = VisualRating(m_profile.cars[size_t(m_profile.currentCar)]);
+    bool changed = false;
+    auto has = [this](uint32_t id) {
+        return std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), id) != m_profile.completedEvents.end();
+    };
+    for (const Career::MediaRecord &m : table.Media()) {
+        if (!m.dvd || has(m.id))
+            continue;
+        const bool reached = rating >= m.threshold && table.StageCleared(int(m.stage) - 1, m_profile.completedEvents);
+        if (reached || table.StageGateDone(int(m.stage), m_profile.completedEvents)) {
+            m_profile.completedEvents.push_back(m.id);
+            changed = true;
+            printf("[Career] DVD cover %s %s (rating %.1f, needs %.1f)\n", m.name, reached ? "won" : "granted (stage already cleared)", rating, m.threshold);
+        }
+    }
+    if (changed)
+        Career::SaveCareer(m_profile);
+}
 
 void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
 {

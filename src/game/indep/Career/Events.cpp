@@ -67,6 +67,20 @@ bool EventTable::Load(const uint8_t *bundle, size_t size)
         }
         m_events.push_back(std::move(e));
     }
+    // The media (DVD cover / magazine) records of the same container.
+    m_media.clear();
+    if (const bChunk *media = bFindChunk(container->Data(), container->Data() + container->size, 0x00034a16))
+        for (size_t o = 0; o + 0x40 <= media->size; o += 0x40) {
+            const uint8_t *r = media->Data() + o;
+            MediaRecord m;
+            memcpy(m.name, r, 0x1f);
+            m.id = U32(r, 0x20);
+            m.type = r[0x24];
+            m.stage = r[0x25];
+            m.dvd = r[0x35] != 0;
+            memcpy(&m.threshold, r + 0x3c, 4);
+            m_media.push_back(m);
+        }
     size_t series = 0, withRaces = 0;
     for (const Event &e : m_events) {
         if (e.kind == 3)
@@ -134,7 +148,18 @@ bool EventTable::StageCleared(int stage, const std::vector<uint32_t> &done) cons
     }
     if (stage > 5)
         return false;
-    return Done(kStageGate[stage], done);
+    // 0x002666c0: the stage's gate event must be done and every DVD cover of the stage won (0x00266618).
+    if (!Done(kStageGate[stage], done))
+        return false;
+    for (const MediaRecord &m : m_media)
+        if (m.dvd && m.stage == stage && !Done(m.id, done))
+            return false;
+    return true;
+}
+
+bool EventTable::StageGateDone(int stage, const std::vector<uint32_t> &done) const
+{
+    return stage >= 2 && stage <= 5 && Done(kStageGate[stage], done);
 }
 
 bool EventTable::EventAvailable(const Event &e, const std::vector<uint32_t> &done) const

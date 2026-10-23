@@ -227,6 +227,12 @@ private:
         std::string label, value;
         bool header = false;
     };
+    // Visual Rating (0x00267e48 -> 0x002c8fc8): the summed shop price of the car's visual parts, one star per $500
+    // up to ten stars at $5000 (ISSUES #246); DVD covers are won when the rating reaches their threshold.
+    float VisualRating(const Career::OwnedCar &car);
+    void UpdateDvdUnlocks();
+    int DvdCoversWon() const;
+    uint32_t m_dvdCheckMs = 0;
     void HandleStatusMasterLoaded(FEPackage *pkg);
     void HandleStatusPageLoaded(FEPackage *pkg);
     void HandleStatusMessage(uint32_t msg, FEPackage *pkg);

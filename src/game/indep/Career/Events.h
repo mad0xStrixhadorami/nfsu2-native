@@ -42,6 +42,19 @@ struct Event {
     }
 };
 
+// One 0x34a16 media record (0x40 bytes, ISSUES #246): 30 per game.  `dvd` records (flag +0x35) are the DVD
+// covers that gate a stage (0x00266618: the stage is entered only when all of them are won, 0x002666c0); the
+// others are magazine pictures.  `threshold` (+0x3c) is the Visual Rating a car needs to be featured on the
+// cover (0x0026ac88 unlocks a record of the current stage when 0x00267e48's rating reaches it).
+struct MediaRecord {
+    char name[0x20] = {};
+    uint32_t id = 0;       // +0x20 completion id (the profile's completed-event list)
+    uint8_t type = 0;      // +0x24
+    uint8_t stage = 0;     // +0x25 (2..5)
+    bool dvd = false;      // +0x35
+    float threshold = 0.0f; // +0x3c star rating
+};
+
 // The parsed 0x34a11 table. It is static game data: load it once from the GLOBALB bundle.
 class EventTable {
 public:
@@ -53,6 +66,7 @@ public:
     const Event *FindByRace(int race) const; // 0x002635d8
     const Event *FindById(uint32_t id) const; // 0x00263568
 
+    const std::vector<MediaRecord> &Media() const { return m_media; }
     static EventTable &Get();
 
     // Career progression (ISSUES #152). An event in region r >= 2 whose +0x10 byte is r-1 (the other
@@ -63,6 +77,7 @@ public:
     // career intro.
     bool EventAvailable(const Event &e, const std::vector<uint32_t> &done) const;
     bool StageCleared(int stage, const std::vector<uint32_t> &done) const;
+    bool StageGateDone(int stage, const std::vector<uint32_t> &done) const; // the gate event alone (no DVD covers)
     bool AreaAvailable(int area, const std::vector<uint32_t> &done) const; // world map tab
 
     // Quick Race track lock (0x0026b438, called through 0x00271a90 flags bit 0). A race is playable
@@ -72,6 +87,7 @@ public:
 
 private:
     std::vector<Event> m_events;
+    std::vector<MediaRecord> m_media;
 };
 
 } // namespace Career
