@@ -260,8 +260,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 continue;
             float mx = (gx + 0.5f) * kCellSize - cam.x, my = (gy + 0.5f) * kCellSize - cam.y;
             float along = mx * cy + my * sy, across = std::fabs(mx * sy - my * cy);
-            if (std::hypot(mx, my) > kDrawDistance + kCellSize || along < -kCellSize ||
-                across > along * coneSlope + kCellSize * 0.75f)
+            if (!m_scene && (std::hypot(mx, my) > kDrawDistance + kCellSize || along < -kCellSize ||
+                             across > along * coneSlope + kCellSize * 0.75f))
                 continue;
             GLCell &cell = m_glCells[it->first];
             upload(cell, it->second.render);

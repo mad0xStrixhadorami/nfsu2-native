@@ -586,6 +586,89 @@ bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNu
     return false;
 }
 
+bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
+{
+    const uint8_t *d = file.data();
+    const size_t n = file.size();
+    ReleaseGL();
+    m_cells.clear();
+    m_panorama.clear();
+    m_panoramaVertices = 0;
+    m_barriers.clear();
+    m_packs.clear();
+    m_tpkData.clear();
+    m_textures.clear();
+    m_collision.clear();
+    m_csections.clear();
+    m_csectionGrid.clear();
+    m_collisionFaces = 0;
+    m_scene = false;
+    m_triangleCount = m_instances = 0;
+    ForEachChunk(d, 0, n, [&](uint32_t id, size_t body, size_t len) {
+        if (id != 0xb3300000)
+            return;
+        auto data = std::make_unique<std::vector<uint8_t>>(d + body - 8, d + body + len);
+        auto pack = std::make_unique<TexturePack>();
+        if (pack->Parse(data->data(), data->size())) {
+            for (size_t i = 0; i < pack->Count(); ++i)
+                m_textures.emplace(pack->At(i).nameHash, std::make_pair(pack.get(), i));
+            m_tpkData.push_back(std::move(data));
+            m_packs.push_back(std::move(pack));
+        }
+    });
+    const std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(d, n);
+    for (const SolidMesh::NamedSolid &s : solids) {
+        ++m_instances;
+        if (getenv("NFSU2_SCENE_DEBUG")) {
+            float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+            for (const SolidMesh::Triangle &t : s.tris)
+                for (const SolidMesh::Point &q : t.v) {
+                    const SolidMesh::Point p = SolidMesh::TransformPoint(s, q);
+                    const float c[3] = {p.x, p.y, p.z};
+                    for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c[k]); hi[k] = std::max(hi[k], c[k]); }
+                }
+            printf("[Scene] solid %08x '%s' %zu tris bbox %.2f %.2f %.2f .. %.2f %.2f %.2f\n", s.hash, s.name.c_str(), s.tris.size(),
+                   lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+        }
+        for (const SolidMesh::Triangle &t : s.tris) {
+            Tri w;
+            RTri rt;
+            for (int k = 0; k < 3; ++k) {
+                const SolidMesh::Point p = SolidMesh::TransformPoint(s, t.v[k]);
+                w.v[k * 3] = p.x, w.v[k * 3 + 1] = p.y, w.v[k * 3 + 2] = p.z;
+            }
+            if (!Shade(w, 0.62f, 0.62f, 0.62f))
+                continue;
+            rt.tex = t.tex >= 0 && size_t(t.tex) < s.textures.size() && m_textures.count(s.textures[t.tex]) ? s.textures[t.tex] : 0;
+            for (int k = 0; k < 3; ++k) {
+                const SolidMesh::Point &p = t.v[k];
+                RVertex &v = rt.v[k];
+                v.x = w.v[k * 3], v.y = w.v[k * 3 + 1], v.z = w.v[k * 3 + 2];
+                v.u = p.u, v.v = p.v;
+                if (rt.tex) {
+                    v.r = uint8_t(std::min(255, p.r * 2)), v.g = uint8_t(std::min(255, p.g * 2));
+                    v.b = uint8_t(std::min(255, p.b * 2));
+                } else {
+                    v.r = w.shade[0], v.g = w.shade[1], v.b = w.shade[2];
+                }
+                v.a = 255;
+            }
+            // One cell for the whole scene: its polygons are room-sized, so the 64 m centroid binning would let the
+            // view-cone test drop half of a floor.
+            Cell &cell = m_cells[CellKey(0, 0)];
+            cell.tris.push_back(w);
+            cell.tris.back().phys = 0;
+            cell.render.push_back(rt);
+            ++m_triangleCount;
+        }
+    }
+    m_scene = true;
+    m_start = Camera();
+    m_start.z = 1.6f;
+    printf("[World] scene: %zu solids, %zu triangles, %zu textures\n", solids.size(), m_triangleCount, m_textures.size());
+    return m_triangleCount > 0;
+}
+
 bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours)
 {
     const uint8_t *d = stream.data();
@@ -600,6 +683,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     m_textures.clear();
     m_triangleCount = m_instances = 0;
     m_borrowedSolids = 0;
+    m_scene = false;
 
     // Solids by name hash (UG2 solid loader 0x001bf3b8 keeps the same per-solid chunk layout).
     struct SolidRef {

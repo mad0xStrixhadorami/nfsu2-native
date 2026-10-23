@@ -30,6 +30,10 @@ public:
     // regions' streams, used only for solids the region's scenery names but does not contain
     // (ISSUES.md #121); they are not kept after loading.
     bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
+    // Replace the world with a standalone scene file (FRONTEND\\PLATFORMS\\*.BIN: an 0x80134000 solid list plus
+    // its own 0xb3300000 texture pack, e.g. the career garage CRIB01.BIN, ISSUES #251). The solids keep their
+    // 0x134011 header transforms; there is no collision mesh. Returns false when no solid decoded.
+    bool LoadScene(const std::vector<uint8_t> &file);
     // A drivable spot to start from: the centre of a road instance near the middle of the map.
     Camera StartCamera() const { return m_start; }
     // Race start grids from Tracks\Routes<region>\TrackPosMarkersAll.bin (chunk 0x34146, 48-byte
@@ -171,6 +175,7 @@ private:
     int m_groundSource = 0;
     Camera m_start;
     size_t m_triangleCount = 0;
+    bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;
     size_t m_borrowedSolids = 0;
     std::vector<SDL_Vertex> m_frame; // per-frame vertex buffer

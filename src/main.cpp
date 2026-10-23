@@ -643,7 +643,7 @@ int main(int argc, char **argv)
     AiDriver playerAi; // NFSU2_AUTODRIVE with a route
     std::vector<float> aiStartS;
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
-    bool inWorld = false, flyCamera = false;
+    bool inWorld = false, flyCamera = false, sceneMode = false;
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
     // The pause menu's package changes when Options opens and closes (a package switch), so look it up.
     auto pauseScreen = [&engine, &pausePkg]() -> FEPackage * {
@@ -1186,6 +1186,22 @@ int main(int argc, char **argv)
             cribPkg = engine->PushPackage("UI_CareerCrib.fng", 0, 0xff);
             printf("[Career] crib %s\n", cribPkg ? "shown" : "missing");
         }
+        // Dev aid / crib environment (ISSUES #251): NFSU2_SCENE=<name> replaces the world with FRONTEND\\PLATFORMS\\<name>.BIN.
+        // The career crib stands in the garage room (CRIB01.BIN: three display discs and the room around them); the
+        // player's car sits on the front disc and the camera sways in front of it (ISSUES #251). NFSU2_SCENE=off
+        // keeps the old crib over the city.
+        sceneMode = false;
+        {
+            const char *sceneEnv = getenv("NFSU2_SCENE");
+            const std::string scene = sceneEnv ? sceneEnv : (cribSession ? "CRIB01" : "");
+            if (!scene.empty() && scene != "off" &&
+                world.LoadScene(ReadGameFile(*fs, ("FRONTEND\\PLATFORMS\\" + scene + ".BIN").c_str()))) {
+                sceneMode = true;
+                car.Place(0.0f, 5.4f, 0.15f, -1.5707963f); // nose toward the entrance
+                camera = TrackWorld::Camera();
+                camera.x = 0.0f, camera.y = -2.0f, camera.z = 1.8f, camera.yaw = 1.5707963f, camera.pitch = -0.1f;
+            }
+        }
         if (const char *devPkg = getenv("NFSU2_WORLD_PKG")) { // dev aid: show an in-game bundle screen over the world
             cribPkg = engine->PushPackage(devPkg, 0, 0xff);
             printf("[World] dev package %s %s\n", devPkg, cribPkg ? "shown" : "missing");
@@ -1422,6 +1438,15 @@ int main(int argc, char **argv)
             last = now;
             // Start opens the pause menu (UI_Pause.fng); its choice comes back through FEStartup.
             FEStartupSequence::PauseAction pauseAction = startup.TakePauseAction();
+            if (cribPkg && pauseAction == FEStartupSequence::kPauseResume && sceneMode) {
+                // Leaving the garage room: stream the city region back in (the explore session, HUD and all).
+                engine->UnloadPackage(cribPkg);
+                cribPkg = nullptr;
+                sceneMode = false;
+                std::string region = currentRegion;
+                enterWorld(region);
+                continue;
+            }
             if (cribPkg && pauseAction == FEStartupSequence::kPauseResume) {
                 engine->UnloadPackage(cribPkg);
                 cribPkg = nullptr;
@@ -1766,6 +1791,8 @@ int main(int argc, char **argv)
                 for (size_t i = 0; i < cars.size(); ++i) {
                     float m[12];
                     cars[i]->Transform(m);
+                    if (sceneMode && i > 0)
+                        m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
                     world.SetCarTransform(i, m);
                 }
                 // Chase camera: behind and above, lagging the car's heading.
@@ -1783,6 +1810,15 @@ int main(int argc, char **argv)
                 camera.z = std::max(car.Z(), camGround) + kCamUp[camSetting];
                 camera.yaw = viewYaw;
                 camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
+                if (sceneMode && cribPkg) { // garage showroom: sway in front of the car on its disc
+                    const float cx = car.X(), cy = car.Y();
+                    const float a = -1.5707963f + 0.75f * std::sin(float(now) * 0.00035f);
+                    camera.x = cx + std::cos(a) * 7.0f;
+                    camera.y = cy + std::sin(a) * 7.0f;
+                    camera.z = car.Z() + 1.7f;
+                    camera.yaw = std::atan2(cy - camera.y, cx - camera.x);
+                    camera.pitch = -0.1f;
+                }
             }
             // FEng runs on real time even while the race is paused (the pause menu animates).
             engine->Update(static_cast<i32>(std::min<Uint32>(100, now - frameStart)), 0);
