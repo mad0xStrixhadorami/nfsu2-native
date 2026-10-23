@@ -39,6 +39,191 @@ void main() {
 }
 )";
 
+// ---- Office windows: interior mapping (ISSUES #266). The window texels of tall facades are replaced by a procedural
+// room found with a ray through a box grid (Van Dongen's interior mapping): back and side walls, ceiling light panel, floor,
+// desks, monitors and chairs, each room lit warm, lit cool or dark by a hash of its cell, with a glass reflection on top. ----
+inline const char *kInteriorVS = R"(#version 120
+varying vec4 vColor;
+varying vec2 vUV;
+varying float vDist;
+varying vec3 vWorld;
+void main() {
+    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    vColor = gl_Color;
+    vUV = gl_MultiTexCoord0.xy;
+    vWorld = gl_Vertex.xyz;
+    vDist = length((gl_ModelViewMatrix * gl_Vertex).xyz);
+}
+)";
+
+inline const char *kInteriorFS = R"(#version 120
+uniform sampler2D uTex;
+uniform vec3 uFogColor;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform float uGrade;
+uniform vec3 uCam;
+uniform float uTime;
+uniform float uLit;      // fraction of rooms with the lights on
+uniform float uGlassOnly; // 1 = the whole texture is glass (curtain walls), 0 = detect windows in the texture
+uniform float uDebug;
+varying vec4 vColor;
+varying vec2 vUV;
+varying float vDist;
+varying vec3 vWorld;
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+vec2 hash22(vec2 p) { return vec2(hash12(p), hash12(p + 17.3)); }
+
+// ray / axis aligned box; returns the near hit distance (or -1) and the face normal
+float boxHit(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out vec3 n) {
+    vec3 inv = 1.0 / rd;
+    vec3 t0 = (bmin - ro) * inv, t1 = (bmax - ro) * inv;
+    vec3 tmin = min(t0, t1), tmax = max(t0, t1);
+    float tn = max(max(tmin.x, tmin.y), tmin.z), tf = min(min(tmax.x, tmax.y), tmax.z);
+    if (tf < max(tn, 0.0)) return -1.0;
+    n = tn == tmin.x ? vec3(-sign(rd.x), 0.0, 0.0) : (tn == tmin.y ? vec3(0.0, -sign(rd.y), 0.0) : vec3(0.0, 0.0, -sign(rd.z)));
+    return tn;
+}
+
+// A room in its own frame: a along the facade, b up, c into the building. ro is the ray start on the window plane.
+vec3 room(vec3 ro, vec3 rd, vec2 cell, vec3 size, float detail) {
+    float h0 = hash12(cell), h1 = hash12(cell + 3.1), h2 = hash12(cell + 7.7), h3 = hash12(cell + 11.9);
+    bool lit = h0 < uLit;
+    bool cool = h1 < 0.3;
+    vec3 lightCol = cool ? vec3(0.78, 0.90, 1.0) : mix(vec3(1.0, 0.82, 0.55), vec3(1.0, 0.95, 0.80), h2);
+    float power = lit ? mix(0.7, 1.35, h3) : 0.0;
+    // the room's shell
+    float tx = rd.x > 0.0 ? (size.x - ro.x) / rd.x : -ro.x / rd.x;
+    float ty = rd.y > 0.0 ? (size.y - ro.y) / rd.y : -ro.y / rd.y;
+    float tz = (size.z - ro.z) / rd.z;
+    float t = min(min(tx, ty), tz);
+    vec3 hit = ro + rd * t;
+    vec3 wall = mix(vec3(0.55, 0.53, 0.50), vec3(0.45, 0.50, 0.58), h1) * (0.7 + 0.5 * h2);
+    vec3 albedo = wall;
+    vec3 nrm;
+    if (t == tz) { // back wall: a panel, a poster or shelves
+        nrm = vec3(0.0, 0.0, -1.0);
+        vec2 q = hit.xy / size.xy;
+        float poster = step(0.58, h3) * step(abs(q.x - 0.5 - (h0 - 0.5) * 0.5), 0.14) * step(abs(q.y - 0.62), 0.16);
+        albedo = mix(wall, mix(vec3(0.8, 0.2, 0.15), vec3(0.15, 0.4, 0.8), h1), poster * 0.85);
+        albedo *= 0.8 + 0.2 * smoothstep(0.0, 0.1, q.y); // skirting
+    } else if (t == ty) {
+        nrm = vec3(0.0, rd.y > 0.0 ? -1.0 : 1.0, 0.0);
+        albedo = rd.y > 0.0 ? vec3(0.8) : mix(vec3(0.16, 0.17, 0.22), vec3(0.28, 0.2, 0.16), h1); // ceiling tiles / carpet
+        if (rd.y > 0.0) { // a ceiling light panel (emissive when the lights are on)
+            vec2 q = (hit.xz - size.xz * 0.5) / size.xz;
+            float panel = step(abs(q.x), 0.28) * step(abs(q.y), 0.12);
+            albedo = mix(albedo, lightCol * 2.2 * power, panel);
+        }
+    } else {
+        nrm = vec3(rd.x > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+        albedo = wall * 0.85;
+    }
+    // furniture: a desk with a monitor and a chair, or a shelf unit, placed by the room hash
+    vec3 deskMin = vec3(size.x * (0.12 + 0.2 * h0), 0.0, size.z * (0.30 + 0.25 * h2));
+    vec3 deskMax = vec3(deskMin.x + size.x * (0.38 + 0.25 * h1), 0.74, deskMin.z + size.z * 0.18);
+    vec3 bn;
+    float bt = boxHit(ro, rd, deskMin, deskMax, bn);
+    vec3 col = albedo;
+    float emissive = 0.0;
+    if (detail > 0.5 && h3 > 0.12 && bt > 0.0 && bt < t) {
+        t = bt; nrm = bn; albedo = mix(vec3(0.30, 0.22, 0.15), vec3(0.55, 0.55, 0.58), h1);
+        col = albedo;
+    }
+    // monitor on the desk (faces the window): a thin bright box
+    vec3 monMin = vec3(deskMin.x + (deskMax.x - deskMin.x) * 0.35, 0.74, deskMin.z + 0.04);
+    vec3 monMax = vec3(monMin.x + 0.62, 1.2, monMin.z + 0.06);
+    float mt = boxHit(ro, rd, monMin, monMax, bn);
+    if (detail > 0.5 && h3 > 0.12 && mt > 0.0 && mt < t) {
+        t = mt; nrm = bn; albedo = vec3(0.04);
+        // the screen faces the window (-c): bright when someone works late
+        if (bn.z < -0.5 && (lit || h0 > 0.45)) {
+            emissive = 1.0;
+            albedo = mix(vec3(0.25, 0.55, 1.0), vec3(0.2, 0.9, 0.5), h2) * (0.9 + 0.1 * sin(uTime * 3.0 + h0 * 20.0));
+        }
+    }
+    // a chair in front of the desk
+    vec3 chMin = vec3(deskMin.x + (deskMax.x - deskMin.x) * 0.4, 0.0, deskMax.z + 0.1);
+    vec3 chMax = chMin + vec3(0.5, 0.95, 0.5);
+    float ct = boxHit(ro, rd, chMin, chMax, bn);
+    if (detail > 0.5 && h3 > 0.3 && ct > 0.0 && ct < t) {
+        t = ct; nrm = bn; albedo = vec3(0.08, 0.09, 0.12);
+    }
+    // lighting: the ceiling panel (or a monitor glow / TV flicker in a dark room) plus a little ambient
+    vec3 P = ro + rd * t;
+    vec3 lp = vec3(size.x * 0.5, size.y - 0.05, size.z * 0.5);
+    vec3 toL = lp - P;
+    float dist = length(toL);
+    float diff = max(dot(nrm, toL / dist), 0.0);
+    vec3 light = lightCol * power * (0.35 + 0.95 * diff) / (1.0 + 0.045 * dist * dist);
+    vec3 glow = vec3(0.0);
+    if (!lit) {
+        float tv = step(0.7, hash12(cell + 91.0));
+        vec3 tvCol = vec3(0.25, 0.4, 0.8) * (0.75 + 0.25 * sin(uTime * 7.0 + h0 * 30.0 + sin(uTime * 2.1) * 3.0));
+        glow = tvCol * tv * (0.10 + 0.14 * diff) + vec3(0.012, 0.014, 0.02);
+    }
+    // dark rooms still catch the city's glow through the glass (orange street light from below, blue sky from above)
+    vec3 cityGlow = mix(vec3(0.045, 0.036, 0.028), vec3(0.024, 0.032, 0.05), clamp(P.y / size.y, 0.0, 1.0));
+    col = albedo * (light + glow + 0.06 * power + cityGlow * (1.0 + 0.5 * h1));
+    col = mix(col, albedo, emissive); // emissive surfaces show their own colour
+    return col;
+}
+
+void main() {
+    vec4 tex = texture2D(uTex, vUV);
+    vec4 facade = tex * vColor;
+    vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
+    vec3 N = normalize(cross(dpx, dpy));
+    vec3 V = vWorld - uCam;
+    // the normal must face the camera, and the wall must be vertical
+    if (dot(N, V) > 0.0) N = -N;
+    float fade = 1.0 - smoothstep(110.0, 260.0, vDist);
+    float luma = dot(tex.rgb, vec3(0.299, 0.587, 0.114));
+    float mx = max(tex.r, max(tex.g, tex.b)), mn = min(tex.r, min(tex.g, tex.b));
+    float sat = (mx - mn) / max(mx, 0.001);
+    // window texels: dark, grey-blue glass, or bright warm lit panes (the night versions of the facades)
+    float dark = (1.0 - smoothstep(0.30, 0.52, luma)) * (1.0 - smoothstep(0.42, 0.78, sat));
+    float lit = smoothstep(0.52, 0.72, luma) * smoothstep(0.10, 0.35, tex.r - tex.b);
+    float mask = mix(max(dark, lit), 1.0, uGlassOnly);
+    mask *= step(abs(N.z), 0.35) * fade * tex.a;
+    vec3 c = facade.rgb;
+    if (mask > 0.01) {
+        vec3 up = vec3(0.0, 0.0, 1.0);
+        vec3 right = normalize(cross(up, N));
+        vec3 d = normalize(V);
+        // room frame: a = along the facade, b = up, c = into the building (0 on the window plane)
+        const vec3 size = vec3(3.6, 3.1, 4.6);
+        float a = dot(vWorld, right), b = vWorld.z;
+        vec2 ij = vec2(floor(a / size.x), floor(b / size.y));
+        vec2 cell = ij + floor(dot(vWorld, N) * 0.37) * 31.0; // the hash seed (differs between facades)
+        vec3 ro = vec3(a - ij.x * size.x, b - ij.y * size.y, 0.0);
+        vec3 rd = vec3(dot(d, right), d.z, -dot(d, N));
+        if (rd.z > 0.02) {
+            vec3 inside = room(ro, rd, cell, size, 1.0 - smoothstep(55.0, 95.0, vDist) > 0.5 ? 1.0 : 0.0);
+            // a little glass: sky / street reflection that grows at grazing angles, and a faint tint
+            float cosI = clamp(rd.z, 0.0, 1.0);
+            float F = 0.06 + 0.94 * pow(1.0 - cosI, 4.0);
+            vec3 reflection = mix(vec3(0.05, 0.07, 0.11), vec3(0.20, 0.25, 0.34), clamp(0.5 + 0.5 * reflect(d, N).z, 0.0, 1.0));
+            vec3 glass = inside * (1.0 - F) * vec3(0.95, 1.0, 1.0) + reflection * F;
+            c = mix(c, glass, clamp(mask, 0.0, 0.92));
+        }
+    }
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(l), c, 1.0 + 0.16 * uGrade);
+    float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+    f = f * f * (3.0 - 2.0 * f);
+    c = mix(c, uFogColor, f);
+    if (uDebug > 1.5) c = vec3(mask, fade, step(abs(N.z), 0.35));
+    else if (uDebug > 0.5) c = mix(c, vec3(1.0, 0.0, 1.0) * (0.4 + 0.6 * mask), 0.45);
+    gl_FragColor = vec4(c, facade.a);
+}
+)";
+
 // ---- Cars: per-pixel paint with a clear coat, a procedural night-city environment and Fresnel -------------------------------
 inline const char *kCarVS = R"(#version 120
 attribute vec3 aNormal;

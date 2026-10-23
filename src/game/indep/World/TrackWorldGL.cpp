@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include <SDL_opengl.h>
 
@@ -138,17 +139,44 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     return id;
 }
 
+// Which textures carry office / hotel / tower windows (ISSUES #266): by name. 2 = glass curtain walls (every texel is glass),
+// 1 = facades with windows baked in (the shader finds the window texels). Awnings, canopies, doors and shop fronts are not rooms.
+int TrackWorld::InteriorClassOf(uint32_t hash)
+{
+    auto it = m_interiorClass.find(hash);
+    if (it != m_interiorClass.end())
+        return it->second;
+    int cls = 0;
+    auto src = m_textures.find(hash);
+    if (src != m_textures.end() && m_progInterior) {
+        std::string n = src->second.first->At(src->second.second).name;
+        auto has = [&](const char *k) { return n.find(k) != std::string::npos; };
+        const bool excluded = has("AWNING") || has("CANOPY") || has("DOOR") || has("LOBBY") || has("SHOP") || has("STORE") || has("HIGHLIGHT") ||
+                              has("DRAPES") || has("SHUTTER") || has("LV") || n.rfind("LOD_", 0) == 0 || n.rfind("SFX_", 0) == 0 ||
+                              has("CORREG") || has("BESTBUY") || has("MUSEUM") || has("CAFE") || has("MALL") || has("THEATRE") || has("DRIVEIN");
+        if (!excluded && (has("GLASSBLUEWIN") || has("GREENWINDOWTOWER") || has("WINDGLASS")))
+            cls = 2;
+        else if (!excluded && (has("OFFICE") || has("TOWER") || has("HOTEL") || has("CONDO") || has("APART") || has("WIN") || has("CT4STORY")))
+            cls = 1;
+    }
+    m_interiorClass[hash] = cls;
+    if (cls && getenv("NFSU2_INTERIOR_DEBUG"))
+        printf("[Interior] class %d: %s\n", cls, m_textures.count(hash) ? m_textures[hash].first->At(m_textures[hash].second).name.c_str() : "?");
+    return cls;
+}
+
 void TrackWorld::InitShaders()
 {
     m_shadersTried = true;
     if (!GLShader::Load())
         return;
     m_progWorld = GLShader::Build("world", Shaders::kWorldVS, Shaders::kWorldFS);
+    m_progInterior = getenv("NFSU2_NO_INTERIORS") ? 0 : GLShader::Build("interior", Shaders::kInteriorVS, Shaders::kInteriorFS);
     m_progCar = GLShader::Build("car", Shaders::kCarVS, Shaders::kCarFS, {{1, "aNormal"}, {2, "aGloss"}, {3, "aAO"}});
     m_progBright = GLShader::Build("bright", Shaders::kPostVS, Shaders::kBrightFS);
     m_progBlur = GLShader::Build("blur", Shaders::kPostVS, Shaders::kBlurFS);
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
-    printf("[GLSL] programs: world %u, car %u, post %u / %u / %u\n", m_progWorld, m_progCar, m_progBright, m_progBlur, m_progComposite);
+    printf("[GLSL] programs: world %u, interior %u, car %u, post %u / %u / %u\n", m_progWorld, m_progInterior, m_progCar, m_progBright, m_progBlur, m_progComposite);
 }
 
 void TrackWorld::ReleasePost()
@@ -360,7 +388,10 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     static std::vector<Vertex> scratch;
 
     // The world program: textured scenery with grading and fog (the fixed-function path stays as the fallback).
+    float curFogStart = kFogStart, curFogEnd = kDrawDistance;
+    bool onInterior = false;
     auto worldProgram = [&](float fogStart, float fogEnd) {
+        curFogStart = fogStart, curFogEnd = fogEnd, onInterior = false;
         if (!m_progWorld)
             return;
         GLShader::Use(m_progWorld);
@@ -369,6 +400,21 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogStart"), fogStart);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogEnd"), fogEnd);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
+    };
+
+    // The interior-mapping program for the windowed facades (ISSUES #266).
+    auto interiorProgram = [&]() {
+        GLShader::Use(m_progInterior);
+        onInterior = true;
+        GLShader::Set1i(GLShader::Uniform(m_progInterior, "uTex"), 0);
+        GLShader::Set3f(GLShader::Uniform(m_progInterior, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogStart"), curFogStart);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogEnd"), curFogEnd);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
+        GLShader::Set3f(GLShader::Uniform(m_progInterior, "uCam"), cam.x, cam.y, cam.z);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uTime"), float(SDL_GetTicks()) * 0.001f);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDebug"), getenv("NFSU2_INTERIOR_DEBUG") ? float(atof(getenv("NFSU2_INTERIOR_DEBUG"))) : 0.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : 0.42f);
     };
 
     // Upload render triangles once: grouped by texture, one draw range per texture.
@@ -382,7 +428,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (i == 0 || render[i].tex != render[i - 1].tex) {
                 unsigned tex = GLTexture(render[i].tex);
                 auto mode = m_glTextureMode.find(tex);
-                cell.ranges.push_back({tex, int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second});
+                cell.ranges.push_back({tex, int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second,
+                                       render[i].tex ? InteriorClassOf(render[i].tex) : 0});
             }
             for (const RVertex &v : render[i].v)
                 scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
@@ -395,19 +442,34 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         cell.vertices = int(scratch.size());
         std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
     };
-    auto drawCell = [](const GLCell &cell, int pass) {
+    auto drawCell = [&](const GLCell &cell, int pass) {
         GLBridge::BindArrayBuffer(cell.buffer);
         glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
         glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
-        for (const GLRange &range : cell.ranges) {
-            if ((range.mode != 0) != (pass == 1))
-                continue;
-            if (pass == 1)
-                glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
-            glBindTexture(GL_TEXTURE_2D, range.texture);
-            glDrawArrays(GL_TRIANGLES, range.first, range.count);
+        // Opaque ranges are drawn twice over: plain facades with the world program, then the window facades with the
+        // interior program (one program switch per cell instead of one per texture).
+        const int sweeps = (pass == 0 && m_progInterior) ? 2 : 1;
+        for (int sweep = 0; sweep < sweeps; ++sweep) {
+            if (sweep == 1)
+                interiorProgram();
+            else if (onInterior)
+                worldProgram(curFogStart, curFogEnd);
+            for (const GLRange &range : cell.ranges) {
+                if ((range.mode != 0) != (pass == 1))
+                    continue;
+                if (pass == 0 && m_progInterior && (range.interior != 0) != (sweep == 1))
+                    continue;
+                if (sweep == 1)
+                    GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), range.interior == 2 ? 1.0f : 0.0f);
+                if (pass == 1)
+                    glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+                glBindTexture(GL_TEXTURE_2D, range.texture);
+                glDrawArrays(GL_TRIANGLES, range.first, range.count);
+            }
         }
+        if (onInterior)
+            worldProgram(curFogStart, curFogEnd);
     };
 
     // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.

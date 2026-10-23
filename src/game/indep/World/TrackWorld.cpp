@@ -1251,7 +1251,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     if (const char *pre = getenv("NFSU2_TEX_NAMES")) // dev aid: texture names starting with the prefix
         for (const auto &pk : m_packs)
             for (size_t i = 0; i < pk->Count(); ++i)
-                if (strncmp(pk->At(i).name.c_str(), pre, strlen(pre)) == 0)
+                if (strncmp(pk->At(i).name.c_str(), pre, strlen(pre)) == 0 || (pre[0] == '*' && strstr(pk->At(i).name.c_str(), pre + 1)))
                 {
                     printf("[TexName] %08x %s %dx%d alpha %d/%d\n", pk->At(i).nameHash, pk->At(i).name.c_str(), pk->At(i).width,
                            pk->At(i).height, pk->At(i).alphaUsage, pk->At(i).alphaBlend);

@@ -272,6 +272,7 @@ private:
         unsigned texture; // GL texture name (a white 1x1 for untextured triangles)
         int first, count;
         int mode;         // 0 opaque / punch-through, 1 alpha blend, 2 additive
+        int interior = 0; // 1 = window facade (interior mapping), 2 = curtain-wall glass (the whole texture is glass)
     };
     struct GLCell {
         unsigned buffer = 0;
@@ -282,6 +283,9 @@ private:
     // 0x2e95ce7d): drawn with a procedural additive gradient (ISSUES #254).
     static bool IsBeamTexture(uint32_t hash) { return hash == 0x2e95ce7cu || hash == 0x2e95ce7du; }
     // Shader programs and the post-processing targets (ISSUES #263; TrackWorldGL.cpp).
+    unsigned m_progInterior = 0;
+    std::unordered_map<uint32_t, int> m_interiorClass; // texture hash -> 0 none / 1 windowed facade / 2 glass wall
+    int InteriorClassOf(uint32_t hash);
     unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0;
     unsigned m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
     int m_postW = 0, m_postH = 0;
