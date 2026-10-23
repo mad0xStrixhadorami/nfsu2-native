@@ -504,6 +504,7 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     // Installed rims (ISSUES #226): pick the brand style's solid (highest LOD) whose outer radius is
     // nearest the car's tyre and use it on both axles.
     std::vector<SolidMesh::NamedSolid> rimSolids;
+    const SolidMesh::NamedSolid *spinSolid = nullptr;
     if (parts && parts->rimStyle > 0 && !parts->rimGeometry.empty() && !parts->rimBrand.empty()) {
         rimSolids = SolidMesh::DecodeNamedSolids(parts->rimGeometry.data(), parts->rimGeometry.size());
         char prefix[48];
@@ -520,6 +521,13 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         }
         if (best) {
             frontWheel = rearWheel = best;
+            // Spinners: a separate hub piece (<stem>_SPIN_, first of its three LODs) rides on the wheel.
+            const std::string stem = best->name.substr(0, best->name.size() - 1) + "SPIN_";
+            for (const SolidMesh::NamedSolid &s : rimSolids)
+                if (s.name == stem && !s.tris.empty()) {
+                    spinSolid = &s;
+                    break;
+                }
             printf("[Rims] %s (radius %.3f for a %.3f tyre)\n", best->name.c_str(),
                    0.5f * std::max(best->bboxMax[0] - best->bboxMin[0], best->bboxMax[2] - best->bboxMin[2]), target);
         } else {
@@ -632,6 +640,8 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             const float outboard = std::fabs(w.y) + w.width * 0.5f;
             const float yMin = solid.bboxMin[1];
             AddWheel(solid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
+            if (spinSolid)
+                AddWheel(*spinSolid, w.x, left ? outboard + yMin : -outboard - yMin, w.z, left, m_model, m_triTex, m_triRim);
         }
         m_rideHeight = std::max(0.0f, wheels[0].radius - wheels[0].z);
         m_wheelRadius = wheels[0].radius;

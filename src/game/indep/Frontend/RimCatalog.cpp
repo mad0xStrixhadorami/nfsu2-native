@@ -18,6 +18,7 @@ const std::vector<RimBrand> kBrands = {
     {"OASIS", "OASIS", "Oasis", 0x0ee6d551},
     {"OZ", "P9", "OZ Racing", 0x6c2fa9db},
     {"RACINGHART", "RACINGHART", "Racing Hart", 0x27ebd095},
+    {"SPINNER", "SPINNER", "Spinner", 0x0dc9c33a}, // wheel + a spinning hub piece (_SPIN_)
 };
 } // namespace
 
