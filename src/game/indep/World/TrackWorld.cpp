@@ -1,3 +1,4 @@
+#include <set>
 #include <tuple>
 #include <map>
 #include "game/indep/World/TrackWorld.h"
@@ -868,9 +869,9 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         else if (id == 0xb3300000)
             addPack(d, body, len);
     });
-    if (!m_extraPack.empty()) { // the location's dynamic textures (see SetExtraPack)
-        const uint8_t *e = m_extraPack.data();
-        ForEachChunk(e, 0, m_extraPack.size(), [&](uint32_t id, size_t body, size_t len) {
+    for (const std::vector<uint8_t> &pack : m_extraPacks) { // dynamic / global texture packs (see SetExtraPack)
+        const uint8_t *e = pack.data();
+        ForEachChunk(e, 0, pack.size(), [&](uint32_t id, size_t body, size_t len) {
             if (id == 0xb3300000)
                 addPack(e, body, len);
         });
@@ -976,6 +977,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         float cx, cy, z, yaw;
     };
     std::vector<RoadSpot> roads;
+    std::set<uint32_t> missingShown;
     std::map<uint32_t, std::vector<std::string>> missingNames;
     std::map<uint32_t, size_t> missingTex; // dev aid NFSU2_MISSING_TEX: unresolved texture hash -> triangles
     double sumX = 0, sumY = 0;
@@ -1119,6 +1121,13 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 if (!rt.tex && t.tex >= 0 && size_t(t.tex) < s.textures.size() && getenv("NFSU2_MISSING_TEX"))
                 {
                     ++missingTex[s.textures[t.tex]];
+                    if (getenv("NFSU2_MISSING_TEX_SIBLINGS") && !missingShown.count(s.textures[t.tex])) {
+                        missingShown.insert(s.textures[t.tex]);
+                        printf("[MissingSibling] %08x in solid %08x (%s):", s.textures[t.tex], it->first, name);
+                        for (uint32_t th : s.textures)
+                            printf(" %08x=%s", th, m_textures.count(th) ? m_textures[th].first->At(m_textures[th].second).name.c_str() : "?");
+                        printf("\n");
+                    }
                     auto &names = missingNames[s.textures[t.tex]];
                     if (names.size() < 6 && std::find(names.begin(), names.end(), std::string(name)) == names.end())
                         names.push_back(name);

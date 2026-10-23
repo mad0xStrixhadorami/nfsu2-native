@@ -32,7 +32,8 @@ public:
     // A texture pack (0xb3300000) joined to every following Load: the location's dynamic textures
     // (TRACKS\\LOC<n>DYNTEX.BIN), which the region streams do not carry (ISSUES #254). Must be set before Load,
     // because triangles resolve their texture at load time.
-    void SetExtraPack(std::vector<uint8_t> data) { m_extraPack = std::move(data); }
+    void SetExtraPack(std::vector<uint8_t> data) { m_extraPacks.clear(); AddExtraPack(std::move(data)); }
+    void AddExtraPack(std::vector<uint8_t> data) { if (!data.empty()) m_extraPacks.push_back(std::move(data)); }
     bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
     // Replace the world with a standalone scene file (FRONTEND\\PLATFORMS\\*.BIN: an 0x80134000 solid list plus
     // its own 0xb3300000 texture pack, e.g. the career garage CRIB01.BIN, ISSUES #251). The solids keep their
@@ -179,7 +180,7 @@ private:
     int m_groundSource = 0;
     Camera m_start;
     size_t m_triangleCount = 0;
-    std::vector<uint8_t> m_extraPack;
+    std::vector<std::vector<uint8_t>> m_extraPacks;
     bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;
     size_t m_borrowedSolids = 0;

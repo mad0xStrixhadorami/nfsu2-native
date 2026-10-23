@@ -318,7 +318,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                     const float fx = (x + 0.5f) / n * 2.0f - 1.0f, fy = (y + 0.5f) / n * 2.0f - 1.0f;
                     const float d = std::pow(std::pow(std::fabs(fx), 3.0f) + std::pow(std::fabs(fy), 3.0f), 1.0f / 3.0f); // rounded box
                     const float a = std::clamp(1.0f - d, 0.0f, 1.0f);
-                    px[size_t(y * n + x) * 4 + 3] = uint8_t(255.0f * std::sqrt(a) * 0.9f);
+                    px[size_t(y * n + x) * 4 + 3] = uint8_t(255.0f * std::sqrt(a) * 0.8f);
                 }
             glGenTextures(1, &m_glShadow);
             glBindTexture(GL_TEXTURE_2D, m_glShadow);
@@ -347,7 +347,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             const float cx = m[3], cy = m[7], z = car.groundZ + 0.08f;
             if (getenv("NFSU2_SHADOW_DEBUG"))
                 printf("[Shadow] car at %.2f %.2f %.2f groundZ %.2f half %.2f x %.2f\n", cx, cy, m[11], car.groundZ, car.halfLen, car.halfWid);
-            const float hl = car.halfLen * 1.3f, hw = car.halfWid * 1.5f;
+            const float hl = car.halfLen * 1.15f, hw = car.halfWid * 1.3f;
             std::vector<Vertex> q;
             auto vert = [&](float a, float b, float u, float v) {
                 q.push_back({cx + fx * a + lx * b, cy + fy * a + ly * b, z, u, v, 0, 0, 0, 255});

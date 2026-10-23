@@ -781,6 +781,13 @@ int main(int argc, char **argv)
         if (region.size() >= 2 && region[0] == 'L' && isdigit(static_cast<unsigned char>(region[1])) &&
             !getenv("NFSU2_NO_DYNTEX"))
             world.SetExtraPack(ReadGameFile(*fs, (std::string("TRACKS\\LOC") + region[1] + "DYNTEX.BIN").c_str()));
+        // The global packs the world draws from too: the PAL GLOBALTEXTURESROW.BIN (shop ads and shared signs) and the
+        // textures of INGAMECOMMON (the light beams, the start / finish graphics ...).
+        if (!getenv("NFSU2_NO_GLOBALTEX")) {
+            world.AddExtraPack(ReadGameFile(*fs, "GLOBAL\\GLOBALTEXTURESROW.BIN"));
+            world.AddExtraPack(inGameCommon);
+            world.AddExtraPack(globalB); // GLOBALB also holds shared object textures (OBJ_*)
+        }
         const bool loaded = !stream.empty() && world.Load(stream, neighbours);
         std::vector<std::vector<uint8_t>>().swap(neighbourData);
         if (!loaded) {
