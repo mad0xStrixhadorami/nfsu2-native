@@ -91,6 +91,11 @@ public:
         std::vector<uint8_t> roofGeometry;    // CARS\ROOF\GEOMETRY.BIN
         std::vector<uint8_t> exhaustGeometry; // CARS\EXHAUST\GEOMETRY.BIN
         std::vector<uint8_t> spoilerGeometry; // CARS\SPOILER\GEOMETRY.BIN
+        // Rims (ISSUES #226): the brand's CARS\WHEELS\GEOMETRY_<KEY>.BIN, the solid prefix and the
+        // style; the solid of that style whose size is nearest the car's wheel replaces the stock one.
+        std::vector<uint8_t> rimGeometry;
+        std::string rimBrand;
+        int rimStyle = 0;
     };
     // Dev install: NFSU2_PART_ROOF=<n>[_DUAL|_OFFSET][_CF], NFSU2_PART_EXHAUST=<n>,
     // NFSU2_PART_ENGINE=<n>, NFSU2_PART_SPOILER=<n>[_CF], NFSU2_PART_HOOD=<n>[_CF],

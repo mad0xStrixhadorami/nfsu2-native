@@ -1,4 +1,5 @@
 #include "game/indep/Frontend/FEStartup.h"
+#include "game/indep/Frontend/RimCatalog.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1955,10 +1956,12 @@ constexpr PartsCardDef kPartsCards[] = {
     {0x2cbb2d1c, 0x663437a9, 0xf, false, false, "taillights"},    // 0xf
     {0xa434a006, 0x2aced725, 0x10, true, false, "exhaust tips"},  // 0x10
     {0x945e9bc5, 0x945e9bc5, 0x6, false, false, "wide body kits"}, // 6
+    {0x0294d2a3, 0x0294d2a3, 0, false, false, "rims"},            // 0x002a7860: the wheel shop (#226)
     {0x24911e04, 0x24911e04, 0, false, true, "carbon fiber"},     // 0x002a7938
 };
 constexpr size_t kPartsCardCount = sizeof(kPartsCards) / sizeof(kPartsCards[0]);
-constexpr size_t kPartsCarbonCard = 10;
+constexpr size_t kPartsRimsCard = 10;
+constexpr size_t kPartsCarbonCard = 11;
 
 uint32_t UniversalPartsType(uint8_t partId)
 {
@@ -2021,6 +2024,10 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
 
     m_partsShopItems.clear();
     const PartsCardDef &card = kPartsCards[m_partsCategorySel];
+    if (m_partsCategorySel == kPartsRimsCard) {
+        RefreshRimList(pkg);
+        return;
+    }
     if (card.carbon) {
         for (uint32_t type : kCarbonTypes) {
             const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
@@ -2169,11 +2176,90 @@ void FEStartupSequence::PreviewOwnedParts(const Career::OwnedCar *car)
     m_fe->SetPreviewRearBumperPart(car ? car->rearBumper : 0);
     m_fe->SetPreviewSkirtPart(car ? car->skirt : 0);
     m_fe->SetPreviewWideBodyPart(car ? car->wideBody : 0);
+    m_fe->SetPreviewRim(car ? car->rimBrand : std::string(), car ? car->rimStyle : 0);
+}
+
+// The Rims card (0x002a7860, ISSUES #226).  The original goes through UI_ChooseRimBrand and
+// UI_Rims_Browser; the port lists every brand's styles in the Body Shop's own item row, first
+// "Stock", each with its brand's logo card, and names the item "<Brand> Style <n>".
+void FEStartupSequence::RefreshRimList(FEPackage *pkg)
+{
+    if (!m_rimCatalog.Built()) {
+        TexturePack pack;
+        const std::vector<uint8_t> data = m_fe->ReadGameFile("CARS\\WHEELS\\TEXTURES.BIN");
+        if (pack.Parse(data.data(), data.size()))
+            m_rimCatalog.Build(pack);
+    }
+    m_rimItems.assign(1, {0, 0}); // Stock
+    const std::vector<RimBrand> &brands = RimCatalog::Brands();
+    for (size_t b = 1; b < brands.size(); ++b)
+        for (int style : m_rimCatalog.Styles(b))
+            m_rimItems.push_back({b, style});
+    m_partsSel = 0;
+    if (const Career::OwnedCar *car = ShopCar())
+        for (size_t i = 1; i < m_rimItems.size(); ++i)
+            if (brands[m_rimItems[i].first].key == car->rimBrand && m_rimItems[i].second == car->rimStyle)
+                m_partsSel = i;
+    std::vector<FEIconScroller::Def> defs;
+    for (const auto &item : m_rimItems)
+        defs.push_back({brands[item.first].icon, 0, false, ""});
+    m_partsScroller.Setup(pkg, defs, m_partsSel, "MINI_MASTER", "PARTS_ICON", 20.0f);
+    printf("[PartsShop] rims: %zu styles in %zu brands, selected %zu\n", m_rimItems.size() - 1, brands.size() - 1, m_partsSel);
+    RefreshRimInfo(pkg);
+}
+
+void FEStartupSequence::RefreshRimInfo(FEPackage *pkg)
+{
+    if (m_rimItems.empty())
+        return;
+    const auto item = m_rimItems[std::min(m_partsSel, m_rimItems.size() - 1)];
+    const RimBrand &brand = RimCatalog::Brands()[item.first];
+    char name[64], price[32], total[16];
+    const uint32_t cost = item.second ? RimCatalog::Price(item.first, item.second) : 0;
+    if (item.second)
+        snprintf(name, sizeof name, "%s Style %d", brand.display, item.second);
+    else
+        snprintf(name, sizeof name, "Stock");
+    snprintf(price, sizeof price, "$%u", unsigned(cost));
+    snprintf(total, sizeof total, "%05u", unsigned(cost));
+    FENativeInterface::SetString(pkg, 0xd28b9316, name);
+    FENativeInterface::SetString(pkg, 0x380b632, price);
+    FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    m_fe->SetPreviewRim(item.second ? brand.key : "", item.second);
+}
+
+void FEStartupSequence::BuyRim()
+{
+    Career::OwnedCar *car = ShopCar();
+    if (!car || m_rimItems.empty())
+        return;
+    const auto item = m_rimItems[std::min(m_partsSel, m_rimItems.size() - 1)];
+    const RimBrand &brand = RimCatalog::Brands()[item.first];
+    const std::string key = item.second ? brand.key : "";
+    if (car->rimBrand == key && car->rimStyle == item.second) {
+        printf("[PartsShop] rims already fitted\n");
+        return;
+    }
+    const uint32_t price = item.second ? RimCatalog::Price(item.first, item.second) : 0;
+    if (int(price) > m_profile.money) {
+        ShowMessageDialog(kLabelNotEnoughBank);
+        return;
+    }
+    m_profile.money -= int(price);
+    car->rimBrand = key;
+    car->rimStyle = uint8_t(item.second);
+    Career::SaveCareer(m_profile);
+    printf("[PartsShop] fitted rims %s style %d for $%u, career $%d\n", item.second ? brand.display : "Stock", item.second,
+           price, m_profile.money);
 }
 
 void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
 {
     FENativeInterface::SetLanguageHash(pkg, 0x6c9e933e, kPartsCards[m_partsCategorySel].label);
+    if (m_partsCategorySel == kPartsRimsCard) {
+        RefreshRimInfo(pkg);
+        return;
+    }
     const CarPart *part = SelectedPartsShopPart();
     if (!part) {
         FENativeInterface::SetString(pkg, 0xd28b9316, "-");
@@ -2318,7 +2404,10 @@ bool FEStartupSequence::CloseMessageDialog()
 
 void FEStartupSequence::BuyPartsBrowserPart(FEPackage *pkg)
 {
-    (void)pkg;
+    if (m_partsCategorySel == kPartsRimsCard) {
+        BuyRim();
+        return;
+    }
     const CarPart *selected = SelectedPartsShopPart();
     if (!selected)
         return;
@@ -2453,7 +2542,7 @@ void FEStartupSequence::HandlePartsBrowserMessage(uint32_t msg, FEPackage *pkg)
     // The scroller only knows Left/Right, so translate before handing the message over.
     if (msg == kMsgPadUp || msg == kMsgPadDown) {
         m_partsScroller.HandleMessage(msg == kMsgPadUp ? kMsgPadLeft : kMsgPadRight, 0.0f);
-        if (!m_partsShopItems.empty() && m_partsScroller.Selected() != m_partsSel) {
+        if ((!m_partsShopItems.empty() || m_partsCategorySel == kPartsRimsCard) && m_partsScroller.Selected() != m_partsSel) {
             m_partsSel = m_partsScroller.Selected();
             RefreshPartsBrowserInfo(pkg);
         }

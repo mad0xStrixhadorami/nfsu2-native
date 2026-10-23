@@ -214,6 +214,10 @@ public:
     // Vinyl layers drawn on the previewed car's paint skin (ISSUES #223); empty = plain paint.
     void SetPreviewVinyls(const std::vector<CarSkin::Layer> &layers) { m_previewVinyls = layers; }
     const std::vector<CarSkin::Layer> &PreviewVinyls() const { return m_previewVinyls; }
+    // Rims on the previewed car (ISSUES #226): brand key ("" = stock) and style.
+    void SetPreviewRim(const std::string &brand, int style);
+    const std::string &PreviewRimBrand() const { return m_previewRimBrand; }
+    int PreviewRimStyle() const { return m_previewRimStyle; }
     // Loads the previewed car's vinyl pack and builds the shop catalogue; false if the car has none.
     bool EnsureVinylShop();
     const VinylCatalog &VinylShop() const { return m_vinylCatalog; }
@@ -449,6 +453,11 @@ private:
     std::vector<CarSkin::Layer> m_previewVinyls;
     CarSkin::Vinyls m_vinyls;
     VinylCatalog m_vinylCatalog;
+    std::string m_previewRimBrand;
+    int m_previewRimStyle = 0;
+    const std::vector<uint8_t> &RimGeometryFor(const std::string &brand) const;
+    mutable std::string m_rimCacheKey;
+    mutable std::vector<uint8_t> m_rimCache;
     std::string m_vinylsCar;
     std::vector<uint32_t> m_skinPixels;
     std::string m_skinKey;

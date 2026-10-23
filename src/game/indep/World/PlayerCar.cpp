@@ -292,6 +292,15 @@ PlayerCar::InstalledParts PlayerCar::InstalledPartsFromEnvironment(
         parts.rearBumper = atoi(bumper);
     if (const char *skirt = getenv("NFSU2_PART_SKIRT"))
         parts.skirt = atoi(skirt);
+    // NFSU2_PART_RIM=<BRAND>:<style>, e.g. ENKEI:4 (brand file CARS\\WHEELS\\GEOMETRY_<geometry>.BIN; OZ is P9).
+    if (const char *rim = getenv("NFSU2_PART_RIM")) {
+        const char *colon = strchr(rim, ':');
+        if (colon) {
+            parts.rimBrand.assign(rim, colon - rim);
+            parts.rimStyle = atoi(colon + 1);
+            parts.rimGeometry = read(("CARS\\WHEELS\\GEOMETRY_" + std::string(parts.rimBrand == "OZ" ? "P9" : parts.rimBrand) + ".BIN").c_str());
+        }
+    }
     if (const char *wide = getenv("NFSU2_PART_WIDEBODY"))
         parts.wideBody = atoi(wide);
     if (parts.roof || parts.exhaust || parts.engine || parts.spoiler)
@@ -485,6 +494,31 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             m_triMirror.resize(m_model.size(), 0);
             for (size_t i = before; i < m_model.size(); ++i)
                 m_triMirror[i] = (m_model[i].tex == 1) ? 1 : 0;
+        }
+    }
+    // Installed rims (ISSUES #226): pick the brand style's solid (highest LOD) whose outer radius is
+    // nearest the car's tyre and use it on both axles.
+    std::vector<SolidMesh::NamedSolid> rimSolids;
+    if (parts && parts->rimStyle > 0 && !parts->rimGeometry.empty() && !parts->rimBrand.empty()) {
+        rimSolids = SolidMesh::DecodeNamedSolids(parts->rimGeometry.data(), parts->rimGeometry.size());
+        char prefix[48];
+        snprintf(prefix, sizeof prefix, "%s_STYLE%02d_", parts->rimBrand.c_str(), parts->rimStyle);
+        const float target = wheels ? wheels[0].radius : (frontWheel ? (frontWheel->bboxMax[2] - frontWheel->bboxMin[2]) * 0.5f : 0.32f);
+        const SolidMesh::NamedSolid *best = nullptr;
+        float bestDiff = 1e9f;
+        for (const SolidMesh::NamedSolid &s : rimSolids) {
+            if (s.name.compare(0, strlen(prefix), prefix) != 0 || !EndsWith(s.name, "_A") || s.tris.empty())
+                continue;
+            const float radius = 0.5f * std::max(s.bboxMax[0] - s.bboxMin[0], s.bboxMax[2] - s.bboxMin[2]);
+            if (std::fabs(radius - target) < bestDiff)
+                bestDiff = std::fabs(radius - target), best = &s;
+        }
+        if (best) {
+            frontWheel = rearWheel = best;
+            printf("[Rims] %s (radius %.3f for a %.3f tyre)\n", best->name.c_str(),
+                   0.5f * std::max(best->bboxMax[0] - best->bboxMin[0], best->bboxMax[2] - best->bboxMin[2]), target);
+        } else {
+            printf("[Rims] no %s solid in the brand file\n", prefix);
         }
     }
     if (frontWheel && getenv("NFSU2_WHEEL_DEBUG"))

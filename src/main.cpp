@@ -266,6 +266,26 @@ int main(int argc, char **argv)
         return failures ? 1 : 0;
     if (argc > 3 && strcmp(argv[1], "--dump") == 0)
         return DumpFile(*fs, argv[2], argv[3]);
+    if (argc > 2 && strcmp(argv[1], "--solids") == 0) { // dev aid: --solids <GEOMETRY.BIN> [name-prefix]
+        FILE *f = fopen(argv[2], "rb");
+        if (!f)
+            return 1;
+        std::vector<uint8_t> data;
+        uint8_t buf[65536];
+        for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;)
+            data.insert(data.end(), buf, buf + n);
+        fclose(f);
+        const std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(data.data(), data.size());
+        for (const SolidMesh::NamedSolid &s : solids) {
+            if (argc > 3 && s.name.compare(0, strlen(argv[3]), argv[3]) != 0)
+                continue;
+            printf("%-34s tris %5zu tex %zu bbox (%.3f %.3f %.3f)-(%.3f %.3f %.3f) mk %zu\n", s.name.c_str(), s.tris.size(),
+                   s.textures.size(), s.bboxMin[0], s.bboxMin[1], s.bboxMin[2], s.bboxMax[0], s.bboxMax[1], s.bboxMax[2],
+                   s.markers.size());
+        }
+        printf("%zu solids\n", solids.size());
+        return 0;
+    }
     if (argc > 3 && strcmp(argv[1], "--vinyls") == 0) { // dev aid: --vinyls <VINYLS.BIN> <CAR> lists the shop catalogue
         FILE *f = fopen(argv[2], "rb");
         if (!f)
@@ -844,6 +864,8 @@ int main(int argc, char **argv)
         aiOut.clear();
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
+        if (fe.PreviewRimStyle() > 0)
+            world.AddTexturePack(ReadGameFile(*fs, "CARS\\WHEELS\\TEXTURES.BIN")); // fitted rims (#226)
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
         // Dev aid: NFSU2_TEX_DUMP=<hex name hash> saves that texture of the player's car pack as BMP.
         if (const char *dump = getenv("NFSU2_TEX_DUMP")) {

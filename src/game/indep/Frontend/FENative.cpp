@@ -25,6 +25,7 @@ extern FEMultiPool ObjDataPool; // FEObject.cpp: pool for FEObject transform dat
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/ModelViewGL.h"
+#include "game/indep/Frontend/RimCatalog.h"
 #include "game/indep/World/CarMaterial.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/SolidMesh.h"
@@ -180,6 +181,9 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         installedParts.skirt = m_previewPartSkirt;
     if (m_previewPartWideBody > 0)
         installedParts.wideBody = m_previewPartWideBody;
+    if (m_previewRimStyle > 0 && !m_previewRimBrand.empty())
+        installedParts.rimBrand = m_previewRimBrand, installedParts.rimStyle = m_previewRimStyle,
+        installedParts.rimGeometry = RimGeometryFor(m_previewRimBrand);
     if (assembled.LoadModel(geometry, CarWheels(model, wheels) ? wheels : nullptr, &installedParts)) {
         m_previewBodyStyles = assembled.BodyStyles();
         m_previewBodyStylesKnown = true;
@@ -657,6 +661,27 @@ std::vector<CarSkin::Layer> FENativeInterface::TestVinyls() const
     return layers;
 }
 
+const std::vector<uint8_t> &FENativeInterface::RimGeometryFor(const std::string &brand) const
+{
+    if (m_rimCacheKey != brand) {
+        m_rimCache.clear();
+        for (const RimBrand &b : RimCatalog::Brands())
+            if (brand == b.key && b.key[0])
+                m_rimCache = m_readFile(RimCatalog::GeometryPath(b).c_str());
+        m_rimCacheKey = brand;
+    }
+    return m_rimCache;
+}
+
+void FENativeInterface::SetPreviewRim(const std::string &brand, int style)
+{
+    if (brand == m_previewRimBrand && style == m_previewRimStyle)
+        return;
+    m_previewRimBrand = brand;
+    m_previewRimStyle = style;
+    SetPreviewCar(m_previewCarName); // rebuild the model with the rims
+}
+
 bool FENativeInterface::EnsureVinylShop()
 {
     if (m_previewCarName.empty())
@@ -844,6 +869,11 @@ PlayerCar::InstalledParts FENativeInterface::InstalledPartsForPreview() const
 {
     PlayerCar::InstalledParts parts = PlayerCar::InstalledPartsFromEnvironment(
         [this](const char *path) { return m_readFile(path); });
+    if (m_previewRimStyle > 0 && !m_previewRimBrand.empty()) {
+        parts.rimBrand = m_previewRimBrand;
+        parts.rimStyle = m_previewRimStyle;
+        parts.rimGeometry = RimGeometryFor(m_previewRimBrand);
+    }
     if (m_previewPartSpoiler > 0) {
         parts.spoiler = m_previewPartSpoiler;
         parts.spoilerCarbon = m_previewPartSpoilerCarbon;

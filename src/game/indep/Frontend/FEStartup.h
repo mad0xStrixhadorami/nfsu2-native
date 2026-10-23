@@ -1,4 +1,5 @@
 #pragma once
+#include "game/indep/Frontend/RimCatalog.h"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -251,6 +252,11 @@ private:
         uint16_t index = 0;
         uint32_t icon = 0;
     };
+    void RefreshRimList(FEPackage *pkg);
+    void RefreshRimInfo(FEPackage *pkg);
+    void BuyRim();
+    RimCatalog m_rimCatalog;
+    std::vector<std::pair<size_t, int>> m_rimItems; // (brand index, style); first is Stock
     const CarPart *SelectedPartsShopPart() const;
     void PreviewPartsBrowserPart(const CarPart &part);
     void PreviewOwnedParts(const Career::OwnedCar *car);
