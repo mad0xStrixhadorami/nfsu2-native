@@ -587,7 +587,7 @@ int main(int argc, char **argv)
             {"left", FENativeInterface::kPadLeft},     {"right", FENativeInterface::kPadRight},
             {"accept", FENativeInterface::kPadAccept}, {"back", FENativeInterface::kPadBack},
             {"start", FENativeInterface::kPadStart},   {"ltrigger", FENativeInterface::kPadLTrigger},
-            {"rtrigger", FENativeInterface::kPadRTrigger}};
+            {"rtrigger", FENativeInterface::kPadRTrigger}, {"square", FENativeInterface::kPadButton0}};
         for (const char *p = in; *p;) {
             char name[16] = {};
             unsigned ms = 0;

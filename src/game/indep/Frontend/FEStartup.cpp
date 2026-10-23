@@ -840,7 +840,8 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             {FENativeInterface::kPadUp, kMsgPadUp},           {FENativeInterface::kPadDown, kMsgPadDown},
             {FENativeInterface::kPadLeft, kMsgPadLeft},       {FENativeInterface::kPadRight, kMsgPadRight},
             {FENativeInterface::kPadLTrigger, kMsgPadLTrigger}, {FENativeInterface::kPadRTrigger, kMsgPadRTrigger},
-            {FENativeInterface::kPadAccept, kMsgPadAccept},   {FENativeInterface::kPadBack, kMsgPadBack}};
+            {FENativeInterface::kPadAccept, kMsgPadAccept},   {FENativeInterface::kPadBack, kMsgPadBack},
+            {FENativeInterface::kPadButton0, kMsgPadSquare}};
         for (auto &m : kLayerMap)
             if (pressed & m.bit) {
                 HandleVinylLayerMessage(m.msg, top);
@@ -2512,6 +2513,7 @@ void FEStartupSequence::HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg)
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
         m_paintCategorySel = m_paintCategoryScroller.Selected();
         if (m_paintCategorySel == 0) {
+            m_paintVinyl = false;
             NavigateTo(pkg->GetName(), "UI_Paint.fng");
         } else if (m_paintCategorySel == 1) {
             NavigateTo(pkg->GetName(), "UI_ChooseVinylLayer.fng"); // 0x002a45e0
@@ -2535,7 +2537,6 @@ std::vector<FEObject *> ShippedOrClonedCards(FEPackage *pkg, size_t count, const
 // step the colour scheme of the layer (the port's stand-in for the Repaint screen), Q / E (L1 / R1)
 // move the layer in the stack (Reorder Layers).  Prices are stand-ins (VinylCatalog::Price).
 namespace {
-constexpr uint32_t kMsgPadSquare = 0x5ca1ab1e; // the pad's square (keyboard X)
 constexpr uint32_t kVinylLayerIcon = 0x27b8f0dd; // VINYL_LAYER_1; _2.._4 follow
 using SkinLayer = Career::OwnedCar::VinylLayer;
 
@@ -2667,6 +2668,15 @@ void FEStartupSequence::HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg)
             RefreshVinylLayers(pkg);
             PreviewVinylWork();
             printf("[Vinyl] layers %d and %d swapped\n", m_vinylLayer + 1, other + 1);
+        }
+        return;
+    }
+    if (msg == kMsgPadSquare && !m_navPending) { // Repaint: the layer's three colour regions
+        if (size_t(m_vinylLayer) < m_vinylWork.size()) {
+            m_paintVinyl = true;
+            NavigateTo(pkg->GetName(), "UI_Paint.fng");
+        } else {
+            ShowMessageDialogText("This layer is empty");
         }
         return;
     }
@@ -2930,6 +2940,10 @@ void PaintRowRange(int row, size_t count, int &lo, int &hi)
 
 void FEStartupSequence::HandlePaintLoaded(FEPackage *pkg)
 {
+    if (m_paintVinyl) {
+        HandleVinylPaintLoaded(pkg);
+        return;
+    }
     // 0x002bcff8: add the nine part cards to the part scroller.  The package ships the cards
     // invisible and transparent; FEIconScroller::SetupObjects fills in the icon/name and alpha.
     std::vector<FEIconScroller::Def> defs;
@@ -3060,6 +3074,80 @@ void FEStartupSequence::RefreshSpoilerPreview()
                                  m_partPaintIndex[1]);
 }
 
+// Previews colour `index` (1-based) of `set` on the part a paint card edits; in the vinyl repaint
+// mode the cards are the three colour regions of the vinyl layer being edited (ISSUES #224).
+void FEStartupSequence::PreviewPaintPart(size_t part, uint32_t set, uint32_t index)
+{
+    if (m_paintVinyl) {
+        if (part < 3 && size_t(m_vinylLayer) < m_vinylWork.size() && index > 0 && index <= m_fe->Paint().Count(set)) {
+            const PaintColor &pc = m_fe->Paint().At(set, index - 1);
+            SkinLayer &layer = m_vinylWork[size_t(m_vinylLayer)];
+            layer.color[part][0] = pc.r, layer.color[part][1] = pc.g, layer.color[part][2] = pc.b;
+            PreviewVinylWork();
+        }
+        return;
+    }
+    if (part == 0)
+        m_fe->SetPreviewPaint(set, index); // Base Paint tints the body
+    else if (part == 4 || part == 5)
+        m_fe->SetPreviewRimPaint(set, index); // Rims/Spinners tint the wheel faces (#172)
+    else if (part == 6)
+        m_fe->SetPreviewCaliperPaint(set, index); // Brakes tint the calipers (#173)
+    else if (part == 3)
+        m_fe->SetPreviewMirrorPaint(set, index); // Mirrors tint the housings (#174)
+    else if (part == 1)
+        m_fe->SetPreviewSpoilerPaint(set, index); // Spoiler tints the stock wing (#175)
+    else if (part == 2)
+        m_fe->SetPreviewRoofPaint(set, index); // Roof Scoop tints the installed scoop (#178)
+    else if (part == 7)
+        m_fe->SetPreviewEnginePaint(set, index); // Engine Accents tint the installed accents (#178)
+    else if (part == 8)
+        m_fe->SetPreviewExhaustPaint(set, index); // Muffler Tip tints the installed tip (#178)
+}
+
+void FEStartupSequence::HandleVinylPaintLoaded(FEPackage *pkg)
+{
+    Career::OwnedCar *car = ShopCar();
+    if (car)
+        m_vinylWork = car->vinyls;
+    std::vector<FEIconScroller::Def> defs;
+    std::vector<FEObject *> slots;
+    for (int k = 0; k < 3; ++k) {
+        defs.push_back({0x20cf7fef, 0, false, "Colour " + std::to_string(k + 1)}); // VINYL_COLOR icon
+        slots.push_back(pkg->FindObjectByHash(0x4b4e3888u + uint32_t(k)));
+    }
+    m_paintScroller.SetupObjects(pkg, defs, slots, 0, "OPTION_MASTER");
+    m_paintPart = 0;
+    m_paintGridActive = false;
+    const size_t count = m_fe->Paint().Count(PaintCatalog::kVinyl);
+    for (size_t k = 0; k < 3; ++k) {
+        m_partSet[k] = PaintCatalog::kVinyl;
+        m_partSel[k] = 0;
+        m_partPaintIndex[k] = 0;
+        if (size_t(m_vinylLayer) < m_vinylWork.size() && count) { // the palette entry nearest the layer's colour
+            const SkinLayer &layer = m_vinylWork[size_t(m_vinylLayer)];
+            int best = 1 << 30;
+            for (size_t i = 0; i < count; ++i) {
+                const PaintColor &pc = m_fe->Paint().At(PaintCatalog::kVinyl, i);
+                const int d = std::abs(int(pc.r) - layer.color[k][0]) + std::abs(int(pc.g) - layer.color[k][1]) +
+                              std::abs(int(pc.b) - layer.color[k][2]);
+                if (d < best)
+                    best = d, m_partSel[k] = uint32_t(i);
+            }
+        }
+    }
+    m_paintSet = PaintCatalog::kVinyl;
+    m_paintSel = m_partSel[0];
+    ShowPaintGrid(pkg, false);
+    RefreshPaintCost(pkg);
+    FENativeInterface::SetVisible(pkg, 0x444969fd, false);
+    FENativeInterface::SetVisible(pkg, 0x444969fe, false);
+    FENativeInterface::SetVisible(pkg, 0x688a1551, false);
+    FENativeInterface::SetVisible(pkg, 0x3fbb7a4e, false);
+    PreviewVinylWork();
+    printf("[Vinyl] repaint layer %d: %zu palette colours\n", m_vinylLayer + 1, count);
+}
+
 void FEStartupSequence::ShowPaintGrid(FEPackage *pkg, bool show)
 {
     // 0x002bd868 reveals db285767 (grid + info strip) when a part is entered; 0x002be150 hides the
@@ -3110,22 +3198,10 @@ void FEStartupSequence::EnterPaintGrid(FEPackage *pkg)
     m_paintGridActive = true;
     ShowPaintGrid(pkg, true);
     RefreshPaintSwatches(pkg);
-    if (m_paintPart == 0) // Base Paint tints the body
-        m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 4 || m_paintPart == 5) // Rims/Spinners tint the wheel faces (#172)
-        m_fe->SetPreviewRimPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 6) // Brakes tint the calipers (#173)
-        m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 3) // Mirrors tint the housings (#174)
-        m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 1) // Spoiler tints the stock wing (#175)
-        m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 2) // Roof Scoop tints the installed scoop (#180)
-        m_fe->SetPreviewRoofPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 7) // Engine Accents tint the installed accents (#180)
-        m_fe->SetPreviewEnginePaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 8) // Muffler Tip tints the installed tip (#180)
-        m_fe->SetPreviewExhaustPaint(m_paintSet, m_paintSel + 1);
+    if (m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < m_vinylWork.size())
+        for (int ch = 0; ch < 3; ++ch)
+            m_vinylBackup[m_paintPart][ch] = m_vinylWork[size_t(m_vinylLayer)].color[m_paintPart][ch];
+    PreviewPaintPart(m_paintPart, m_paintSet, m_paintSel + 1);
     printf("[Paint] enter %s (0x%08x), %zu colours\n", kPaintParts[m_paintPart].debug,
            kPaintParts[m_paintPart].id, count);
 }
@@ -3134,21 +3210,26 @@ void FEStartupSequence::LeavePaintGrid(FEPackage *pkg, bool restorePreview)
 {
     if (m_paintPart < kPaintPartCount)
         m_partSel[m_paintPart] = m_paintSel; // the original keeps the grid's cursor per filter
-    if (restorePreview && m_paintPart == 0)
+    if (restorePreview && m_paintVinyl && m_paintPart < 3 && size_t(m_vinylLayer) < m_vinylWork.size()) {
+        for (int ch = 0; ch < 3; ++ch)
+            m_vinylWork[size_t(m_vinylLayer)].color[m_paintPart][ch] = m_vinylBackup[m_paintPart][ch];
+        PreviewVinylWork();
+    }
+    if (restorePreview && !m_paintVinyl && m_paintPart == 0)
         m_fe->SetPreviewPaint(m_gridOriginalSet, m_gridOriginalPaint);
-    if (restorePreview && (m_paintPart == 4 || m_paintPart == 5))
+    if (restorePreview && !m_paintVinyl && (m_paintPart == 4 || m_paintPart == 5))
         m_fe->SetPreviewRimPaint(m_gridOriginalRimSet, m_gridOriginalRim);
-    if (restorePreview && m_paintPart == 6)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 6)
         m_fe->SetPreviewCaliperPaint(m_gridOriginalCaliperSet, m_gridOriginalCaliper);
-    if (restorePreview && m_paintPart == 3)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 3)
         m_fe->SetPreviewMirrorPaint(m_gridOriginalMirrorSet, m_gridOriginalMirror);
-    if (restorePreview && m_paintPart == 1)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 1)
         m_fe->SetPreviewSpoilerPaint(m_gridOriginalSpoilerSet, m_gridOriginalSpoiler);
-    if (restorePreview && m_paintPart == 2)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 2)
         m_fe->SetPreviewRoofPaint(m_gridOriginalRoofSet, m_gridOriginalRoof);
-    if (restorePreview && m_paintPart == 7)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 7)
         m_fe->SetPreviewEnginePaint(m_gridOriginalEngineSet, m_gridOriginalEngine);
-    if (restorePreview && m_paintPart == 8)
+    if (restorePreview && !m_paintVinyl && m_paintPart == 8)
         m_fe->SetPreviewExhaustPaint(m_gridOriginalExhaustSet, m_gridOriginalExhaust);
     m_paintGridActive = false;
     ShowPaintGrid(pkg, false);
@@ -3227,7 +3308,7 @@ void FEStartupSequence::RefreshPaintCost(FEPackage *pkg)
     // no purchase/economy path yet, so the highlighted colour's price (0x0026b0c8) stands in for
     // both fields while the swatch grid is open.
     unsigned price = 0;
-    if (m_paintGridActive && m_paintPart < kPaintPartCount) {
+    if (m_paintGridActive && !m_paintVinyl && m_paintPart < kPaintPartCount) {
         const PaintColor &color = m_fe->Paint().At(m_paintSet, m_paintSel);
         price = m_fe->Paint().Price(kPaintParts[m_paintPart].id, m_paintSet, color);
     }
@@ -3268,6 +3349,7 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
             return;
         }
         if (msg == kMsgPadBack && !m_navPending) {
+            m_paintVinyl = false;
             PopScreen();
             return;
         }
@@ -3330,22 +3412,7 @@ void FEStartupSequence::HandlePaintMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     // The original previews the part colour while the swatch moves (0x002bc2f0 -> 0x002bdf10).
-    if (m_paintPart == 0)
-        m_fe->SetPreviewPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 4 || m_paintPart == 5)
-        m_fe->SetPreviewRimPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 6)
-        m_fe->SetPreviewCaliperPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 3)
-        m_fe->SetPreviewMirrorPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 1)
-        m_fe->SetPreviewSpoilerPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 2) // Roof Scoop
-        m_fe->SetPreviewRoofPaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 7) // Engine Accents
-        m_fe->SetPreviewEnginePaint(m_paintSet, m_paintSel + 1);
-    else if (m_paintPart == 8) // Muffler Tip
-        m_fe->SetPreviewExhaustPaint(m_paintSet, m_paintSel + 1);
+    PreviewPaintPart(m_paintPart, m_paintSet, m_paintSel + 1);
     PositionPaintHighlight(pkg);
     RefreshPaintLabel(pkg);
     RefreshPaintCost(pkg);
@@ -3391,22 +3458,16 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
     m_partSet[part] = set;
     m_partSel[part] = index > 0 ? index - 1 : 0;
     m_partPaintIndex[part] = index;
-    if (part == 0)
-        m_fe->SetPreviewPaint(set, index); // Base Paint tints the body
-    else if (part == 4 || part == 5)
-        m_fe->SetPreviewRimPaint(set, index); // Rims/Spinners tint the wheel faces (#172)
-    else if (part == 6)
-        m_fe->SetPreviewCaliperPaint(set, index); // Brakes tint the calipers (#173)
-    else if (part == 3)
-        m_fe->SetPreviewMirrorPaint(set, index); // Mirrors tint the housings (#174)
-    else if (part == 1)
-        m_fe->SetPreviewSpoilerPaint(set, index); // Spoiler tints the stock wing (#175)
-    else if (part == 2)
-        m_fe->SetPreviewRoofPaint(set, index); // Roof Scoop tints the installed scoop (#178)
-    else if (part == 7)
-        m_fe->SetPreviewEnginePaint(set, index); // Engine Accents tint the installed accents (#178)
-    else if (part == 8)
-        m_fe->SetPreviewExhaustPaint(set, index); // Muffler Tip tints the installed tip (#178)
+    if (m_paintVinyl) { // a vinyl region colour: free, stored on the layer
+        PreviewPaintPart(part, set, index);
+        if (Career::OwnedCar *car = ShopCar(); car && part < 3) {
+            car->vinyls = m_vinylWork;
+            Career::SaveCareer(m_profile);
+            printf("[Vinyl] layer %d colour %zu = palette %u saved\n", m_vinylLayer + 1, part + 1, index);
+        }
+        return;
+    }
+    PreviewPaintPart(part, set, index);
 
     if (m_careerExists && m_profile.currentCar >= 0 &&
         m_profile.currentCar < int(m_profile.cars.size())) {

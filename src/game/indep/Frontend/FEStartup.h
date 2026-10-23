@@ -46,6 +46,7 @@ public:
     static constexpr uint32_t kMsgPadDown = 0x911c0a4b;      // __PAD_DOWN__
     // Shoulder buttons.  0x002bc2f0 (UI_Paint message handler) forwards these to 0x002be5f0,
     // which cycles the base-paint finish GLOSS -> METAL -> PEARL (#168).
+    static constexpr uint32_t kMsgPadSquare = 0x5ca1ab1e;    // the pad's square (keyboard X), port-defined
     static constexpr uint32_t kMsgPadLTrigger = 0x5073ef13;  // L1
     static constexpr uint32_t kMsgPadRTrigger = 0x260113a7;  // R1
     static constexpr uint32_t kMsgButtonPressed = 0x0c407210; // __BUTTON_PRESSED__
@@ -201,6 +202,8 @@ private:
     void RefreshGraph(FEPackage *pkg);
     // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
     void HandleVinylLayerLoaded(FEPackage *pkg);
+    void HandleVinylPaintLoaded(FEPackage *pkg);
+    void PreviewPaintPart(size_t part, uint32_t set, uint32_t index);
     void HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg);
     void RefreshVinylLayers(FEPackage *pkg);
     void PreviewVinylWork();
@@ -335,6 +338,8 @@ private:
     // Vinyl shop state.
     std::vector<Career::OwnedCar::VinylLayer> m_vinylWork; // the car's layers plus the previewed change
     int m_vinylLayer = 0;                // layer being edited, 0..3
+    bool m_paintVinyl = false;           // UI_Paint edits the colour regions of a vinyl layer
+    uint8_t m_vinylBackup[3][3] = {};    // region colours before the grid opened (Back restores)
     bool m_vinylBrowser = false;         // the parts browser shows vinyl groups / designs
     std::vector<int> m_vinylGroups;      // groups with designs, the browser's category cards
     size_t m_vinylGroupSel = 0, m_vinylSel = 0;
