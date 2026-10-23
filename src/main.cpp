@@ -1823,6 +1823,29 @@ int main(int argc, char **argv)
                 enterWorld(region);
         }
 
+        // Options > Video > Brightness / Contrast (-15..15): a translucent wash over the finished frame.
+        // Brightness lightens (white) or darkens (black); contrast uses mid-grey, flattening the image when
+        // negative and darkening the shadows a little when positive (a stand-in for the console's gamma ramp).
+        {
+            const int b = startup.Brightness(), c = startup.Contrast();
+            auto wash = [&](Uint8 r, Uint8 g, Uint8 bl, int alpha) {
+                if (alpha <= 0)
+                    return;
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(ren, r, g, bl, Uint8(std::min(alpha, 160)));
+                SDL_RenderFillRect(ren, nullptr);
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+            };
+            if (b > 0)
+                wash(255, 255, 255, b * 6);
+            else if (b < 0)
+                wash(0, 0, 0, -b * 8);
+            if (c < 0)
+                wash(128, 128, 128, -c * 5);
+            else if (c > 0)
+                wash(0, 0, 0, c * 3);
+        }
+
         // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
         if (const char *shot = getenv("NFSU2_SCREENSHOT")) {
             const char *ms = getenv("NFSU2_SCREENSHOT_MS");
