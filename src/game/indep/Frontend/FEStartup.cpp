@@ -477,6 +477,21 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_OptionsController.fng") == 0) {
+        // Options > Controls: the PS2 build fills this from the pad configuration at run time, so the package
+        // ships "SHIFT DOWN" placeholders.  The native build lists its keyboard bindings in the seven rows.
+        static const struct { const char *action, *keys; } kRows[7] = {
+            {"Accelerate", "W / Up"},       {"Brake / Reverse", "S / Down"}, {"Steer", "A D / Left Right"},
+            {"Nitrous", "Space / Enter"},   {"Shift Up (manual)", "E / Page Down"}, {"Shift Down (manual)", "F"},
+            {"Pause", "Enter"}};
+        static const uint32_t kNames[7] = {0xbaa4198e, 0xbaa4198f, 0xbaa41990, 0xbaa41991, 0xbaa41992, 0xbaa41993, 0xbaa41994};
+        static const uint32_t kValues[7] = {0xbaa41995, 0xbaa41996, 0x0f274b7e, 0x0f274b7f, 0x0f274b80, 0x0f274b81, 0x0f274b82};
+        for (int i = 0; i < 7; ++i) {
+            FENativeInterface::SetString(pkg, kNames[i], kRows[i].action);
+            FENativeInterface::SetString(pkg, kValues[i], kRows[i].keys);
+        }
+        return;
+    }
     if (strcasecmp(name, "UI_Pause.fng") == 0) {
         HandlePauseLoaded(pkg);
         return;
@@ -697,6 +712,15 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
             msg != kMsgPadAccept && msg != kMsgPadBack && msg != kMsgButtonPressed)
             HandleProfileManagerMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_OptionsController.fng") == 0) {
+        if (msg == kMsgPadBack && !m_navPending && !m_backStack.empty()) {
+            const std::string prev = m_backStack.back();
+            m_backStack.pop_back();
+            m_navPending = true;
+            m_engine->QueuePackageSwitch(prev.c_str(), 0xff);
+        }
         return;
     }
     if (strcasecmp(name, "UI_Options.fng") == 0) {
