@@ -31,6 +31,8 @@ public:
     void Crash(float closingSpeed);
     // Engine state for the mixer (called from the game loop).
     void Set(float rpm, float idleRpm, float redline, float throttle, bool running);
+    // Options volumes (0..1): engine loops, tyre layers (squeal + road noise), other effects.
+    void SetVolumes(float engine, float tire, float effects) { m_volEngine = engine, m_volTire = tire, m_volFx = effects; }
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
 
     struct Loop {
@@ -62,5 +64,6 @@ private:
     std::atomic<float> m_speed{0}, m_slip{0};
     std::atomic<float> m_rpm{0}, m_idle{900}, m_redline{7000}, m_throttle{0};
     std::atomic<bool> m_running{false};
+    std::atomic<float> m_volEngine{1.0f}, m_volTire{1.0f}, m_volFx{1.0f};
     float m_load = 0; // smoothed on/off throttle blend
 };

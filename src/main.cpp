@@ -1274,6 +1274,13 @@ int main(int argc, char **argv)
             if (music.Open(*fs, "SOUND\\PFDATA\\MUSICSFX.MUS"))
                 music.SetVolume(musicVolume);
         }
+        {   // Options volumes (the Audio list), relative to the 80% default so the default mix is unchanged.
+            auto vol = [&startup](int i) { return startup.AudioVolume(i) / 0.8f; };
+            const float master = vol(0);
+            music.SetVolume(musicVolume * master * vol(inWorld ? 2 : 1));
+            uiSound.SetVolume(0.5f * master * vol(4));
+            engineSound.SetVolumes(master * vol(6), master * vol(5), master * vol(4));
+        }
         music.SetPaused(pausePkg != nullptr);
         music.Update();
         Uint32 now = SDL_GetTicks();

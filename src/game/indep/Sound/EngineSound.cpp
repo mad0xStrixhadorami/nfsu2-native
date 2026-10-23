@@ -275,7 +275,7 @@ void EngineSound::Mix(float *out, int frames)
         target[1 + k] = w * m_load;
         target[4 + k] = w * (1.0f - m_load);
     }
-    const float volume = running ? 0.30f : 0.0f;
+    const float volume = running ? 0.30f * m_volEngine : 0.0f;
     for (int i = 0; i < 7; ++i) {
         Loop &l = m_loops[size_t(i)];
         const float ref = i == 0 ? idle : idle + centres[(i - 1) % 3] * (redline - idle);
@@ -285,15 +285,15 @@ void EngineSound::Mix(float *out, int frames)
     // Tyre squeal with slip; road noise rising with speed.
     const float speed = std::fabs(m_speed.load());
     if (!m_skid.pcm.empty())
-        MixLoop(m_skid, running ? 0.22f * m_slip : 0.0f, m_skid.rate / m_rate, out, frames);
+        MixLoop(m_skid, running ? 0.22f * m_slip * m_volTire : 0.0f, m_skid.rate / m_rate, out, frames);
     if (!m_road.pcm.empty())
-        MixLoop(m_road, running ? 0.12f * std::min(1.0f, speed / 50.0f) : 0.0f,
+        MixLoop(m_road, running ? 0.12f * m_volTire * std::min(1.0f, speed / 50.0f) : 0.0f,
                 m_road.rate / m_rate * (0.8f + std::min(speed, 70.0f) / 120.0f), out, frames);
     // One-shots (gear changes).
     for (Voice &v : m_voices) {
         const float step = v.sound->rate / m_rate;
         for (int f = 0; f < frames && v.pos < v.sound->pcm.size(); ++f, v.pos += step) {
-            const float smp = v.sound->pcm[size_t(v.pos)] * 0.35f;
+            const float smp = v.sound->pcm[size_t(v.pos)] * 0.35f * m_volFx;
             out[f * 2] += smp;
             out[f * 2 + 1] += smp;
         }

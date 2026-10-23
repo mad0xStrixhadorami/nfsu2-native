@@ -154,6 +154,10 @@ private:
     void HandlePauseLoaded(FEPackage *pkg);
     void HandlePauseMessage(uint32_t msg, FEPackage *pkg);
     PauseAction m_pauseAction = kPauseNone;
+public:
+    // Options volumes 0..1: 0 master, 1 menu music, 2 game music, 3 speech, 4 effects, 5 tyre, 6 engine.
+    float AudioVolume(int i) const { return m_audioVolume[i]; }
+private:
     std::vector<PauseAction> m_pauseActions; // per scroller option
     int m_pauseTicks = 0;                    // screen ticks since the pause menu opened
     void HandleQRTrackSelectLoaded(FEPackage *pkg);
