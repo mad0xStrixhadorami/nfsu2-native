@@ -639,6 +639,13 @@ int main(int argc, char **argv)
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false;
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
+    // The pause menu's package changes when Options opens and closes (a package switch), so look it up.
+    auto pauseScreen = [&engine, &pausePkg]() -> FEPackage * {
+        for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+            if (p->GetName() && (strncasecmp(p->GetName(), "UI_Pause", 8) == 0))
+                return p;
+        return pausePkg;
+    };
     // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
     FEPackage *cribPkg = nullptr;
     int playerSkinIndex = -1;       // the player's car in the world (vinyl skin, ISSUES #223)
@@ -1345,12 +1352,12 @@ int main(int argc, char **argv)
                     for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
                         printf("[Race]   package %s mask %x\n", p->GetName(), p->GetControlMask());
             } else if (pausePkg && pauseAction == FEStartupSequence::kPauseResume) {
-                engine->UnloadPackage(pausePkg);
+                engine->UnloadPackage(pauseScreen());
                 pausePkg = nullptr;
                 printf("[Race] resumed\n");
             } else if (pausePkg && pauseAction == FEStartupSequence::kPauseRestart) {
                 printf("[Race] restart\n");
-                engine->UnloadPackage(pausePkg);
+                engine->UnloadPackage(pauseScreen());
                 pausePkg = nullptr;
                 if (hud)
                     engine->UnloadPackage(hud);
@@ -1388,7 +1395,7 @@ int main(int argc, char **argv)
             if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) ||
                 (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
                 if (pausePkg)
-                    engine->UnloadPackage(pausePkg);
+                    engine->UnloadPackage(pauseScreen());
                 pausePkg = nullptr;
                 if (cribPkg)
                     engine->UnloadPackage(cribPkg);

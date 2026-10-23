@@ -60,7 +60,7 @@ public:
     // Back from a race (pause menu Quit Race / post-race Continue): UI_Main.fng.
     void ReturnFromRace();
     // In-race pause menu (UI_Pause.fng, ISSUES.md #122): the chosen action, taken once.
-    enum PauseAction { kPauseNone, kPauseResume, kPauseRestart, kPauseQuit };
+    enum PauseAction { kPauseNone, kPauseResume, kPauseRestart, kPauseQuit, kPauseOptions };
     PauseAction TakePauseAction()
     {
         PauseAction a = m_pauseAction;

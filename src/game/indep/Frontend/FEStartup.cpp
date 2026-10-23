@@ -475,6 +475,15 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandlePauseLoaded(pkg);
         return;
     }
+    // The in-race Options (0x00251bd0): the pause menu's own copies of the Options carousel and list.
+    if (strcasecmp(name, "UI_PauseOptionsMain.fng") == 0) {
+        HandleOptionsMainLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_PauseOptions.fng") == 0) {
+        HandleOptionsLoaded(pkg);
+        return;
+    }
 }
 
 void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, uint32_t /*param1*/,
@@ -553,6 +562,22 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_Pause.fng") == 0) {
         HandlePauseMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_PauseOptionsMain.fng") == 0) {
+        if (msg == kMsgPadBack && !m_navPending) { // back to the pause menu
+            m_navPending = true;
+            m_engine->QueuePackageSwitch("UI_Pause.fng", 0xff);
+            return;
+        }
+        if (msg != kMsgPadBack)
+            HandleOptionsMainMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_PauseOptions.fng") == 0) {
+        if (msg != kMsgPadUp && msg != kMsgPadDown && msg != kMsgPadLeft && msg != kMsgPadRight &&
+            msg != kMsgPadAccept && msg != kMsgPadBack)
+            HandleOptionsMessage(msg, pkg);
         return;
     }
 
@@ -1080,7 +1105,8 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         // storage, so a stale m_pkg could otherwise alias the next screen and eat its Left/Right
         // input (the Quick Race mode selector has no OPTION_DATA_3/5 row objects, ISSUES #179).
         const char *name = list->GetName();
-        if (!name || (strcasecmp(name, "UI_Options.fng") != 0 && strcasecmp(name, "UI_QRModeOptions.fng") != 0)) {
+        if (!name || (strcasecmp(name, "UI_Options.fng") != 0 && strcasecmp(name, "UI_PauseOptions.fng") != 0 &&
+                      strcasecmp(name, "UI_QRModeOptions.fng") != 0)) {
             m_widgets.Clear();
             return;
         }
@@ -1089,7 +1115,7 @@ void FEStartupSequence::Tick(uint32_t nowMs)
                                                              {0x10, kMsgPadAccept}, {0x20, kMsgPadBack}};
         for (auto &m : kMap)
             if (pressed & m.bit) {
-                if (strcasecmp(name, "UI_Options.fng") == 0)
+                if (strcasecmp(name, "UI_Options.fng") == 0 || strcasecmp(name, "UI_PauseOptions.fng") == 0)
                     HandleOptionsMessage(m.msg, list);
                 else
                     HandleQRModeOptionsMessage(m.msg, list);
@@ -6698,8 +6724,11 @@ void FEStartupSequence::HandleOptionsMainMessage(uint32_t msg, FEPackage *pkg)
         // Category 6 (the PS2 "Trailers"/bonus item) is a special item (vtable 0x46dee8,
         // 0x002565c0 -> Burnout 3 demo) that 0x00202560 leaves to the item class; we show the
         // UI_Options case-6 bonus-trailer list (0x00204078) as the closest ported content.
-        const char *dest = "UI_Options.fng";
-        switch (m_optionCategory) {
+        const bool inRace = strcasecmp(pkg->GetName(), "UI_PauseOptionsMain.fng") == 0;
+        const char *dest = inRace ? "UI_PauseOptions.fng" : "UI_Options.fng";
+        if (inRace && m_optionCategory > 3)
+            return; // controls, jukebox and credits are front-end only
+        switch (inRace ? -1 : m_optionCategory) {
         case 4: dest = "UI_OptionsController.fng"; break;
         case 5: dest = "EA_Trax_Jukebox.fng"; break;
         case 8: dest = "Credits.fng"; break;
@@ -7063,9 +7092,10 @@ void FEStartupSequence::HandlePauseLoaded(FEPackage *pkg)
     std::vector<FEIconScroller::Def> defs = {
         {0x12bb5ea2, 0xf6601088}, // Continue
         {0xb295a6b6, 0x80833fc2}, // Restart (0x00237d68: not in drift-trial type 7 or online)
+        {0x84d1d864, 0x7840428a}, // Options (0x00251bd0 -> UI_PauseOptionsMain.fng)
         {0x4c9e34e6, 0xc7e1420c}, // Quit Race
     };
-    m_pauseActions = {kPauseResume, kPauseRestart, kPauseQuit};
+    m_pauseActions = {kPauseResume, kPauseRestart, kPauseOptions, kPauseQuit};
     m_pauseAction = kPauseNone;
     m_pauseTicks = 0;
     m_scroller.Setup(pkg, defs, 0);
@@ -7078,8 +7108,15 @@ void FEStartupSequence::HandlePauseMessage(uint32_t msg, FEPackage *pkg)
         return;
     if (msg == kMsgButtonPressed || msg == kMsgPadAccept) {
         size_t sel = m_scroller.Selected();
-        if (sel < m_pauseActions.size())
+        if (sel < m_pauseActions.size() && m_pauseActions[sel] == kPauseOptions) {
+            if (!m_navPending) {
+                printf("[Menu] UI_Pause.fng -> UI_PauseOptionsMain.fng\n");
+                m_navPending = true;
+                m_engine->QueuePackageSwitch("UI_PauseOptionsMain.fng", 0xff);
+            }
+        } else if (sel < m_pauseActions.size()) {
             m_pauseAction = m_pauseActions[sel];
+        }
         return;
     }
     if (msg == kMsgScreenTick)
