@@ -402,6 +402,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleVinylLayerLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_DecalMain.fng") == 0) {
+        HandleDecalMainLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0) {
         HandleDynoChartLoaded(pkg);
         return;
@@ -578,7 +582,7 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         strcasecmp(name, "UI_PerformanceTuning_Graph.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0 ||
-        strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0)
+        strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0 || strcasecmp(name, "UI_DecalMain.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -832,6 +836,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             }
         } else if ((pressed & FENativeInterface::kPadBack) && !chart)
             PopScreen();
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_DecalMain.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleDecalMainMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleDecalMainMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleDecalMainMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleDecalMainMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -2471,10 +2487,10 @@ void FEStartupSequence::HandlePaintCategoryLoaded(FEPackage *pkg)
     } kOptions[] = {
         {0x550681a4, 0x6a4c46a6, false, "Paint"},
         {0x55778e5a, 0x78deea1c, false, "Vinyls"},
-        {0xda1dae54, 0x4e933e83, true, "Decals"},
+        {0xda1dae54, 0x4e933e83, false, "Decals"},
         // 0x002bb0f0 picks the label by game mode: 0x920dbb02 in career (DAT_00506b50 == 1),
         // otherwise 0xd132a6fe.  The port's car-shop path is the non-career one.
-        {0x911a4ede, 0xd132a6fe, true, "Install Setup"},
+        {0x911a4ede, 0xd132a6fe, false, "Install Setup"},
     };
     m_paintCategorySel = std::min<size_t>(m_paintCategorySel, 3);
     std::vector<FEIconScroller::Def> defs;
@@ -2517,6 +2533,12 @@ void FEStartupSequence::HandlePaintCategoryMessage(uint32_t msg, FEPackage *pkg)
             NavigateTo(pkg->GetName(), "UI_Paint.fng");
         } else if (m_paintCategorySel == 1) {
             NavigateTo(pkg->GetName(), "UI_ChooseVinylLayer.fng"); // 0x002a45e0
+        } else if (m_paintCategorySel == 2) {
+            NavigateTo(pkg->GetName(), "UI_DecalMain.fng");
+        } else if (m_paintCategorySel == 3) {
+            // Install Setup (0x002b3e10 sums the basket and installs it).  The port pays and installs
+            // each change at once, so there is never a pending basket.
+            ShowMessageDialogText("All of your changes are already installed");
         } else {
             // 0x002a45e0 maps these to UI_ChooseVinylLayer.fng / UI_DecalMain.fng; neither screen
             // is ported yet, and Install/Purchase Setup has no ported target either.
@@ -2554,6 +2576,28 @@ std::vector<CarSkin::Layer> ToSkinLayers(const std::vector<SkinLayer> &layers)
     return out;
 }
 
+// The skin layers of a car: its vinyls with the sponsor decals over them.
+std::vector<CarSkin::Layer> CarSkinLayers(const std::vector<SkinLayer> &vinyls, const std::vector<SkinLayer> &decals)
+{
+    std::vector<CarSkin::Layer> out = ToSkinLayers(vinyls);
+    const std::vector<CarSkin::Layer> d = ToSkinLayers(decals);
+    out.insert(out.end(), d.begin(), d.end());
+    return out;
+}
+
+// Decal artwork: sponsor stickers default to a white sticker (red region) with black / white
+// lettering regions; the originals' colours are not decoded.
+SkinLayer DefaultDecal(const std::string &design)
+{
+    SkinLayer l;
+    l.design = design;
+    const uint8_t cols[3][3] = {{245, 245, 245}, {20, 20, 20}, {245, 245, 245}};
+    for (int k = 0; k < 3; ++k)
+        for (int ch = 0; ch < 3; ++ch)
+            l.color[k][ch] = cols[k][ch];
+    return l;
+}
+
 std::string DisplayName(const std::string &design)
 {
     std::string base = design;
@@ -2576,7 +2620,8 @@ std::string DisplayName(const std::string &design)
 
 void FEStartupSequence::PreviewVinylWork()
 {
-    m_fe->SetPreviewVinyls(ToSkinLayers(m_vinylWork));
+    const Career::OwnedCar *car = ShopCar();
+    m_fe->SetPreviewVinyls(CarSkinLayers(m_vinylWork, m_decalMode ? m_decalWork : (car ? car->decals : std::vector<SkinLayer>())));
 }
 
 void FEStartupSequence::HandleVinylLayerLoaded(FEPackage *pkg)
@@ -2585,6 +2630,7 @@ void FEStartupSequence::HandleVinylLayerLoaded(FEPackage *pkg)
     m_vinylWork.clear();
     if (car)
         m_vinylWork = car->vinyls;
+    m_decalMode = false;
     m_vinylLayer = std::min<int>(m_vinylLayer, Career::OwnedCar::kMaxVinylLayers - 1);
     m_vinylBrowser = false;
     m_fe->EnsureVinylShop();
@@ -2703,6 +2749,13 @@ void FEStartupSequence::HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg)
 void FEStartupSequence::HandleVinylBrowserLoaded(FEPackage *pkg)
 {
     m_vinylGroups = m_fe->VinylShop().UsedGroups();
+    if (m_decalMode) { // the Decal Shop lists only the sponsor artwork (After Market group)
+        std::vector<int> only;
+        for (int g : m_vinylGroups)
+            if (std::string(VinylCatalog::Groups()[size_t(g)].debug) == "AFTER_MARKET")
+                only.push_back(g);
+        m_vinylGroups = only;
+    }
     m_vinylGroupSel = std::min(m_vinylGroupSel, m_vinylGroups.empty() ? size_t(0) : m_vinylGroups.size() - 1);
     std::vector<FEIconScroller::Def> defs;
     for (int g : m_vinylGroups) {
@@ -2714,7 +2767,7 @@ void FEStartupSequence::HandleVinylBrowserLoaded(FEPackage *pkg)
         defs.push_back(d);
     }
     m_partsCategoryScroller.Setup(pkg, defs, m_vinylGroupSel, "CATEGORY_MASTER", "CATEGORY_ICON");
-    FENativeInterface::SetString(pkg, 0x42adb44c, "Vinyl Shop");
+    FENativeInterface::SetString(pkg, 0x42adb44c, m_decalMode ? "Decal Shop" : "Vinyl Shop");
     if (FEObject *info = pkg->FindObjectByHash(0x4a1316e9u)) {
         FENativeInterface::SetObjectVisible(info, true);
         if (FEObjData *data = info->GetObjData())
@@ -2732,12 +2785,16 @@ void FEStartupSequence::RefreshVinylItems(FEPackage *pkg)
             m_vinylItems.push_back(d);
     // Start on the design already fitted to the layer, if it is in this group.
     m_vinylSel = 0;
-    if (size_t(m_vinylLayer) < m_vinylWork.size())
+    const std::vector<SkinLayer> &edited = m_decalMode ? m_decalWork : m_vinylWork;
+    if (size_t(m_vinylLayer) < edited.size())
         for (size_t i = 1; i < m_vinylItems.size(); ++i)
-            if (m_vinylItems[i]->name == m_vinylWork[size_t(m_vinylLayer)].design)
+            if (m_vinylItems[i]->name == edited[size_t(m_vinylLayer)].design)
                 m_vinylSel = i;
     const uint32_t icon = m_vinylGroupSel < m_vinylGroups.size() ? VinylCatalog::Groups()[size_t(m_vinylGroups[m_vinylGroupSel])].icon : 0;
     std::vector<FEIconScroller::Def> defs(m_vinylItems.size(), FEIconScroller::Def{icon, 0, false, ""});
+    if (m_decalMode) // each sponsor shows its own DECAL_ICON_<NAME> logo
+        for (size_t i = 1; i < m_vinylItems.size(); ++i)
+            defs[i].texHash = CarMaterial::NameHash(("DECAL_ICON_" + m_vinylItems[i]->name.substr(4)).c_str());
     m_partsScroller.Setup(pkg, defs, m_vinylSel, "MINI_MASTER", "PARTS_ICON", 20.0f);
     RefreshVinylInfo(pkg);
 }
@@ -2757,9 +2814,29 @@ void FEStartupSequence::RefreshVinylInfo(FEPackage *pkg)
         snprintf(price, sizeof price, "$%u", unsigned(VinylCatalog::Price(*d)));
         snprintf(total, sizeof total, "%05u", unsigned(VinylCatalog::Price(*d)));
     }
-    FENativeInterface::SetString(pkg, 0xd28b9316, d ? (d->set ? d->display + " (set)" : d->display).c_str() : "No Vinyl");
+    if (m_decalMode && d) { // sponsor decals cost a flat stand-in price
+        snprintf(price, sizeof price, "$%u", 150u);
+        snprintf(total, sizeof total, "%05u", 150u);
+    }
+    std::string title = d ? (d->set ? d->display + " (set)" : d->display) : (m_decalMode ? "No Decal" : "No Vinyl");
+    if (m_decalMode && d)
+        title = d->display.size() > 4 ? d->display.substr(4) : d->display; // "Aem Bilstein" -> "Bilstein"
+    FENativeInterface::SetString(pkg, 0xd28b9316, title.c_str());
     FENativeInterface::SetString(pkg, 0x380b632, price);
     FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    if (m_decalMode) { // preview: the decals with this sponsor on the edited slot
+        std::vector<SkinLayer> dec = m_decalWork;
+        const size_t slot = size_t(m_vinylLayer);
+        if (d) {
+            if (dec.size() <= slot)
+                dec.resize(slot + 1);
+            dec[slot] = DefaultDecal(d->name);
+        } else if (slot < dec.size()) {
+            dec.erase(dec.begin() + m_vinylLayer);
+        }
+        m_fe->SetPreviewVinyls(CarSkinLayers(m_vinylWork, dec));
+        return;
+    }
     // Preview: the work layers with this design on the edited layer.
     std::vector<SkinLayer> preview = m_vinylWork;
     if (d) {
@@ -2792,9 +2869,28 @@ void FEStartupSequence::ApplyVinylDesign(FEPackage *)
     const VinylDesign *d = m_vinylSel < m_vinylItems.size() ? m_vinylItems[m_vinylSel] : nullptr;
     if (!car)
         return;
-    const uint32_t price = d ? VinylCatalog::Price(*d) : 0;
+    const uint32_t price = m_decalMode ? (d ? 150u : 0u) : (d ? VinylCatalog::Price(*d) : 0);
     if (int(price) > m_profile.money) {
         ShowMessageDialog(kLabelNotEnoughBank);
+        return;
+    }
+    if (m_decalMode) {
+        const size_t slot = size_t(m_vinylLayer);
+        if (d) {
+            if (m_decalWork.size() <= slot)
+                m_decalWork.resize(slot + 1);
+            m_decalWork[slot] = DefaultDecal(d->name);
+        } else if (slot < m_decalWork.size()) {
+            m_decalWork.erase(m_decalWork.begin() + m_vinylLayer);
+        }
+        m_profile.money -= int(price);
+        car->decals = m_decalWork;
+        Career::SaveCareer(m_profile);
+        printf("[Decal] slot %d: %s for $%u (money %d), %zu decal(s)\n", m_vinylLayer + 1, d ? d->name.c_str() : "cleared", price,
+               m_profile.money, m_decalWork.size());
+        PreviewVinylWork();
+        m_vinylBrowser = false;
+        PopScreen();
         return;
     }
     if (d) {
@@ -2868,6 +2964,91 @@ void FEStartupSequence::HandleVinylBrowserMessage(uint32_t msg, FEPackage *pkg)
     }
     if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending)
         ApplyVinylDesign(pkg);
+}
+
+
+// UI_DecalMain.fng (factory 0x002aa428): the Decal Shop.  The package ships eight card slots (the
+// original's decal zones: hood, doors, quarter panels, windshield).  The sponsor artwork of the
+// port's data is pre-placed on the body (the AEM_<SPONSOR> vinyl images), so the cards are four
+// decal slots; Accept opens the browser in decal mode with every sponsor's DECAL_ICON logo.
+void FEStartupSequence::HandleDecalMainLoaded(FEPackage *pkg)
+{
+    Career::OwnedCar *car = ShopCar();
+    m_vinylWork.clear();
+    m_decalWork.clear();
+    if (car)
+        m_vinylWork = car->vinyls, m_decalWork = car->decals;
+    m_decalMode = true;
+    m_vinylBrowser = false;
+    m_vinylLayer = std::min<int>(m_vinylLayer, Career::OwnedCar::kMaxDecals - 1);
+    m_fe->EnsureVinylShop();
+    static const uint32_t kZoneIcons[Career::OwnedCar::kMaxDecals] = {0x154fa42f, 0xa6952912, 0x6ec9c565, 0x4b18c39f};
+    std::vector<FEIconScroller::Def> defs;
+    for (int i = 0; i < Career::OwnedCar::kMaxDecals; ++i)
+        defs.push_back({kZoneIcons[i], 0, false, ""}); // DECAL_HOOD_LAYOUT1 / LEFT_DOOR / RIGHT_DOOR / WINDSHIELD
+    bool shipped = false;
+    float cx = 0, cy = -149.0f;
+    m_vinylLayerCards = ShippedOrClonedCards(pkg, defs.size(), "DECAL_CARD_", cx, cy, shipped);
+    if (m_vinylLayerCards.size() != defs.size())
+        return;
+    m_vinylLayerScroller.SetupObjects(pkg, defs, m_vinylLayerCards, size_t(m_vinylLayer), "OPTION_MASTER");
+    if (!shipped)
+        m_vinylLayerScroller.SetLayoutCenter(cx, cy);
+    RefreshDecalSlots(pkg);
+    PreviewVinylWork();
+    printf("[Decal] shop: %zu decal(s) on %s, %zu sponsors\n", m_decalWork.size(), m_fe->PreviewCarName().c_str(),
+           m_fe->VinylShop().InGroup(VinylCatalog::GroupIndexOf("AFTER_MARKET")).size());
+}
+
+void FEStartupSequence::RefreshDecalSlots(FEPackage *pkg)
+{
+    for (int i = 0; i < Career::OwnedCar::kMaxDecals; ++i) {
+        std::string name = "Empty";
+        if (size_t(i) < m_decalWork.size()) {
+            name = DisplayName(m_decalWork[size_t(i)].design);
+            if (name.size() > 4)
+                name = name.substr(4);
+        }
+        m_vinylLayerScroller.SetOptionText(size_t(i), "Decal " + std::to_string(i + 1) + ": " + name);
+    }
+    FENativeInterface::SetString(pkg, 0x2f5e7da3, "00000");
+}
+
+void FEStartupSequence::HandleDecalMainMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_vinylLayerScroller.Empty() || m_vinylLayerScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_vinylLayerScroller.HandleMessage(msg, TickSeconds());
+        return;
+    }
+    if (msg == kMsgInitComplete) {
+        m_vinylLayerScroller.HandleMessage(msg, 0.0f);
+        m_vinylLayerScroller.AllowFade();
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_vinylLayerScroller.HandleMessage(msg, 0.0f);
+        m_vinylLayer = int(m_vinylLayerScroller.Selected());
+        return;
+    }
+    if (msg == kMsgPadBack && !m_navPending) {
+        if (Career::OwnedCar *car = ShopCar())
+            ApplyOwnedCarPreview(*car);
+        m_decalMode = false;
+        PopScreen();
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        if (!m_fe->VinylShop().Designs().empty()) {
+            m_vinylBrowser = true;
+            m_vinylGroupSel = 0;
+            m_vinylSel = 0;
+            NavigateTo(pkg->GetName(), "UI_GenericParts_Browser.fng");
+        } else {
+            ShowMessageDialogText("This car has no decals");
+        }
+    }
 }
 
 // UI_Paint.fng (ctor 0x002bc1e0, AddOptions 0x002bcff8, fill 0x002bd868): the paint shop's colorable
@@ -3941,7 +4122,7 @@ void FEStartupSequence::ApplyOwnedCarPreview(const Career::OwnedCar &car)
     m_fe->SetPreviewWideBodyPart(car.wideBody);
     m_fe->SetPreviewPerfParts(car.perfParts);
     m_fe->SetPreviewTune(car.tune);
-    m_fe->SetPreviewVinyls(ToSkinLayers(car.vinyls));
+    m_fe->SetPreviewVinyls(CarSkinLayers(car.vinyls, car.decals));
     m_fe->SetPreviewCar(car.model);
     m_fe->SetPreviewPaint(car.paintSet ? car.paintSet : PaintCatalog::kGloss, car.paint);
     // Rims (partPaint[3]) drive the wheel faces; if only Spinners (partPaint[4]) are painted, use

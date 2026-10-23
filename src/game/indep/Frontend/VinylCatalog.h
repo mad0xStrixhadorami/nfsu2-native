@@ -30,6 +30,7 @@ public:
     // Builds the lists from a car's vinyl pack (the pack's texture names).
     bool Build(const TexturePack &pack, const std::string &carName);
     static const std::vector<VinylGroup> &Groups();
+    static int GroupIndexOf(const char *debug); // -1 if unknown
     const std::vector<VinylDesign> &Designs() const { return m_designs; }
     // Designs of one group, in catalogue order.
     std::vector<const VinylDesign *> InGroup(int group) const;

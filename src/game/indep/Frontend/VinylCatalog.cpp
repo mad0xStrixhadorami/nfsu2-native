@@ -68,6 +68,8 @@ std::string Title(const std::string &s)
 
 const std::vector<VinylGroup> &VinylCatalog::Groups() { return kGroups; }
 
+int VinylCatalog::GroupIndexOf(const char *debug) { return GroupIndex(debug); }
+
 bool VinylCatalog::Build(const TexturePack &pack, const std::string &carName)
 {
     m_designs.clear();

@@ -162,6 +162,10 @@ int main()
         l.design = "WILD_172B";
         l.color[1][2] = 77;
         p.cars[0].vinyls.push_back(l);
+        Career::OwnedCar::VinylLayer d;
+        d.design = "AEM_BILSTEIN";
+        d.color[0][0] = 9;
+        p.cars[0].decals.push_back(d);
     }
     p.cars[0].perfParts = {2, 3, 17};     // Performance Shop parts (ISSUES #198)
     p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
@@ -217,6 +221,8 @@ int main()
     if (q.cars[0].vinyls.size() != 1 || q.cars[0].vinyls[0].design != "WILD_172B" || q.cars[0].vinyls[0].color[1][2] != 77 ||
         q.cars[0].vinyls[0].color[0][0] != 255)
         return Fail("vinyl layers round-trip (v15)");
+    if (q.cars[0].decals.size() != 1 || q.cars[0].decals[0].design != "AEM_BILSTEIN" || q.cars[0].decals[0].color[0][0] != 9)
+        return Fail("sponsor decals round-trip (v16)");
     if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
         return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)

@@ -59,6 +59,10 @@ struct OwnedCar {
         uint8_t color[3][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
     };
     std::vector<VinylLayer> vinyls;
+    // Sponsor decals (Decal Shop, ISSUES #225): the car's AEM_<SPONSOR> artwork drawn over the
+    // vinyls, at most kMaxDecals.  `design` is the pack texture name without the car prefix.
+    static constexpr int kMaxDecals = 4;
+    std::vector<VinylLayer> decals;
 };
 
 // The career profile: what UG2 keeps in the per-player save block at 0x004f1744 (0xac54 bytes per

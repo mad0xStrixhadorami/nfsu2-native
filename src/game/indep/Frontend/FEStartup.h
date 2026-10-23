@@ -202,6 +202,9 @@ private:
     void RefreshGraph(FEPackage *pkg);
     // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
     void HandleVinylLayerLoaded(FEPackage *pkg);
+    void HandleDecalMainLoaded(FEPackage *pkg);
+    void HandleDecalMainMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshDecalSlots(FEPackage *pkg);
     void HandleVinylPaintLoaded(FEPackage *pkg);
     void PreviewPaintPart(size_t part, uint32_t set, uint32_t index);
     void HandleVinylLayerMessage(uint32_t msg, FEPackage *pkg);
@@ -338,6 +341,8 @@ private:
     // Vinyl shop state.
     std::vector<Career::OwnedCar::VinylLayer> m_vinylWork; // the car's layers plus the previewed change
     int m_vinylLayer = 0;                // layer being edited, 0..3
+    bool m_decalMode = false;            // the browser / layer screen edit the sponsor decals
+    std::vector<Career::OwnedCar::VinylLayer> m_decalWork;
     bool m_paintVinyl = false;           // UI_Paint edits the colour regions of a vinyl layer
     uint8_t m_vinylBackup[3][3] = {};    // region colours before the grid opened (Back restores)
     bool m_vinylBrowser = false;         // the parts browser shows vinyl groups / designs

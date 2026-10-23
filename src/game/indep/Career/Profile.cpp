@@ -16,7 +16,7 @@ constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187), v10 the fitted
 // hood, headlights and taillights (#188), v11 the fitted front/rear bumpers and side skirts (#190),
 // v12 the fitted wide-body kit (#193), v13 the fitted performance parts (#198), v14 the tuning slider bytes (#214).
-constexpr uint32_t kVersion = 15;
+constexpr uint32_t kVersion = 16;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -176,6 +176,19 @@ std::vector<uint8_t> Serialize(const Profile &p)
                     PutU32(payload, v);
         }
     }
+    // v16: the sponsor decals (#225), stored like the vinyl layers.
+    PutU32(payload, uint32_t(p.cars.size()));
+    for (const OwnedCar &c : p.cars) {
+        PutU32(payload, uint32_t(c.decals.size()));
+        for (const OwnedCar::VinylLayer &l : c.decals) {
+            PutU32(payload, uint32_t(l.design.size()));
+            for (char ch : l.design)
+                PutU32(payload, uint8_t(ch));
+            for (const auto &col : l.color)
+                for (uint8_t v : col)
+                    PutU32(payload, v);
+        }
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -197,7 +210,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 15) || o + size > data.size())
+    if ((version < 1 || version > 16) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -423,6 +436,37 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
                         v = uint8_t(x);
                     }
                 c.vinyls.push_back(std::move(l));
+            }
+        }
+    }
+    if (version >= 16 && q + 4 <= payload.size()) {
+        uint32_t n = 0;
+        if (!GetU32(payload, q, n) || n != p.cars.size())
+            return false;
+        for (OwnedCar &c : p.cars) {
+            uint32_t count = 0;
+            if (!GetU32(payload, q, count) || count > uint32_t(OwnedCar::kMaxDecals))
+                return false;
+            c.decals.clear();
+            for (uint32_t i = 0; i < count; ++i) {
+                OwnedCar::VinylLayer l;
+                uint32_t len = 0;
+                if (!GetU32(payload, q, len) || len > 40)
+                    return false;
+                for (uint32_t k = 0; k < len; ++k) {
+                    uint32_t ch = 0;
+                    if (!GetU32(payload, q, ch))
+                        return false;
+                    l.design.push_back(char(ch));
+                }
+                for (auto &col : l.color)
+                    for (uint8_t &v : col) {
+                        uint32_t x = 0;
+                        if (!GetU32(payload, q, x))
+                            return false;
+                        v = uint8_t(x);
+                    }
+                c.decals.push_back(std::move(l));
             }
         }
     }
