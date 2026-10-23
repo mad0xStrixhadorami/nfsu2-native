@@ -161,6 +161,46 @@ bool EngineSound::LoadNitrous(const std::vector<uint8_t> &bank)
     return true;
 }
 
+bool EngineSound::LoadCollision(const std::vector<uint8_t> &bank)
+{
+    std::vector<Loop> sounds;
+    if (!DecodeBank(bank, sounds) || sounds.empty() || !OpenDevice())
+        return false;
+    if (getenv("NFSU2_SOUND_DEBUG"))
+        for (size_t i = 0; i < sounds.size(); ++i)
+            printf("[Engine] collision sound %zu: %.2f s at %.0f Hz\n", i, float(sounds[i].pcm.size()) / sounds[i].rate,
+                   sounds[i].rate);
+    SDL_LockAudioDevice(m_device);
+    m_collision = std::move(sounds);
+    SDL_UnlockAudioDevice(m_device);
+    return true;
+}
+
+// The bank's sound-to-event mapping (EA's "stitch" collision sets) is not decoded: pick by length,
+// short sounds for light hits, long ones for hard hits (stand-in, ISSUES #221).
+void EngineSound::Crash(float closingSpeed)
+{
+    if (!m_device || m_collision.empty() || !m_running)
+        return;
+    const float lo = closingSpeed < 4.0f ? 0.05f : closingSpeed < 9.0f ? 0.3f : 0.55f;
+    const float hi = closingSpeed < 4.0f ? 0.3f : closingSpeed < 9.0f ? 0.55f : 1.3f;
+    std::vector<size_t> pick;
+    for (size_t i = 0; i < m_collision.size(); ++i) {
+        const float len = float(m_collision[i].pcm.size()) / m_collision[i].rate;
+        if (len >= lo && len < hi)
+            pick.push_back(i);
+    }
+    if (pick.empty())
+        return;
+    static unsigned seed = 12345;
+    seed = seed * 1664525u + 1013904223u;
+    const size_t which = pick[(seed >> 8) % pick.size()];
+    SDL_LockAudioDevice(m_device);
+    if (m_voices.size() < 4)
+        m_voices.push_back({&m_collision[which], 0.0f});
+    SDL_UnlockAudioDevice(m_device);
+}
+
 void EngineSound::NitrousBurst(bool start)
 {
     if (!m_device || m_nitrous.empty() || !m_running || !start)

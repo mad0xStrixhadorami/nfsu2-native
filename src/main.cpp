@@ -804,6 +804,7 @@ int main(int argc, char **argv)
             engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
             engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
             engineSound.LoadShift(ReadGameFile(*fs, (std::string("SOUND\\SHIFTING\\") + CarAudio::kGearBanks[audio.gearbox]).c_str()));
+            engineSound.LoadCollision(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\MB_Stich_Collision.abk"));
             engineSound.LoadNitrous(ReadGameFile(*fs, "SOUND\\NOS\\Nitrous_00_MB.abk"));
         }
         PlayerCar::Wheel wheels[4];
@@ -1489,6 +1490,11 @@ int main(int argc, char **argv)
                                 once = true, printf("[Collision] cars 0/1 have no rigid body: %d %d\n", cars[0]->Body() != nullptr, cars[1]->Body() != nullptr);
                         }
                         if (closing >= 0.0f) {
+                            static Uint32 lastCrash = 0;
+                            if (i == 0 && closing > 1.5f && SDL_GetTicks() - lastCrash > 350) { // the player's hit
+                                engineSound.Crash(closing);
+                                lastCrash = SDL_GetTicks();
+                            }
                             if (closing > 0.0f && getenv("NFSU2_COLLISION_DEBUG"))
                                 printf("[Collision] cars %zu/%zu closing %.1f m/s\n", i, j, closing);
                             continue;

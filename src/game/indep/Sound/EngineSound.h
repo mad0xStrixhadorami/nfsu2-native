@@ -26,6 +26,9 @@ public:
     // sound when a burst starts (which sound is which is assumed: SOUND_DEBUG prints their lengths).
     bool LoadNitrous(const std::vector<uint8_t> &bank);
     void NitrousBurst(bool start);
+    // Impact sounds (SOUND\IG_GLOBAL\MB_Stich_Collision.abk, ISSUES #221).
+    bool LoadCollision(const std::vector<uint8_t> &bank);
+    void Crash(float closingSpeed);
     // Engine state for the mixer (called from the game loop).
     void Set(float rpm, float idleRpm, float redline, float throttle, bool running);
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
@@ -50,7 +53,7 @@ private:
     int m_rate = 32000;
     std::vector<Loop> m_loops;
     Loop m_skid, m_road;
-    std::vector<Loop> m_shift, m_nitrous;
+    std::vector<Loop> m_shift, m_nitrous, m_collision;
     struct Voice {
         const Loop *sound;
         float pos;
