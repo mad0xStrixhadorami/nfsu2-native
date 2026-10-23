@@ -1180,6 +1180,10 @@ int main(int argc, char **argv)
             cribPkg = engine->PushPackage("UI_CareerCrib.fng", 0, 0xff);
             printf("[Career] crib %s\n", cribPkg ? "shown" : "missing");
         }
+        if (const char *devPkg = getenv("NFSU2_WORLD_PKG")) { // dev aid: show an in-game bundle screen over the world
+            cribPkg = engine->PushPackage(devPkg, 0, 0xff);
+            printf("[World] dev package %s %s\n", devPkg, cribPkg ? "shown" : "missing");
+        }
         // Dev aid: NFSU2_ROUTE_CHECK=1 lists stretches of the race route (and +-2.5 m beside it) with no ground.
         // Dev aid: NFSU2_WALLS_AT="x,y,r" lists the collision wall faces within r metres (ISSUES #155).
         if (const char *at = getenv("NFSU2_WALLS_AT")) {
