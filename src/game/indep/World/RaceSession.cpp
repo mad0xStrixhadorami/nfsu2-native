@@ -9,6 +9,7 @@
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "game/indep/Frontend/FENative.h"
 #include "Speed/Indep/Src/FEng/FEImage.h"
+#include "game/indep/World/CarMaterial.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
 
@@ -513,11 +514,41 @@ void RaceSession::UpdateHud(const PlayerCar &car)
             FENativeInterface::SetString(m_hud, kGear, text);
         }
     }
+    // The tachometer's textures are per-car "custom" ones in GLOBAL\\HUD_CUSTOMTEXTURES_ALL.BIN: the dial face by redline
+    // (3RDPERSON_7500 / 8500 / 10500LINES_CUSTOM_<n>), the needle / dial (3RDPERSON_RPMDIAL_CUSTOM_<n>) and the red fill
+    // (TACH_FILL_CUSTOM_<n>); the package's own defaults name textures that are not in any pack (ISSUES #260).
+    if (!m_gaugeSkinned) {
+        m_gaugeSkinned = true;
+        const float maxRpm = car.GetPerformance().Valid() ? car.GetPerformance().maxRpm : 8000.0f;
+        const int lines = maxRpm <= 8000.0f ? 7500 : maxRpm <= 9500.0f ? 8500 : 10500;
+        m_gaugeLines = lines;
+        char name[64];
+        auto hashOf = [&](const char *fmt, int a) {
+            snprintf(name, sizeof(name), fmt, a);
+            return CarMaterial::NameHash(name);
+        };
+        const int style = getenv("NFSU2_GAUGE_STYLE") ? atoi(getenv("NFSU2_GAUGE_STYLE")) : 0;
+        char face[64], fill[64], dial[64];
+        snprintf(face, sizeof(face), "3RDPERSON_%dLINES_CUSTOM_%02d", lines, style);
+        snprintf(fill, sizeof(fill), "TACH_FILL_CUSTOM_%02d", style);
+        snprintf(dial, sizeof(dial), "3RDPERSON_RPMDIAL_CUSTOM_%02d", style);
+        (void)hashOf;
+        FENativeInterface::SetTextureHash(m_hud, 0x1d9051aa, CarMaterial::NameHash(face));
+        FENativeInterface::SetTextureHash(m_hud, 0x05d19f25, CarMaterial::NameHash(fill));
+        FENativeInterface::SetTextureHash(m_hud, kNeedle, CarMaterial::NameHash(dial));
+        printf("[Hud] gauge %s / %s / %s (redline %.0f)\n", face, fill, dial, maxRpm);
+    }
     // Needle sweep as MW's CalcAngleForRPM (66..294 degrees over 0..max rpm).
     if (FEObject *needle = m_hud->FindObjectByHash(kNeedle))
         if (FEObjData *d = needle->GetObjData()) {
-            float factor = std::clamp(rpm / 8000.0f, 0.0f, 1.0f);
-            float angle = (66.0f + factor * (294.0f - 66.0f)) * 3.14159265f / 180.0f;
+            // The needle sprite points straight down at rotation 0 (the dial's zero) and a rotation of theta turns it
+            // theta degrees clockwise on screen... measured: theta points it at (180 + theta) degrees clockwise from the top.
+            // The face spans ~250 degrees from 0 to its full scale (7500 / 8500 / 10500).
+            const float actual = (car.GetPerformance().Valid() && !IsDrag()) ? rpm * car.GetPerformance().maxRpm / 8000.0f : rpm;
+            const float factor = std::clamp(actual / float(m_gaugeLines), 0.0f, 1.03f);
+            float angle = factor * 250.0f * 3.14159265f / 180.0f;
+            if (const char *nt = getenv("NFSU2_NEEDLE_TEST"))
+                angle = float(atof(nt)) * 3.14159265f / 180.0f;
             d->Rot.x = d->Rot.y = 0.0f;
             d->Rot.z = std::sin(angle * 0.5f);
             d->Rot.w = std::cos(angle * 0.5f);

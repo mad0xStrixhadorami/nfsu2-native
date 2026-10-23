@@ -834,6 +834,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     m_triangleCount = m_instances = 0;
     m_borrowedSolids = 0;
     m_scene = false;
+    m_roadTris.clear();
 
     // Solids by name hash (UG2 solid loader 0x001bf3b8 keeps the same per-solid chunk layout).
     struct SolidRef {
@@ -1132,6 +1133,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 }
                 if (!Shade(w, br, bg, bb))
                     continue; // degenerate
+                if (kind == kRoad) // top-down road map for the HUD minimap
+                    m_roadTris.insert(m_roadTris.end(), {w.v[0], w.v[1], w.v[3], w.v[4], w.v[6], w.v[7]});
                 RTri rt;
                 rt.tex = t.tex >= 0 && size_t(t.tex) < s.textures.size() && m_textures.count(s.textures[t.tex])
                              ? s.textures[t.tex]

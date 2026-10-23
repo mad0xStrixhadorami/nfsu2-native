@@ -33,6 +33,8 @@ public:
     enum Phase { kCountdown, kRacing, kFinished };
 
     void Begin(FEPackage *hud, const Config &config);
+    int m_gaugeLines = 8500;    // the dial's full scale in rpm (7500 / 8500 / 10500)
+    bool m_gaugeSkinned = false; // the tachometer's custom textures are set (UpdateHud, ISSUES #260)
     // Advances the race; returns whether the player may drive. opponents: each opponent's race
     // distance (metres past the start line along the route) for the position display.
     bool Update(const PlayerCar &car, const std::vector<float> &opponents, float dt);

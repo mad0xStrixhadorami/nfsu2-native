@@ -43,6 +43,7 @@
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/CarCollision.h"
+#include "game/indep/World/Minimap.h"
 #include "game/indep/World/RaceRoute.h"
 #include "game/indep/World/Traffic.h"
 #include "game/indep/World/RaceSession.h"
@@ -642,6 +643,10 @@ int main(int argc, char **argv)
     PlayerCar car;
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
+    std::vector<std::vector<uint8_t>> hudTexturePacks; // kept alive: the front end keeps pointers into them
+    Minimap minimap; // the HUD's round map (#259)
+    std::vector<uint32_t> minimapPixels;
+    bool minimapBound = false;
     std::vector<PlayerCar> garageCars; // the career's other cars on the garage room's discs (#252)
     std::vector<AiDriver> ai;
     TrafficNet trafficNet;
@@ -755,6 +760,14 @@ int main(int argc, char **argv)
             inGameFreeRoam = ReadGameFile(*fs, "GLOBAL\\INGAMEFREEROAM.BUN");
             if (!inGameFreeRoam.empty())
                 fe.AddBundle(inGameFreeRoam.data(), inGameFreeRoam.size(), "GLOBAL\\INGAMEFREEROAM.BUN");
+            // Global texture packs the HUD draws from (the tachometer face 0x40fe164f; ISSUES #260).
+            for (const char *tp : {"GLOBAL\\DYNTEX.BIN", "GLOBAL\\HUD_CUSTOMTEXTURES_ALL.BIN"}) {
+                std::vector<uint8_t> data = ReadGameFile(*fs, tp);
+                if (!data.empty()) {
+                    hudTexturePacks.push_back(std::move(data));
+                    fe.AddBundle(hudTexturePacks.back().data(), hudTexturePacks.back().size(), tp);
+                }
+            }
             if (getenv("NFSU2_LIST_INGAME"))
                 for (const std::string &n : fe.PackageNames())
                     printf("[World] package %s\n", n.c_str());
@@ -798,6 +811,8 @@ int main(int argc, char **argv)
             std::vector<uint8_t> regionBundle = ReadGameFile(*fs, ("TRACKS\\" + region + ".BUN").c_str());
             world.LoadBarrierGroups(regionBundle);
         }
+        minimap.Build(world.RoadTriangles());
+        minimapBound = false; // the new HUD package gets the map image again
         camera = world.StartCamera();
         flyCamera = getenv("NFSU2_WORLD_FLY") != nullptr;
         int raceNumber = startup.RaceNumber();
@@ -1888,6 +1903,33 @@ int main(int argc, char **argv)
                     camera.z = car.Z() + 1.7f;
                     camera.yaw = std::atan2(fy - camera.y, fx - camera.x);
                     camera.pitch = -0.1f;
+                }
+            }
+            // The HUD minimap: a heading-up window of the road bitmap around the player with the route, the rivals and an
+            // arrow (the original's TRACKMAP image is not available, ISSUES #259).
+            if (hud && !sceneMode && !cribPkg && minimap.Valid() && !getenv("NFSU2_NO_MINIMAP")) {
+                const int mode = race.IsFreeRun() ? startup.ExploreMapMode() : startup.RaceMapMode();
+                constexpr uint32_t kMapTex = 0x4d494e49, kMapObj = 0x90fe80f3, kNorthObj = 0xf2a54430;
+                if (mode != 0) {
+                    std::vector<Minimap::Dot> dots;
+                    for (const PlayerCar &o : opponentCars)
+                        dots.push_back({o.X(), o.Y(), 255, 70, 70});
+                    const float window = 260.0f + std::min(160.0f, std::fabs(car.Speed()) * 3.0f); // zooms out with speed
+                    minimap.Render(car.X(), car.Y(), car.Yaw(), window, mode == 2, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
+                    fe.SetStreamTexture(kMapTex, minimapPixels.data(), 256, 256);
+                    if (!minimapBound) {
+                        FENativeInterface::SetTextureHash(hud, kMapObj, kMapTex);
+                        minimapBound = true;
+                    }
+                    // The north marker orbits the map (rotate mode) or stays on top (north up).
+                    FEObject *mapObj = hud->FindObjectByHash(kMapObj), *north = hud->FindObjectByHash(kNorthObj);
+                    if (mapObj && north && mapObj->GetObjData() && north->GetObjData()) {
+                        const float a = mode == 2 ? car.Yaw() : 1.5707963f;
+                        const float r = 70.0f;
+                        north->GetObjData()->Pos.x = mapObj->GetObjData()->Pos.x - std::cos(a) * r;
+                        north->GetObjData()->Pos.y = mapObj->GetObjData()->Pos.y - std::sin(a) * r;
+                        north->Flags |= 0x400000u;
+                    }
                 }
             }
             // FEng runs on real time even while the race is paused (the pause menu animates).

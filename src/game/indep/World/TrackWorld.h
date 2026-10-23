@@ -114,6 +114,8 @@ public:
     size_t CollisionFaces() const { return m_collisionFaces; }
     // Dev aid: 0 = both (default), 1 = render triangles only, 2 = collision mesh only.
     void SetGroundSource(int source) { m_groundSource = source; }
+    // The road surface triangles of the loaded region (x0 y0 x1 y1 x2 y2 per triangle), for the minimap (ISSUES #259).
+    const std::vector<float> &RoadTriangles() const { return m_roadTris; }
     size_t TriangleCount() const { return m_triangleCount; }
     size_t InstanceCount() const { return m_instances; }
 
@@ -195,6 +197,7 @@ private:
     Camera m_start;
     size_t m_triangleCount = 0;
     std::vector<std::vector<uint8_t>> m_extraPacks;
+    std::vector<float> m_roadTris;
     bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;
     size_t m_borrowedSolids = 0;

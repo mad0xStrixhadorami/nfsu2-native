@@ -348,6 +348,8 @@ public:
     const std::vector<RaceInfo> &Races() const { return m_races; }
     static void SetTextureHash(FEObject *obj, uint32_t texHash);
     static void SetTextureHash(FEPackage *pkg, uint32_t objHash, uint32_t texHash);
+    // A runtime texture (the HUD minimap, ISSUES #259): created on first use under `hash`, updated in place afterwards.
+    void SetStreamTexture(uint32_t hash, const uint32_t *rgba, int w, int h);
     // previewParts (package screens): also fill the "<name>_PREVIEW" bars for that fitted set.
     void UpdateStatBars(FEPackage *pkg, bool force = false, const std::vector<uint16_t> *previewParts = nullptr);
     static void SetScript(FEPackage *pkg, uint32_t objHash, uint32_t scriptHash, bool resetTime = true);

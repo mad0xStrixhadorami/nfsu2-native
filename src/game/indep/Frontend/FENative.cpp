@@ -1464,6 +1464,28 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
     return mask;
 }
 
+void FENativeInterface::SetStreamTexture(uint32_t hash, const uint32_t *rgba, int w, int h)
+{
+    if (!m_renderer || !rgba || w <= 0 || h <= 0)
+        return;
+    auto it = m_textures.find(hash);
+    int tw = 0, th = 0;
+    if (it != m_textures.end() && it->second && it->second != m_white)
+        SDL_QueryTexture(it->second, nullptr, nullptr, &tw, &th);
+    if (it == m_textures.end() || tw != w || th != h) {
+        if (it != m_textures.end() && it->second && it->second != m_white)
+            SDL_DestroyTexture(it->second);
+        SDL_Texture *tex = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (!tex)
+            return;
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        m_textures[hash] = tex;
+        it = m_textures.find(hash);
+    }
+    SDL_UpdateTexture(it->second, nullptr, rgba, w * 4);
+}
+
 SDL_Texture *FENativeInterface::TextureFor(uint32_t hash)
 {
     if (!m_renderer)
