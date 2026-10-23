@@ -44,6 +44,8 @@ public:
     void SetHold(bool hold) { m_hold = hold; }
     // Nitrous (UG2 physics only, ISSUES #217): the button state for the next Update, the tank
     // (fraction of capacity, 0..2) and whether a burst is running.
+    void SetManual(bool manual) { if (m_ug2.Valid()) m_ug2.SetManual(manual); }
+    void ManualShift(int dir) { if (m_ug2.Valid()) m_ug2.ManualShift(dir); }
     void SetNitrousButton(bool held) { m_nitrousButton = held; }
     bool HasNitrous() const { return m_ug2.Valid() && m_ug2.HasNitrous(); }
     float NitrousFraction() const { return m_ug2.NitrousFraction(); }

@@ -360,7 +360,7 @@ void Vehicle::AutoGearbox()
             target = 2;
     } else if (m_in.brake > 0.1f && m_in.throttle < 0.1f && fwd < 0.5f) {
         target = 0;
-    } else if (d.gear >= 2) {
+    } else if (d.gear >= 2 && !m_manual) {
         if (rpm > d.shiftUp[d.gear] && d.gear < 1 + d.numGears && m_in.throttle > 0.05f)
             target = d.gear + 1;
         else if (d.gear > 2 && rpm < d.shiftDown[d.gear])
@@ -369,6 +369,18 @@ void Vehicle::AutoGearbox()
     if (target != d.gear) {
         d.targetGear = target;
         d.mode = 0; // disengage (0x0030d308)
+    }
+}
+
+void Vehicle::ManualShift(int dir)
+{
+    Drivetrain &d = m_drive;
+    if (d.mode != 3 || d.gear < 2)
+        return;
+    const int target = std::clamp(d.gear + dir, 2, 1 + d.numGears);
+    if (target != d.gear) {
+        d.targetGear = target;
+        d.mode = 0; // disengage (0x0030d308), as the automatic does
     }
 }
 

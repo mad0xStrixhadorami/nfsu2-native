@@ -1576,6 +1576,19 @@ int main(int argc, char **argv)
                         engineSound.Shift(car.Gear() - lastGear);
                     lastGear = car.Gear();
                 }
+                // Manual transmission (Options > Player): E / page-down shifts up, F down (pad R-trigger shifts up).
+                {
+                    static bool shiftDownWas = false;
+                    const bool down = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_F] != 0;
+                    car.SetManual(startup.ManualTransmission() && !race.IsDrag());
+                    if (startup.ManualTransmission() && !race.IsDrag() && race.GetPhase() == RaceSession::kRacing) {
+                        if (pressed & FENativeInterface::kPadRTrigger)
+                            car.ManualShift(+1);
+                        if (down && !shiftDownWas)
+                            car.ManualShift(-1);
+                    }
+                    shiftDownWas = down;
+                }
                 // Drag race (ISSUES #115): the gearbox drives the engine torque; R2/Accept upshift.
                 float power = 1.0f;
                 if (race.IsDrag() && race.GetPhase() != RaceSession::kFinished) {

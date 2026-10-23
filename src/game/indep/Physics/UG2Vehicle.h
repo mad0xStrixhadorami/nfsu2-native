@@ -41,6 +41,10 @@ public:
     float Yaw() const;
     float ForwardSpeed() const;  // m/s along the heading (negative reversing)
     float Rpm() const { return m_engine.speed * kRadToRpm; }
+    // Manual gearbox (Options > Player > Transmission): the automatic's up / down shifts are off and
+    // ManualShift(+1 / -1) changes gear while the clutch is engaged.
+    void SetManual(bool manual) { m_manual = manual; }
+    void ManualShift(int dir);
     int Gear() const;            // 1.. forward, 0 neutral, -1 reverse
     float Slip() const;          // 0..1 tyre slide amount (sound/skids)
     float WheelRadius() const { return m_wheel[0].radius; }
@@ -154,6 +158,7 @@ private:
     void SuspensionAndContact(const TrackWorld &world, float h);
     void TyreForces(float h);
     void DriveTorque(float h);
+    bool m_manual = false;
     void AutoGearbox();
     void Aero();
     float EngineTorque(float speed, float throttle) const;

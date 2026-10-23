@@ -71,6 +71,7 @@ public:
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
     // Options that reach the game (ISSUES #237).
     bool SpeedoMph() const { return m_speedoUnits == 0; } // 0 MPH / 1 KM-H (0x004f12e8)
+    bool ManualTransmission() const { return m_pTransmissionManual; }
     int CameraSetting() const { return m_pCamera; }       // 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far
     int CareerDifficulty() const { return m_careerDifficulty; } // 0 easy / 1 normal / 2 hard
     int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
