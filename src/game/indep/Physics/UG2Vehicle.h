@@ -23,6 +23,7 @@ struct Vec3 {
 struct Controls {
     float throttle = 0, brake = 0, handbrake = 0; // 0..1
     float steer = 0;                              // -1 (right) .. 1 (left)
+    bool nitrous = false;                         // the NOS button is held (0x0035e868 cases 0xa3 / 0xa4)
 };
 
 class Vehicle {
@@ -47,6 +48,17 @@ public:
     // Car-to-car contact (resolved by the caller).
     void Nudge(float dx, float dy) { m_body.pos.x += dx, m_body.pos.y += dy; }
     void ScaleSpeed(float f);
+
+    // Nitrous (ISSUES #217).  The tank holds `capacity` seconds (record +0x3b8, 4000 ticks per
+    // second in the original) and drains in real time while a burst runs; its fraction (0.305400)
+    // can be filled past 1 (up to 2 by 0x003054a8), and the burst level 1..3 comes from the fraction
+    // (0x00305150: > 0 / > 1.4 / > 1.7), scaling the extra torque by {1.0, 1.4, 1.7}.
+    bool HasNitrous() const { return m_nos.capacity > 0.0f; }
+    float NitrousFraction() const { return m_nos.capacity > 0.0f ? m_nos.fill / m_nos.capacity : 0.0f; }
+    bool NitrousActive() const { return m_nos.active; }
+    int NitrousLevel() const;
+    // 0x003054a8: add (or remove) a fraction of the tank, clamped to 0..2.
+    void AddNitrous(float fraction);
 
 private:
     static constexpr float kStep = 0.0044f;       // DAT_00568b70
@@ -135,6 +147,14 @@ private:
     float m_dragCoef = 0, m_downFront = 0, m_downRear = 0;
     float m_brakeTorque = 0, m_handbrakeTorque = 0, m_maxSteer = 0;
     float m_limiterSpeed = 0; // m/s, rec+0x3a8 mph
+    struct Nitrous {
+        float capacity = 0; // s, rec +0x3b8
+        float blend = 0;    // rec +0x3c4 (frame +0x2ac), the torque scale
+        float fill = 0;     // s
+        bool active = false;
+    };
+    Nitrous m_nos;
+    void UpdateNitrous(float dt);
     Controls m_in;
     float m_accum = 0;
     bool m_groundBelow = true; // some wheel found terrain beneath it (grounded or not)

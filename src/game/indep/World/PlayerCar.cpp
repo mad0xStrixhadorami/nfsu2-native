@@ -780,6 +780,7 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
         in.brake = std::clamp(brake, 0.0f, 1.0f);
         in.steer = std::clamp(steer, -1.0f, 1.0f);
         in.handbrake = m_hold ? 1.0f : 0.0f;
+        in.nitrous = m_nitrousButton;
         m_ug2.Update(world, in, dt);
         const UG2Physics::Vec3 o = m_ug2.Origin();
         m_x = o.x, m_y = o.y, m_z = o.z - m_rideHeight, m_yaw = m_ug2.Yaw();

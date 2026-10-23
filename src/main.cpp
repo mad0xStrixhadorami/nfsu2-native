@@ -803,6 +803,7 @@ int main(int argc, char **argv)
             engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
             engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
             engineSound.LoadShift(ReadGameFile(*fs, (std::string("SOUND\\SHIFTING\\") + CarAudio::kGearBanks[audio.gearbox]).c_str()));
+            engineSound.LoadNitrous(ReadGameFile(*fs, "SOUND\\NOS\\Nitrous_00_MB.abk"));
         }
         PlayerCar::Wheel wheels[4];
         PlayerCar::Performance perf;
@@ -1379,6 +1380,22 @@ int main(int argc, char **argv)
                     if (dragAuto && race.NeedShift())
                         shift = true;
                     power = race.DragUpdate(car.Speed(), inputThrottle, shift, dt);
+                }
+                // Nitrous (ISSUES #217): Space / Accept held (Q in drag races, where Accept shifts); the
+                // tank refills while the car slides.  NFSU2_NOS_AUTO=1 holds the button for tests.
+                {
+                    static const bool nosAuto = getenv("NFSU2_NOS_AUTO") != nullptr;
+                    const bool held = (pad & FENativeInterface::kPadLTrigger) ||
+                                      (!race.IsDrag() && (pad & FENativeInterface::kPadAccept)) || nosAuto;
+                    static bool nosWasActive = false; // a burst that started in the last update plays its sound
+                    if (car.NitrousActive() && !nosWasActive)
+                        engineSound.NitrousBurst(true);
+                    nosWasActive = car.NitrousActive();
+                    car.SetNitrousButton(held && race.GetPhase() == RaceSession::kRacing);
+                    // Stand-in for the original refill (0x0036a9e8 feeds 0x003054a8 from the drift score):
+                    // 10% of the tank per second of hard sliding at speed.
+                    if (car.HasNitrous() && car.Slip() > 0.35f && car.Speed() > 15.0f)
+                        car.AddNitrous(0.1f * dt);
                 }
                 if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.

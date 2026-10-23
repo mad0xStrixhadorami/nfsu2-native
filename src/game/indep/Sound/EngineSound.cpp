@@ -146,6 +146,31 @@ bool EngineSound::LoadShift(const std::vector<uint8_t> &bank)
     return true;
 }
 
+bool EngineSound::LoadNitrous(const std::vector<uint8_t> &bank)
+{
+    std::vector<Loop> sounds;
+    if (!DecodeBank(bank, sounds) || sounds.empty() || !OpenDevice())
+        return false;
+    if (getenv("NFSU2_SOUND_DEBUG"))
+        for (size_t i = 0; i < sounds.size(); ++i)
+            printf("[Engine] nitrous sound %zu: %.2f s at %.0f Hz\n", i, float(sounds[i].pcm.size()) / sounds[i].rate,
+                   sounds[i].rate);
+    SDL_LockAudioDevice(m_device);
+    m_nitrous = std::move(sounds);
+    SDL_UnlockAudioDevice(m_device);
+    return true;
+}
+
+void EngineSound::NitrousBurst(bool start)
+{
+    if (!m_device || m_nitrous.empty() || !m_running || !start)
+        return;
+    SDL_LockAudioDevice(m_device);
+    if (m_voices.size() < 4)
+        m_voices.push_back({&m_nitrous[0], 0.0f});
+    SDL_UnlockAudioDevice(m_device);
+}
+
 void EngineSound::Shift(int direction)
 {
     if (!m_device || m_shift.size() < 2 || !m_running)

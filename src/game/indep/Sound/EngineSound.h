@@ -22,6 +22,10 @@ public:
     // assumed). Shift(+1/-1) plays one.
     bool LoadShift(const std::vector<uint8_t> &bank);
     void Shift(int direction);
+    // Nitrous bank (SOUND\NOS\Nitrous_00_MB.abk, ISSUES #217): NitrousBurst(true) plays the first
+    // sound when a burst starts (which sound is which is assumed: SOUND_DEBUG prints their lengths).
+    bool LoadNitrous(const std::vector<uint8_t> &bank);
+    void NitrousBurst(bool start);
     // Engine state for the mixer (called from the game loop).
     void Set(float rpm, float idleRpm, float redline, float throttle, bool running);
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
@@ -46,7 +50,7 @@ private:
     int m_rate = 32000;
     std::vector<Loop> m_loops;
     Loop m_skid, m_road;
-    std::vector<Loop> m_shift;
+    std::vector<Loop> m_shift, m_nitrous;
     struct Voice {
         const Loop *sound;
         float pos;

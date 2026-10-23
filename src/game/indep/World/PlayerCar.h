@@ -42,6 +42,14 @@ public:
     bool UsingUG2Physics() const { return m_ug2.Valid(); }
     // Holds the car with the handbrake (race countdown: stops it rolling on slopes).
     void SetHold(bool hold) { m_hold = hold; }
+    // Nitrous (UG2 physics only, ISSUES #217): the button state for the next Update, the tank
+    // (fraction of capacity, 0..2) and whether a burst is running.
+    void SetNitrousButton(bool held) { m_nitrousButton = held; }
+    bool HasNitrous() const { return m_ug2.Valid() && m_ug2.HasNitrous(); }
+    float NitrousFraction() const { return m_ug2.NitrousFraction(); }
+    bool NitrousActive() const { return m_ug2.NitrousActive(); }
+    int NitrousLevel() const { return m_ug2.NitrousLevel(); }
+    void AddNitrous(float fraction) { m_ug2.AddNitrous(fraction); }
     const Performance &GetPerformance() const { return m_perf; }
     int Gear() const { return m_gear; }  // 1.. forward, -1 reverse, 0 neutral
     float Rpm() const { return m_rpm; }
@@ -171,6 +179,7 @@ private:
     int m_gear = 1;
     float m_rpm = 0;
     UG2Physics::Vehicle m_ug2;
+    bool m_nitrousButton = false;
     bool m_hold = false;
     float m_wheelRadius = 0.32f;
 };

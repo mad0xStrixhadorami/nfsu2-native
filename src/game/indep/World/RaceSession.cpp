@@ -8,6 +8,7 @@
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "game/indep/Frontend/FENative.h"
+#include "Speed/Indep/Src/FEng/FEImage.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
 
@@ -98,6 +99,7 @@ constexpr int kDriftMaxMult = 10;
 void RaceSession::Begin(FEPackage *hud, const Config &config)
 {
     m_hud = hud;
+    m_nosBaseW = 0.0f;
     m_config = config;
     if (m_config.route && m_config.route->Valid() && !m_config.route->Closed())
         m_config.laps = 1; // sprint
@@ -504,6 +506,33 @@ void RaceSession::UpdateHud(const PlayerCar &car)
             d->Rot.z = std::sin(angle * 0.5f);
             d->Rot.w = std::cos(angle * 0.5f);
         }
+    // Nitrous meter (ISSUES #217): shown when the car carries a tank.
+    {
+        const bool nos = car.HasNitrous();
+        FENativeInterface::SetVisible(m_hud, kNosLine, nos);
+        FENativeInterface::SetVisible(m_hud, kNosFill, nos);
+        // The red arc (script-driven in the original) is cropped from the left to the tank's fill.
+        if (nos)
+            if (FEObject *fill = m_hud->FindObjectByHash(kNosFill))
+                if (FEImage *img = fill->Type == FE_Image ? static_cast<FEImage *>(fill) : nullptr)
+                    if (FEImageData *d = img->GetImageData()) {
+                        if (m_nosBaseW <= 0.0f) {
+                            m_nosBaseW = d->Size.x;
+                            m_nosBaseX = d->Pos.x;
+                            m_nosBaseU = d->UpperLeft.x;
+                            m_nosBaseU1 = d->LowerRight.x;
+                        }
+                        const char *force = getenv("NFSU2_NOS_FORCE"); // dev aid: pin the displayed fraction
+                        const float f = std::clamp(force ? float(atof(force)) : car.NitrousFraction(), 0.0f, 1.0f);
+                        d->Size.x = m_nosBaseW * std::max(f, 0.001f);
+                        d->Pos.x = m_nosBaseX - m_nosBaseW * 0.5f + d->Size.x * 0.5f;
+                        d->UpperLeft.x = m_nosBaseU;
+                        d->LowerRight.x = m_nosBaseU + (m_nosBaseU1 - m_nosBaseU) * f;
+                        static int n = 0;
+                        if (getenv("NFSU2_NOS_DEBUG") && ++n % 60 == 0)
+                            printf("[Nos] fraction %.2f active %d level %d size %.1f uv %.2f..%.2f\n", car.NitrousFraction(), car.NitrousActive(), car.NitrousLevel(), d->Size.x, d->UpperLeft.x, d->LowerRight.x);
+                    }
+    }
     // Drag shift light (part of the HUD package, ISSUES #106): on near the limiter.
     FENativeInterface::SetVisible(m_hud, kShiftLight, IsDrag() && m_phase == kRacing && ShiftLight());
 

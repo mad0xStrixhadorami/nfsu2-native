@@ -126,6 +126,15 @@ bool Vehicle::Setup(const uint8_t *r)
         return false;
     e.speed = e.idle / kRadToRpm;
 
+    // Nitrous: the tank starts full (0x003048d0).
+    m_nos = Nitrous();
+    m_nos.capacity = std::max(0.0f, F(r, 0x3b8));
+    m_nos.blend = F(r, 0x3c4);
+    if (const char *test = getenv("NFSU2_NOS_TEST")) // dev aid "<seconds>,<blend>" for a car without the part
+        if (sscanf(test, "%f,%f", &m_nos.capacity, &m_nos.blend) < 2)
+            m_nos.blend = 0.5f;
+    m_nos.fill = m_nos.capacity;
+
     // Drivetrain (rec+0x2c8): clutch gain, front/rear final drive, rear torque share, clutch
     // stiffness, gear count, clutch rate, ratios from rec+0x2e8 (reverse, neutral, 1st..).
     Drivetrain &d = m_drive;
@@ -145,6 +154,8 @@ bool Vehicle::Setup(const uint8_t *r)
     for (int i = 0; i < 4; ++i)
         m_wheel[i].driven = i < 2 ? d.rearSplit < 0.999f : d.rearSplit > 0.001f;
     m_valid = true;
+    if (getenv("NFSU2_PHYS_DEBUG"))
+        printf("[PhysSetup] nitrous capacity %.2f s blend %.3f\n", m_nos.capacity, m_nos.blend);
     if (getenv("NFSU2_PHYS_DEBUG"))
         for (int i = 0; i < 4; ++i)
             printf("[PhysSetup] w%d local %.2f %.2f %.2f r%.2f  axle slip %.3f loadN %.3f lat %.3f cmu %.3f lmu %.3f  "
@@ -243,6 +254,10 @@ float Vehicle::EngineTorque(float speed, float throttle) const
     const bool limiter = e.limiter;
     const float t = limiter ? 0.0f : throttle;
     float torque = Curve(e.torque, 9, e.idle, e.maxRpm, rpm) * t;
+    // Nitrous term of 0x0030c7a0: level multiplier x blend x the second curve at the rpm, x throttle.
+    static const float kLevel[3] = {1.0f, 1.4f, 1.7f}; // 0x00480700
+    if (const int level = NitrousLevel(); level > 0)
+        torque += kLevel[level - 1] * m_nos.blend * Curve(e.turbo, 9, e.idle, e.maxRpm, rpm) * t;
     float brake = -Curve(e.braking, 3, e.idle, e.maxRpm, rpm) * (1 - t);
     if (limiter)
         brake *= 2;
@@ -252,11 +267,42 @@ float Vehicle::EngineTorque(float speed, float throttle) const
     return torque;
 }
 
+int Vehicle::NitrousLevel() const
+{
+    if (!m_nos.active)
+        return 0;
+    const float f = NitrousFraction();
+    return f > 1.7f ? 3 : f > 1.4f ? 2 : f > 0.0f ? 1 : 0; // 0x004806f0 / 0x004806f4 / 0x004806f8
+}
+
+void Vehicle::AddNitrous(float fraction)
+{
+    if (!(m_nos.capacity > 0.0f))
+        return;
+    const float f = std::clamp(NitrousFraction() + fraction, 0.0f, 2.0f);
+    m_nos.fill = f * m_nos.capacity;
+}
+
+// 0x003052c0 starts a burst while the tank has anything; 0x00305328 ends it and keeps what is left.
+void Vehicle::UpdateNitrous(float dt)
+{
+    if (m_nos.active && !m_in.nitrous)
+        m_nos.active = false;
+    else if (!m_nos.active && m_in.nitrous && m_nos.fill > 0.0f)
+        m_nos.active = true;
+    if (m_nos.active) {
+        m_nos.fill -= dt;
+        if (m_nos.fill <= 0.0f)
+            m_nos.fill = 0.0f, m_nos.active = false;
+    }
+}
+
 void Vehicle::Update(const TrackWorld &world, const Controls &in, float dt)
 {
     if (!m_valid)
         return;
     m_in = in;
+    UpdateNitrous(dt);
     // Steering (TwoWheelAckermanSteering 0x00324d50): the inner wheel gets the input angle, the
     // outer one the Ackermann angle for the wheelbase / track. Stand-in for the player steering
     // filter: full lock (rec+0x3a0, 17 deg) at rest, reduced with speed.

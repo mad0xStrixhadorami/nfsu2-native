@@ -5013,6 +5013,12 @@ bool FEStartupSequence::StartDynoRun()
         m_profile.valid = true;
         m_profile.cars.push_back({"SKYLINE", 0});
         m_profile.currentCar = 0;
+        Career::OwnedCar &test = m_profile.cars[size_t(m_profile.currentCar)];
+        if (getenv("NFSU2_TUNE_PARTS") && test.perfParts.empty()) // every level-3 package, as the Sliders aid
+            for (size_t i = 0; i < m_fe->PerfParts().Count(); ++i)
+                if (m_fe->PerfParts().At(i).level == 3)
+                    for (const PerfPart &part : m_fe->PerfParts().At(i).parts)
+                        test.perfParts.push_back(uint16_t(part.id));
     }
     const Career::OwnedCar *car = ShopCar();
     if (!car)
@@ -5042,6 +5048,12 @@ bool FEStartupSequence::StartDynoRun()
     run.zero60 = times.zeroTo60mph;
     run.zero100 = times.zeroTo100mph;
     run.topSpeed = times.topSpeed;
+    if (getenv("NFSU2_FEDEBUG")) {
+        float cap, blend;
+        memcpy(&cap, tuned.data() + 0x3b8, 4);
+        memcpy(&blend, tuned.data() + 0x3c4, 4);
+        printf("[Dyno] nitrous capacity %.2f s blend %.3f\n", cap, blend);
+    }
     run.ratings = DynoRatings::Compute(m_fe->DynoLimits(), tuned.data(), p, radius);
     if (m_dynoRuns == 0)
         m_dynoRun[2] = run; // the first run stays

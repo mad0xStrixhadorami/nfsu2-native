@@ -106,6 +106,7 @@ private:
     static constexpr float kIdle = 1000.0f, kRedline = 7600.0f, kAutoShiftRpm = 7300.0f;
     static constexpr int kGears = 6;
 
+    float m_nosBaseW = 0, m_nosBaseX = 0, m_nosBaseU = 0, m_nosBaseU1 = 1; // the N2O arc's shipped geometry
     FEPackage *m_hud = nullptr;
     Config m_config;
     Phase m_phase = kCountdown;
