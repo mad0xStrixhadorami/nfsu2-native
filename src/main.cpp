@@ -368,6 +368,13 @@ int main(int argc, char **argv)
     // buffer (ISSUES.md #108). The FEng screens keep using the SDL_Renderer API.
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    // 4x multisampling for the world's edges (NFSU2_MSAA=0 turns it off, =2 / =8 pick another count; the GL renderer
+    // falls back to no multisampling when the driver cannot provide the buffer).
+    const int msaa = getenv("NFSU2_MSAA") ? atoi(getenv("NFSU2_MSAA")) : 4;
+    if (msaa > 1) {
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa);
+    }
     SDL_Window *win = SDL_CreateWindow("Need for Speed Underground 2 (native)", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, 1280, 960, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);

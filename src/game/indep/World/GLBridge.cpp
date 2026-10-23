@@ -41,8 +41,10 @@ bool Available(SDL_Renderer *renderer)
             if (pglGenBuffers && pglDeleteBuffers && pglBindBuffer && pglBufferData && pglUseProgram && depth >= 16)
                 g_state = 1;
             const GLubyte *name = glGetString(GL_RENDERER);
-            printf("[GL] renderer %s (%s, depth %d)\n", g_state == 1 ? "on" : "unavailable",
-                   name ? reinterpret_cast<const char *>(name) : "?", depth);
+            int samples = 0;
+            SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
+            printf("[GL] renderer %s (%s, depth %d, %d samples)\n", g_state == 1 ? "on" : "unavailable",
+                   name ? reinterpret_cast<const char *>(name) : "?", depth, samples);
         }
     }
     return g_state == 1;
