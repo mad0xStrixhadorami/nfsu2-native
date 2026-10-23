@@ -1392,10 +1392,27 @@ int main(int argc, char **argv)
                         engineSound.NitrousBurst(true);
                     nosWasActive = car.NitrousActive();
                     car.SetNitrousButton(held && race.GetPhase() == RaceSession::kRacing);
-                    // Stand-in for the original refill (0x0036a9e8 feeds 0x003054a8 from the drift score):
-                    // 10% of the tank per second of hard sliding at speed.
-                    if (car.HasNitrous() && car.Slip() > 0.35f && car.Speed() > 15.0f)
-                        car.AddNitrous(0.1f * dt);
+                    // The refill of 0x0036a9e8 -> 0x003054a8, once a second: the race progress gained
+                    // (percent of a lap, +0x918 * 100) x 0.01 x 0.5 of the tank; drift races use the
+                    // drift score gained x 0.000667; drag races (the 0.0 factor modes) get none.
+                    static float nosClock = 0, nosLastDist = 0, nosLastScore = 0;
+                    nosClock += dt;
+                    if (race.GetPhase() != RaceSession::kRacing) {
+                        nosClock = 0;
+                        nosLastDist = race.PlayerDistance();
+                        nosLastScore = race.DriftTotal();
+                    } else if (nosClock >= 1.0f) {
+                        nosClock = 0;
+                        const float dist = race.PlayerDistance(), score = race.DriftTotal();
+                        if (car.HasNitrous()) {
+                            if (race.IsDrift())
+                                car.AddNitrous(std::max(0.0f, score - nosLastScore) * 0.000667f);
+                            else if (!race.IsDrag() && race.LapLength() > 0.0f)
+                                car.AddNitrous(std::max(0.0f, (dist - nosLastDist) / race.LapLength() * 100.0f) * 0.01f * 0.5f);
+                        }
+                        nosLastDist = dist;
+                        nosLastScore = score;
+                    }
                 }
                 if ((autoDrive || dragAuto) && route.Valid() && race.GetPhase() != RaceSession::kFinished) {
                     // Test aid: the player car follows the route like an opponent.
