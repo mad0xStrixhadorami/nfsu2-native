@@ -477,6 +477,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_PerformanceTuning_Setting.fng") == 0) {
+        HandleTuneModeLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_Status_Master.fng") == 0) {
         HandleStatusMasterLoaded(pkg);
         return;
@@ -644,7 +648,7 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0 ||
         strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0 || strcasecmp(name, "UI_DecalMain.fng") == 0 ||
         strcasecmp(name, "UI_ICEMAIN.fng") == 0 || strcasecmp(name, "UI_CustomNeonMain.fng") == 0 ||
-        strcasecmp(name, "UI_Status_Master.fng") == 0)
+        strcasecmp(name, "UI_Status_Master.fng") == 0 || strcasecmp(name, "UI_PerformanceTuning_Setting.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -981,6 +985,18 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             }
         } else if ((pressed & FENativeInterface::kPadBack) && !chart)
             PopScreen();
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_PerformanceTuning_Setting.fng") == 0) {
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleTuneModeMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleTuneModeMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleTuneModeMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleTuneModeMessage(kMsgPadBack, top);
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -3534,6 +3550,70 @@ void FEStartupSequence::HandleStatusMessage(uint32_t msg, FEPackage *pkg)
     }
 }
 
+bool FEStartupSequence::TuneIsSaved(const Career::OwnedCar &car) const
+{
+    for (int s = 0; s < Career::OwnedCar::kTuneSlots; ++s)
+        if (!car.tuneSlots[s].empty() && car.tuneSlots[s] == car.tune)
+            return true;
+    return false;
+}
+
+// UI_PerformanceTuning_Setting.fng: the Dyno Shop's Mode Select, five saved tuning setups as cards.
+// Accept loads the highlighted one onto the car (an empty slot says so), Back returns to the Dyno Shop.
+void FEStartupSequence::HandleTuneModeLoaded(FEPackage *pkg)
+{
+    const Career::OwnedCar *car = ShopCar();
+    std::vector<FEIconScroller::Def> defs;
+    size_t sel = 0;
+    for (int s = 0; s < Career::OwnedCar::kTuneSlots; ++s) {
+        FEIconScroller::Def d{0x178475e7, 0, false, ""};
+        const bool filled = car && !car->tuneSlots[s].empty();
+        d.text = "Setup " + std::to_string(s + 1) + (filled ? ": Saved" : ": Empty");
+        defs.push_back(d);
+        if (car && filled && car->tuneSlots[s] == car->tune)
+            sel = size_t(s);
+    }
+    bool shipped = false;
+    float cx = 0, cy = -149.0f;
+    m_tuneModeCards = ShippedOrClonedCards(pkg, defs.size(), "TUNE_MODE_CARD_", cx, cy, shipped);
+    if (m_tuneModeCards.size() != defs.size())
+        return;
+    m_tuneModeScroller.SetupObjects(pkg, defs, m_tuneModeCards, sel, "OPTION_MASTER");
+    if (!shipped)
+        m_tuneModeScroller.SetLayoutCenter(cx, cy);
+    printf("[Tuning] mode select: %zu setups, current %zu\n", defs.size(), sel);
+}
+
+void FEStartupSequence::HandleTuneModeMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_tuneModeScroller.Empty() || m_tuneModeScroller.Package() != pkg)
+        return;
+    if (msg == kMsgScreenTick) {
+        m_tuneModeScroller.HandleMessage(msg, TickSeconds());
+    } else if (msg == kMsgInitComplete) {
+        m_tuneModeScroller.HandleMessage(msg, 0.0f);
+        m_tuneModeScroller.AllowFade();
+    } else if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        m_tuneModeScroller.HandleMessage(msg, 0.0f);
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        PopScreen();
+    } else if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending) {
+        Career::OwnedCar *car = ShopCar();
+        const size_t slot = m_tuneModeScroller.Selected();
+        if (!car || slot >= size_t(Career::OwnedCar::kTuneSlots))
+            return;
+        if (car->tuneSlots[slot].empty()) {
+            ShowMessageDialogText("This setup is empty");
+            return;
+        }
+        car->tune = car->tuneSlots[slot];
+        m_fe->SetPreviewTune(car->tune);
+        Career::SaveCareer(m_profile);
+        printf("[Tuning] loaded setup %zu\n", slot + 1);
+        PopScreen();
+    }
+}
+
 void FEStartupSequence::HandleSpecialtyLoaded(FEPackage *pkg)
 {
     const bool neonPkg = strcasecmp(pkg->GetName(), "UI_CustomNeonMain.fng") == 0;
@@ -5978,12 +6058,41 @@ void FEStartupSequence::HandleCardMenuLoaded(FEPackage *pkg)
     };
     if (dyno) {
         cards.push_back({0xd4060fc4, 0xa34e13bd, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Master.fng"); }});
-        cards.push_back({0xf188098c, 0xf62234ef, notPorted("Test Run")});
+        // Test Run (0x002d0e68): clear the dyno data, leave the shop (state 6 -> play) and drive the tuned car in
+        // free roam; the port starts a free-roam session with the previewed car and its fitted parts / tune.
+        cards.push_back({0xf188098c, 0xf62234ef, [this]() {
+                             m_careerEventRun = false;
+                             m_raceNumber = 0;
+                             m_raceType = 9;
+                             m_cribRequested = false;
+                             m_backStack.clear();
+                             m_raceMode = 1;
+                             printf("[Tuning] test run: free roam with the tuned car\n");
+                             RequestRace();
+                         }});
         cards.push_back({0xfe1e723e, 0x436c91d4, [this, pkg]() {
                              m_dynoFresh = true; // every Dyno Run measures the car again
                              NavigateTo(pkg->GetName(), "UI_PerformanceDyno_Chart.fng");
                          }});
-        cards.push_back({0xc2b2829c, 0xffe08459, notPorted("Mode Select")});
+        cards.push_back({0xc2b2829c, 0xffe08459, [this, pkg]() { NavigateTo(pkg->GetName(), "UI_PerformanceTuning_Setting.fng"); }}); // Mode Select
+        if (const Career::OwnedCar *car = ShopCar(); car && !car->tune.empty() && !TuneIsSaved(*car)) {
+            // 0x002c2c08: the Save Profile card (0x73fe99b7 / 0x410258c3) appears while the tune matches no saved setup.
+            cards.push_back({0x73fe99b7, 0x410258c3, [this]() {
+                                 Career::OwnedCar *c = ShopCar();
+                                 if (!c)
+                                     return;
+                                 int slot = -1;
+                                 for (int s = 0; s < Career::OwnedCar::kTuneSlots && slot < 0; ++s)
+                                     if (c->tuneSlots[s].empty())
+                                         slot = s;
+                                 if (slot < 0)
+                                     slot = Career::OwnedCar::kTuneSlots - 1; // all full: overwrite the last
+                                 c->tuneSlots[slot] = c->tune;
+                                 Career::SaveCareer(m_profile);
+                                 printf("[Tuning] saved the tune as setup %d\n", slot + 1);
+                                 ShowMessageDialogText(("Saved as Setup " + std::to_string(slot + 1)).c_str());
+                             }});
+        }
         cards.push_back({0x4c9e34e6, 0xde5cdfb2, [this]() { PopScreen(); }}); // Quit Tuning
     } else {
         static const struct { uint32_t icon, label; const char *name; } kMaster[] = {

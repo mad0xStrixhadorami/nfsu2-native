@@ -170,6 +170,7 @@ int main()
         p.cars[0].rimStyle = 4;
         p.cars[0].neon = 7;
         p.cars[0].tint = 2;
+        p.cars[0].tuneSlots[2] = {100, 101, 102};
         p.racesEntered = 12;
         p.moneySpent = 3456;
     }
@@ -235,6 +236,8 @@ int main()
         return Fail("specialties round-trip (v18)");
     if (q.racesEntered != 12 || q.moneySpent != 3456)
         return Fail("statistics round-trip (v19)");
+    if (q.cars[0].tuneSlots[2].size() != 3 || q.cars[0].tuneSlots[2][1] != 101 || !q.cars[0].tuneSlots[0].empty())
+        return Fail("tune slots round-trip (v20)");
     if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
         return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)

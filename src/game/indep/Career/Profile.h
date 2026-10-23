@@ -50,6 +50,9 @@ struct OwnedCar {
     // The tuning slider bytes of the car (Performance Tuning, ISSUES #214): 41 bytes, 100 = neutral;
     // empty = never tuned.
     std::vector<uint8_t> tune;
+    // Saved tuning setups (Dyno Shop > Save Profile / Mode Select, ISSUES #244): five slots of tune bytes.
+    static constexpr int kTuneSlots = 5;
+    std::vector<uint8_t> tuneSlots[kTuneSlots];
     // The vinyl layers on the car's paint skin (Graphics Shop, ISSUES #223), bottom layer first,
     // at most kMaxVinylLayers.  `design` is the pack texture name without the car prefix
     // (e.g. "WILD_172B"); `color` the red / green / blue region colours.

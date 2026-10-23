@@ -238,6 +238,13 @@ private:
     std::vector<StatusRow> m_statusRows;
     size_t m_statusTop = 0;
     int m_statusPage = 0; // 0 career, 1 region, 2 DVD
+    // Dyno Shop tuning setups (ISSUES #244): Mode Select lists five saved setups, Save Profile stores the
+    // current tune (0x002c2c08 adds the card while the tune differs from every saved one).
+    void HandleTuneModeLoaded(FEPackage *pkg);
+    void HandleTuneModeMessage(uint32_t msg, FEPackage *pkg);
+    bool TuneIsSaved(const Career::OwnedCar &car) const;
+    FEIconScroller m_tuneModeScroller;
+    std::vector<FEObject *> m_tuneModeCards;
     void HandleSpecialtyLoaded(FEPackage *pkg);
     void HandleSpecialtyMessage(uint32_t msg, FEPackage *pkg);
     void PreviewSpecialty();
