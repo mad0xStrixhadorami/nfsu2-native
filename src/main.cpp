@@ -871,7 +871,7 @@ int main(int argc, char **argv)
         aiOut.clear();
         // Car textures: the shared pack and the player's (opponents add theirs below).
         world.AddTexturePack(ReadGameFile(*fs, "CARS\\TEXTURES.BIN"));
-        if (fe.PreviewRimStyle() > 0)
+        if (fe.PreviewRimStyle() > 0 || getenv("NFSU2_PART_RIM"))
             world.AddTexturePack(ReadGameFile(*fs, "CARS\\WHEELS\\TEXTURES.BIN")); // fitted rims (#226)
         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + fe.PreviewCarName() + "\\TEXTURES.BIN").c_str()));
         // Dev aid: NFSU2_TEX_DUMP=<hex name hash> saves that texture of the player's car pack as BMP.
