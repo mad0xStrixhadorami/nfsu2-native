@@ -436,24 +436,27 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::ve
     // The three 0..1 bar values of a car with the given performance parts fitted.
     auto statValues = [&](const std::vector<uint16_t> &parts, float values[3]) {
         values[0] = values[1] = values[2] = 0.5f;
+        // The real rating formulas (0x0031ce90 / 0x0031cdd8 / 0x0031d060, DynoRatings) over the car's
+        // record with the parts fitted; the old database-only estimate is the fallback.
+        const std::vector<uint8_t> tuned =
+            TunedCarRecord(m_previewCarName, parts, parts == m_previewPerfParts ? m_previewTune : std::vector<uint8_t>());
         PlayerCar::Performance p;
-        bool ok = false;
-        if (parts.empty()) {
-            ok = CarPerformance(m_previewCarName, p);
-        } else {
-            const std::vector<uint8_t> tuned = TunedCarRecord(m_previewCarName, parts, parts == m_previewPerfParts ? m_previewTune : std::vector<uint8_t>());
-            if (!tuned.empty()) {
-                ReadCarPerformance(tuned.data(), p);
-                ok = p.Valid();
-            }
+        if (!tuned.empty())
+            ReadCarPerformance(tuned.data(), p);
+        else if (!CarPerformance(m_previewCarName, p))
+            return;
+        if (!p.Valid())
+            return;
+        if (m_dynoLimits.valid && !tuned.empty()) {
+            const DynoRatings::Ratings r = DynoRatings::Compute(m_dynoLimits, tuned.data(), p, radius);
+            values[0] = r.acceleration, values[1] = r.topSpeed, values[2] = r.handling;
+            return;
         }
-        if (ok) {
-            float t100, vmax;
-            PlayerCar::Simulate(p, radius, t100, vmax);
-            values[0] = (12.0f - t100) / (12.0f - 4.5f);
-            values[1] = (vmax * 3.6f - 170.0f) / (270.0f - 170.0f);
-            values[2] = (p.grip - 0.15f * (p.mass - 1.0f) - 0.9f) / (1.25f - 0.9f);
-        }
+        float t100, vmax;
+        PlayerCar::Simulate(p, radius, t100, vmax);
+        values[0] = (12.0f - t100) / (12.0f - 4.5f);
+        values[1] = (vmax * 3.6f - 170.0f) / (270.0f - 170.0f);
+        values[2] = (p.grip - 0.15f * (p.mass - 1.0f) - 0.9f) / (1.25f - 0.9f);
     };
     float values[3], preview[3];
     statValues(m_previewPerfParts, values);
