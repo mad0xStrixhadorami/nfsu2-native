@@ -75,6 +75,7 @@ bool EventTable::Load(const uint8_t *bundle, size_t size)
             MediaRecord m;
             memcpy(m.name, r, 0x1f);
             m.id = U32(r, 0x20);
+            m.nameHash = U32(r, 0x28);
             m.type = r[0x24];
             m.stage = r[0x25];
             m.dvd = r[0x35] != 0;

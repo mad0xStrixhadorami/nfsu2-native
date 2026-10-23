@@ -49,6 +49,7 @@ struct Event {
 struct MediaRecord {
     char name[0x20] = {};
     uint32_t id = 0;       // +0x20 completion id (the profile's completed-event list)
+    uint32_t nameHash = 0; // +0x28 language hash of the cover's magazine (the SMS_MAG_* arguments, #249)
     uint8_t type = 0;      // +0x24
     uint8_t stage = 0;     // +0x25 (2..5)
     bool dvd = false;      // +0x35

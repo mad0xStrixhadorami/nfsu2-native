@@ -115,6 +115,28 @@ struct Profile {
         return n;
     }
     uint32_t playTime = 0; // seconds
+    // The SMS mailbox (ISSUES #249): the list at profile + 0x5d40 (0x004ee450), 0x14-byte entries
+    // appended by 0x0026dda8 / 0x0026de58 and capped at 0x100 (0x0026dd78).
+    struct InboxEntry {
+        uint32_t def = 0;     // +0 bStringHash of the 0x34a17 definition name (SMS_UNLOCK_01 ...)
+        uint32_t bodyKey = 0; // +8  generic body language key (0 = the definition's own <name>_BODY)
+        uint32_t subjKey = 0; // +0x10 generic subject language key (0 = <name>_SUBJECT)
+        uint32_t arg = 0;     // +0xc language hash substituted into the generic strings' %s
+        bool read = false;    // +4 (0x0026e3c0 / 0x0026e450 set it when the message is opened)
+        bool popupShown = false; // +5 (0x0026d970 / 0x0026d9f8: an engage message not yet shown)
+        bool deleted = false; // +6 (the Delete card, 0x0026e450)
+        bool filed = false;   // +7 (0x0026e1e8: opened once, so the tabs file it by category)
+    };
+    static constexpr size_t kInboxMax = 0x100;
+    std::vector<InboxEntry> inbox;
+    // 0x0026d480 / 0x0026df38: a message is delivered once per profile.
+    bool HasMessage(uint32_t def) const
+    {
+        for (const InboxEntry &e : inbox)
+            if (e.def == def)
+                return true;
+        return false;
+    }
     // Career statistics for the Career Status screen (ISSUES #243).
     uint32_t racesEntered = 0; // career races started
     uint32_t moneySpent = 0;   // total spent in the shops

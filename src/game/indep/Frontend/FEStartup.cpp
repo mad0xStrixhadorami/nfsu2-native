@@ -255,10 +255,15 @@ void FEStartupSequence::LoadBootProfile()
         }
         m_profile.valid = true;
     }
-    // Dev aid: NFSU2_AWARD_TEST=<race> awards a career win of that race at boot (use NFSU2_MEMCARD on a copy).
+    // Dev aid: NFSU2_AWARD_TEST=<race>[,<race>...] awards a career win of those races at boot (use NFSU2_MEMCARD on a copy).
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
-        AwardCareerResult(atoi(award), 1);
+        for (const char *c = award; c && *c;) { // one race, or a comma list awarded in order
+            AwardCareerResult(atoi(c), 1);
+            c = strchr(c, ',');
+            if (c)
+                ++c;
+        }
     }
 }
 
@@ -451,6 +456,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
     }
     if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
         HandleCareerCarSelectLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_SMS_Mailbox.fng") == 0 || strcasecmp(name, "UI_EngageMessageDialog.fng") == 0) {
+        HandleSmsLoaded(pkg);
         return;
     }
     if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
@@ -707,6 +716,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
         HandleCareerCarSelectMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_SMS_Mailbox.fng") == 0 || strcasecmp(name, "UI_EngageMessageDialog.fng") == 0) {
+        HandleSmsMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
@@ -1049,6 +1062,17 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         else if (pressed & FENativeInterface::kPadBack)
             HandleSpecialtyMessage(kMsgPadBack, top);
         return;
+    }
+    // The mailbox's own FEng mapping delivers Up / Down / Accept / Back and R1 (0xd9feec59) / L1; the pad's square
+    // (Delete, 0xc519bfc0 in the original) and Left / Right (tab change here) are taken from the pad (#249).
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_SMS_Mailbox.fng") == 0) {
+        if (pressed & FENativeInterface::kPadButton0)
+            HandleSmsMessage(kMsgPadSquare, top);
+        else if (pressed & FENativeInterface::kPadLeft)
+            HandleSmsMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleSmsMessage(kMsgPadRight, top);
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
         strcasecmp(top->GetName(), "UI_DecalMain.fng") == 0) {
@@ -2620,6 +2644,7 @@ bool FEStartupSequence::CloseMessageDialog()
     m_dialogPackage = nullptr;
     m_dialogYesNo = false;
     m_dialogYesAction = nullptr;
+    m_dialogClosedAt = std::chrono::steady_clock::now();
     printf("[Dialog] dismissed\n");
     m_engine->UnloadPackage(pkg);
     return true;
@@ -4044,6 +4069,7 @@ void FEStartupSequence::UpdateDvdUnlocks()
         const bool reached = rating >= m.threshold && table.StageCleared(int(m.stage) - 1, m_profile.completedEvents);
         if (reached || table.StageGateDone(int(m.stage), m_profile.completedEvents)) {
             m_profile.completedEvents.push_back(m.id);
+            Career::SmsOnDvdCover(m_profile, int(m.threshold + 0.5f)); // 0x0026ac88 -> 0x0026e5c8
             changed = true;
             printf("[Career] DVD cover %s %s (rating %.1f, needs %.1f)\n", m.name, reached ? "won" : "granted (stage already cleared)", rating, m.threshold);
         }
@@ -4729,10 +4755,11 @@ void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
 {
     static const struct {
         uint32_t tex, label;
-        int action; // 0 explore, 1 world map, 2 car select, 3 parts, 4 tuning, 5 sponsors, 6 save, 7 exit
+        int action; // 0 explore, 1 world map, 2 car select, 3 parts, 4 tuning, 5 sponsors, 6 save, 7 exit, 8 inbox
     } kOptions[] = {
         {0xa230cd88, 0x194efa7a, 0}, {0x22f2ceab, 0x9c07ca52, 1}, {0xa964095b, 0x451879e2, 2},
         {0x511f9d75, 0xabb24bbc, 3}, {0x7a9b397a, 0x8513f2c0, 4}, {0x0878ffdf, 0xe0004602, 5},
+        {0x4b9b8f5a, 0xc06e138a, 8}, // Inbox (stand-in for the free-roam pause menu's SMS card, #249)
         {0x8ada6fd4, 0x03ec7395, 6}, {0xfc39853f, 0x046e7d84, 7},
     };
     std::vector<FEIconScroller::Def> defs;
@@ -4812,6 +4839,9 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             printf("[Career] crib: signed sponsors (%d)\n", m_profile.SignedSponsorCount());
             if (m_profile.SignedSponsorCount() > 0)
                 m_careerMenuSwitch = "UI_RewardsSponsor.fng";
+            break;
+        case 8:
+            OpenSms();
             break;
         case 6:
             if (m_profile.valid && Career::SaveCareer(m_profile))
@@ -5241,6 +5271,303 @@ void FEStartupSequence::HandleSponsorViewMessage(uint32_t msg, FEPackage *pkg)
     m_scroller.HandleMessage(msg, TickSeconds());
 }
 
+// The career SMS inbox (ISSUES #249). UI_SMS_Mailbox.fng (class 0x001f1a58, rows 0x001f1e20 / 0x001f2098, messages
+// 0x001f2550) lists the box's messages under five tabs; UI_EngageMessageDialog.fng (0x001f28b8, messages 0x001f2b00)
+// shows one: "From:" (the definition's +0x10 language hash), "Subject: %s" (0x001f17b8 -> 0x0026d718) and the
+// body wrapped into BODY_TEXT_1..10 (0x0026d820 -> 0x00262eb8). 0x001f1738 decides which opens: exactly one unread
+// message -> the dialog (and the box is filed when it closes), otherwise the mailbox. The original reaches it from
+// the free-roam pause menu (pause kind 0xd) and an arrival alert; the port has no free-roam pause, so the crib
+// offers it (stand-in).
+std::string FEStartupSequence::SmsFormat(uint32_t key, uint32_t arg) const
+{
+    std::string text = m_fe->LanguageText(key);
+    const size_t at = text.find("%s");
+    if (at != std::string::npos)
+        text.replace(at, 2, arg ? m_fe->LanguageText(arg) : std::string());
+    return text;
+}
+
+void FEStartupSequence::OpenSms()
+{
+    if (!m_profile.valid)
+        return;
+    // 0x001f1738: one unread message opens straight into the dialog.
+    m_smsPopup = Career::SmsUnreadCount(m_profile) == 1;
+    if (m_smsPopup) {
+        m_smsViewing = int(Career::SmsFirstUnread(m_profile) - m_profile.inbox.data());
+        m_careerMenuSwitch = "UI_EngageMessageDialog.fng";
+    } else {
+        m_careerMenuSwitch = "UI_SMS_Mailbox.fng";
+    }
+    printf("[Sms] open %s (%d unread of %zu)\n", m_smsPopup ? "message" : "mailbox",
+           Career::SmsUnreadCount(m_profile), m_profile.inbox.size());
+}
+
+// 0x001f1e20: the tab's messages, newest first (the box is walked from the end).
+void FEStartupSequence::RebuildSmsList()
+{
+    m_smsList.clear();
+    for (size_t i = m_profile.inbox.size(); i-- > 0;)
+        if (Career::SmsVisibleInTab(m_profile.inbox[i], m_smsTab))
+            m_smsList.push_back(i);
+    if (m_smsSel >= m_smsList.size())
+        m_smsSel = m_smsList.empty() ? 0 : m_smsList.size() - 1;
+    if (m_smsSel < m_smsTop)
+        m_smsTop = m_smsSel;
+    if (m_smsSel >= m_smsTop + 10)
+        m_smsTop = m_smsSel - 9;
+}
+
+namespace {
+// FEng hashes the object names upper-cased (the stripped packages carry only the hashes).
+uint32_t SmsObj(const char *prefix, int n)
+{
+    char name[48];
+    snprintf(name, sizeof(name), "%s%d", prefix, n);
+    return CarMaterial::NameHash(name);
+}
+
+// 0x001f1420: the colour of a message's phone icon by its definition's icon type (+5), 1..7 else default.
+void SmsIconColour(int icon, uint8_t rgb[3])
+{
+    static const uint8_t kColours[8][3] = {{14, 156, 14}, {45, 200, 200}, {43, 128, 213}, {138, 244, 202},
+                                           {48, 48, 207}, {255, 128, 128}, {200, 130, 50}, {181, 74, 128}};
+    const int k = icon >= 1 && icon <= 7 ? icon : 0;
+    memcpy(rgb, kColours[k], 3);
+}
+
+// 0x00262eb8: the text split at EA's '^' line breaks and then wrapped to the panel.
+std::vector<std::string> SmsWrap(const std::string &text, size_t width)
+{
+    std::vector<std::string> lines;
+    for (size_t pos = 0; pos <= text.size();) {
+        const size_t nl = text.find('^', pos);
+        std::string para = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = nl == std::string::npos ? text.size() + 1 : nl + 1;
+        while (para.size() > width) {
+            size_t cut = para.rfind(' ', width);
+            if (cut == std::string::npos || cut == 0)
+                cut = width;
+            lines.push_back(para.substr(0, cut));
+            para.erase(0, para.find_first_not_of(' ', cut));
+        }
+        lines.push_back(para);
+    }
+    return lines;
+}
+
+void TintString(FEPackage *pkg, uint32_t hash, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (FEObject *o = pkg->FindObjectByHash(hash))
+        if (o->GetObjData()) {
+            o->GetObjData()->Col.r = r;
+            o->GetObjData()->Col.g = g;
+            o->GetObjData()->Col.b = b;
+            o->Flags |= 0x400000u;
+        }
+}
+} // namespace
+
+void FEStartupSequence::HandleSmsLoaded(FEPackage *pkg)
+{
+    // Dev aid: NFSU2_SMS_TEST=<n> delivers the first n definitions (every 3rd of the full table when n is
+    // 0) into an empty box, with the generic car-show text for the SHOW triggers, so the screens can be
+    // inspected without playing the career.
+    if (const char *test = getenv("NFSU2_SMS_TEST"))
+        if (m_profile.inbox.empty()) {
+            const int n = atoi(test);
+            int k = 0;
+            for (const Career::SmsDef &d : Career::SmsTable::Get().Defs()) {
+                if (n > 0 ? k++ >= n : (k++ % 3) != 0)
+                    continue;
+                Career::SmsDeliver(m_profile, d);
+            }
+            if (!m_profile.inbox.empty() && n > 0)
+                m_profile.inbox.back().read = true;
+        }
+    if (strcasecmp(pkg->GetName(), "UI_EngageMessageDialog.fng") == 0) {
+        m_smsLine = 0;
+        m_smsBody.clear();
+        // Dev aid: NFSU2_SMS_VIEW=<definition name> delivers that message and opens it (SMS_MAG_* get the
+        // generic car-show text naming the first magazine).
+        if (const char *view = getenv("NFSU2_SMS_VIEW"))
+            if (m_smsViewing < 0)
+                for (const Career::SmsDef &d : Career::SmsTable::Get().Defs())
+                    if (d.name == view) {
+                        uint32_t arg = 0;
+                        if (!Career::EventTable::Get().Media().empty())
+                            arg = Career::EventTable::Get().Media()[1].nameHash;
+                        if (d.name.rfind("SMS_MAG_", 0) == 0)
+                            Career::SmsDeliver(m_profile, d, CarMaterial::NameHash("SMS_MAG_GENERIC_BODY_1"),
+                                               CarMaterial::NameHash("SMS_MAG_GENERIC_SUBJ_1"), arg);
+                        else
+                            Career::SmsDeliver(m_profile, d);
+                        for (size_t i = 0; i < m_profile.inbox.size(); ++i)
+                            if (m_profile.inbox[i].def == d.hash)
+                                m_smsViewing = int(i);
+                    }
+        if (m_smsViewing >= 0 && size_t(m_smsViewing) < m_profile.inbox.size()) {
+            Career::Profile::InboxEntry &e = m_profile.inbox[size_t(m_smsViewing)];
+            Career::SmsMarkRead(e); // 0x0026e3c0 when the dialog is built
+            const Career::SmsText t = Career::SmsTextFor(e);
+            m_smsBody = SmsWrap(SmsFormat(t.bodyKey, t.arg), 58);
+            if (const Career::SmsDef *d = Career::SmsTable::Get().Find(e.def))
+                printf("[Sms] message %s: %zu body lines\n", d->name.c_str(), m_smsBody.size());
+        }
+        ApplySmsMessage(pkg);
+        return;
+    }
+    RebuildSmsList();
+    ApplySmsMailbox(pkg);
+}
+
+// Rows: MESSAGE_TEXT_n (text), ENGAGE_PHONE_ICON_n (read / unread envelope, tinted by the icon type) and
+// HIGH_LIGHT_n (the bar). 0x001f2098 also draws the selected row's text red (script "Highlight").
+void FEStartupSequence::ApplySmsMailbox(FEPackage *pkg)
+{
+    WhitenGroups(pkg->GetFirstObject());
+    FENativeInterface::SetLanguageHash(pkg, 0x980822b3, Career::SmsTabLabel(m_smsTab));
+    RevealObject(pkg, 0x980822b3, true);
+    RevealObject(pkg, 0x54049a3d, m_smsTab > 1); // 0x001f1e20: the tab arrows
+    RevealObject(pkg, 0xd506a970, m_smsTab < 5);
+    RevealObject(pkg, 0x31cf7ec2, !m_smsList.empty()); // Select / Delete prompts
+    RevealObject(pkg, 0x7d8c9ee7, !m_smsList.empty());
+    for (int i = 0; i < 10; ++i) {
+        const size_t k = m_smsTop + size_t(i);
+        const bool used = k < m_smsList.size();
+        const uint32_t text = SmsObj("MESSAGE_TEXT_", i + 1), icon = SmsObj("ENGAGE_PHONE_ICON_", i + 1),
+                       bar = SmsObj("HIGH_LIGHT_", i + 1);
+        RevealObject(pkg, text, used);
+        RevealObject(pkg, icon, used);
+        RevealObject(pkg, bar, used);
+        if (!used) {
+            FENativeInterface::SetString(pkg, text, "");
+            continue;
+        }
+        const Career::Profile::InboxEntry &e = m_profile.inbox[m_smsList[k]];
+        const Career::SmsText t = Career::SmsTextFor(e);
+        std::string line = m_fe->LanguageText(0x4b5de3e9); // "Subject: %s"
+        const size_t at = line.find("%s");
+        if (at != std::string::npos)
+            line.replace(at, 2, SmsFormat(t.subjectKey, t.arg));
+        FENativeInterface::SetString(pkg, text, line.c_str());
+        const bool selected = k == m_smsSel;
+        if (selected)
+            TintString(pkg, text, 204, 244, 138); // the menus' highlight green
+        else
+            TintString(pkg, text, 255, 255, 255);
+        if (FEObject *b = pkg->FindObjectByHash(bar))
+            if (b->GetObjData())
+                b->GetObjData()->Col.a = selected ? 255 : 140;
+        const Career::SmsDef *d = Career::SmsTable::Get().Find(e.def);
+        uint8_t rgb[3];
+        SmsIconColour(d ? d->icon : 0, rgb);
+        TintString(pkg, icon, rgb[0], rgb[1], rgb[2]);
+        FENativeInterface::SetTextureHash(pkg, icon, e.read ? 0xee28ac57u : 0x4b9b8f5au);
+    }
+}
+
+void FEStartupSequence::ApplySmsMessage(FEPackage *pkg)
+{
+    WhitenGroups(pkg->GetFirstObject());
+    std::string from, subject;
+    if (m_smsViewing >= 0 && size_t(m_smsViewing) < m_profile.inbox.size()) {
+        const Career::Profile::InboxEntry &e = m_profile.inbox[size_t(m_smsViewing)];
+        const Career::SmsText t = Career::SmsTextFor(e);
+        subject = SmsFormat(t.subjectKey, t.arg);
+        if (const Career::SmsDef *d = Career::SmsTable::Get().Find(e.def))
+            from = SmsFormat(0x9f29d70d, d->sender); // "From: %s"
+    }
+    std::string head = m_fe->LanguageText(0x4b5de3e9); // "Subject: %s"
+    const size_t at = head.find("%s");
+    if (at != std::string::npos)
+        head.replace(at, 2, subject);
+    FENativeInterface::SetString(pkg, 0x2c167533, head.c_str());
+    FENativeInterface::SetString(pkg, 0xfeced617, from.c_str());
+    RevealObject(pkg, 0x2c167533, true);
+    RevealObject(pkg, 0xfeced617, true);
+    for (int i = 0; i < 10; ++i) {
+        const size_t at2 = m_smsLine + size_t(i);
+        const uint32_t row = SmsObj("BODY_TEXT_", i + 1);
+        FENativeInterface::SetString(pkg, row, at2 < m_smsBody.size() ? m_smsBody[at2].c_str() : "");
+        RevealObject(pkg, row, true);
+    }
+}
+
+void FEStartupSequence::HandleSmsMessage(uint32_t msg, FEPackage *pkg)
+{
+    const bool dialog = strcasecmp(pkg->GetName(), "UI_EngageMessageDialog.fng") == 0;
+    if (getenv("NFSU2_SMS_DEBUG") && msg != kMsgScreenTick)
+        printf("[Sms] msg %08x in %s\n", msg, pkg->GetName());
+    if (dialog) {
+        if (msg == kMsgPadUp && m_smsLine > 0) {
+            --m_smsLine;
+            ApplySmsMessage(pkg);
+        } else if (msg == kMsgPadDown && m_smsLine + 10 < m_smsBody.size()) {
+            ++m_smsLine;
+            ApplySmsMessage(pkg);
+        } else if ((msg == kMsgPadBack || msg == kMsgPadAccept || msg == kMsgButtonPressed) && !m_navPending) {
+            if (m_smsPopup) { // 0x001f2b00: closing the popup files the box and returns to play
+                Career::SmsFileAll(m_profile);
+                m_careerMenuSwitch = "UI_CareerCrib.fng";
+            } else {
+                m_careerMenuSwitch = "UI_SMS_Mailbox.fng";
+            }
+            Career::SaveCareer(m_profile);
+        } else if (msg == kMsgInitComplete || msg == kMsgScreenTick) {
+            ApplySmsMessage(pkg);
+        }
+        return;
+    }
+    if (msg == kMsgPadUp || msg == kMsgPadDown) {
+        if (!m_smsList.empty()) {
+            if (msg == kMsgPadUp && m_smsSel > 0)
+                --m_smsSel;
+            else if (msg == kMsgPadDown && m_smsSel + 1 < m_smsList.size())
+                ++m_smsSel;
+            RebuildSmsList();
+            ApplySmsMailbox(pkg);
+        }
+    } else if (msg == kMsgPadLeft || msg == kMsgPadRight || msg == kMsgPadLTrigger || msg == kMsgPadRTrigger ||
+               msg == 0xd9feec59) {
+        // 0x001f2550: L1 (0x5073ef13) / R1 (0xd9feec59) change the tab; Left / Right do the same here.
+        const int step = (msg == kMsgPadLeft || msg == kMsgPadLTrigger) ? -1 : 1;
+        if (m_smsTab + step >= 1 && m_smsTab + step <= 5) {
+            m_smsTab += step;
+            m_smsSel = m_smsTop = 0;
+            RebuildSmsList();
+            ApplySmsMailbox(pkg);
+        }
+    } else if ((msg == kMsgPadAccept || msg == kMsgButtonPressed) && !m_navPending) {
+        if (std::chrono::steady_clock::now() - m_dialogClosedAt < std::chrono::milliseconds(300))
+            return; // the confirm dialog's Accept
+        if (!m_smsList.empty()) {
+            m_smsViewing = int(m_smsList[m_smsSel]);
+            m_smsPopup = false;
+            m_careerMenuSwitch = "UI_EngageMessageDialog.fng";
+        }
+    } else if ((msg == kMsgPadSquare || msg == 0xc519bfc0) && !m_smsList.empty() && !m_dialogPackage) {
+        // The original asks first (0x00260528 -> 0x001f23c75); the prompt wording is not decoded.
+        const size_t idx = m_smsList[m_smsSel];
+        ShowYesNoDialog("Delete this message?", [this, idx]() {
+            if (idx < m_profile.inbox.size()) {
+                Career::SmsDelete(m_profile.inbox[idx]);
+                printf("[Sms] deleted message %zu\n", idx);
+            }
+            Career::SaveCareer(m_profile);
+            RebuildSmsList();
+            if (FEPackage *box = m_engine->GetPackageList()->FindPackage("UI_SMS_Mailbox.fng"))
+                ApplySmsMailbox(box);
+        });
+    } else if (msg == kMsgPadBack && !m_navPending) {
+        Career::SmsFileAll(m_profile); // 0x001f22d0 files the box on the way out
+        Career::SaveCareer(m_profile);
+        m_careerMenuSwitch = "UI_CareerCrib.fng";
+    } else if (msg == kMsgInitComplete || msg == kMsgScreenTick) {
+        ApplySmsMailbox(pkg);
+    }
+}
+
 // Credits.fng (the options carousel's Credits entry; OMCredits / CreditsScreen / CreditsArea strings in the
 // executable, text from "CREDITS\%s%s.TXT" = language + region suffix, here CREDITS\UK_ENGLISH.TXT for
 // the PAL English build). The package carries one centred template string (0xe6093486 "DEFAULT STRING",
@@ -5366,7 +5693,14 @@ void FEStartupSequence::ApplyMemcardList(FEPackage *pkg, bool log)
 // Called from the front-end loop just before FEngine::Render, i.e. after the script update.
 void FEStartupSequence::PreRender()
 {
-    if (!m_engine || m_memcardFiles.empty())
+    if (!m_engine)
+        return;
+    // The mailbox's scripts rewrite the rows' colours and alphas every frame too (#249).
+    if (FEPackage *box = m_engine->GetPackageList()->FindPackage("UI_SMS_Mailbox.fng"))
+        ApplySmsMailbox(box);
+    if (FEPackage *dlg = m_engine->GetPackageList()->FindPackage("UI_EngageMessageDialog.fng"))
+        ApplySmsMessage(dlg);
+    if (m_memcardFiles.empty())
         return;
     if (FEPackage *pkg = m_engine->GetPackageList()->FindPackage("MC_List.fng"))
         ApplyMemcardList(pkg, false);
@@ -7298,6 +7632,9 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     if (place == 1) {
         m_profile.Complete(ev->id);
         MaybeSignSponsor(*ev);
+        // 0x00268a30 -> 0x0026e530 / 0x0026ee90: the unlock and car-show messages the win earns.
+        if (const int sms = Career::SmsOnEventComplete(m_profile, *ev))
+            printf("[Sms] %d new message(s) after event %08x\n", sms, ev->id);
     }
     Career::SaveCareer(m_profile);
 

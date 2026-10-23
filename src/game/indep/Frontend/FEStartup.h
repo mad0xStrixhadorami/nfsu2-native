@@ -1,5 +1,6 @@
 #pragma once
 #include "game/indep/Frontend/RimCatalog.h"
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -12,6 +13,7 @@
 #include "game/indep/Career/Profile.h"
 #include "game/indep/Career/Memcard.h"
 #include "game/indep/Career/Events.h"
+#include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 
 #include "Speed/Indep/Src/FEng/FEObject.h"
@@ -183,6 +185,12 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
+    // Car Lot (UI_CareerCarLot.fng, class 0x001e88b0, 7 modes; ISSUES #248): the career car-lot roster.
+    // The roster carousel + stat bars are the Quick Race car-select machinery (CycleCarPreview /
+    // UpdateStatBars); Accept picks the previewed car into the career session, Back returns to the
+    // crib.  Screen state lives in the package until the entry point is wired (ISSUES #222/#183).
+    void HandleCarLotLoaded(FEPackage *pkg);
+    void UpdateCarLot(FEPackage *pkg);
     // Car shop paint flow (ISSUES #167/#168): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.
     // UI_Paint is two-state (0x002bc2f0): the nine part cards (AddOptions 0x002bcff8) select a
     // colorable part, Accept opens that part's swatch grid (0x002bdf10), Back closes the grid
@@ -489,6 +497,22 @@ private:
     void HandleSponsorViewMessage(uint32_t msg, FEPackage *pkg);
     void RefreshSponsorView(FEPackage *pkg);
     void ShowSponsorTerms(FEPackage *pkg);
+    // UI_SMS_Mailbox.fng / UI_EngageMessageDialog.fng: the career SMS inbox (#249).
+    void OpenSms();
+    void HandleSmsLoaded(FEPackage *pkg);
+    void HandleSmsMessage(uint32_t msg, FEPackage *pkg);
+    void RebuildSmsList();
+    void ApplySmsMailbox(FEPackage *pkg);
+    void ApplySmsMessage(FEPackage *pkg);
+    std::string SmsFormat(uint32_t key, uint32_t arg) const;
+    int m_smsTab = 1;               // 1 Inbox .. 5 Unlocks (0x001f21c8)
+    size_t m_smsSel = 0, m_smsTop = 0;
+    std::vector<size_t> m_smsList;  // inbox indices visible in the tab, newest first (0x001f1e20)
+    int m_smsViewing = -1;          // inbox index shown by the message dialog
+    size_t m_smsLine = 0;           // first body line shown
+    std::vector<std::string> m_smsBody;
+    std::chrono::steady_clock::time_point m_dialogClosedAt{}; // the Yes / No dialog's Accept also reaches the screen under it
+    bool m_smsPopup = false;        // the dialog was opened for a single unread message (iGpffffd14c == 1)
     std::vector<int> m_svAreas;
     std::vector<std::string> m_svLines; // wrapped SPONSOR_DETAILS text
     size_t m_svScroll = 0;

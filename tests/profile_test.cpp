@@ -173,6 +173,18 @@ int main()
         p.cars[0].tuneSlots[2] = {100, 101, 102};
         p.racesEntered = 12;
         p.moneySpent = 3456;
+        Career::Profile::InboxEntry m1;
+        m1.def = 0x12345678;
+        m1.read = true;
+        m1.filed = true;
+        Career::Profile::InboxEntry m2;
+        m2.def = 0x9abcdef0;
+        m2.bodyKey = 0xb0bf75ff;
+        m2.subjKey = 0xd8d26325;
+        m2.arg = 0x601462b5;
+        m2.popupShown = true;
+        m2.deleted = true;
+        p.inbox = {m1, m2};
     }
     p.cars[0].perfParts = {2, 3, 17};     // Performance Shop parts (ISSUES #198)
     p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
@@ -238,6 +250,11 @@ int main()
         return Fail("statistics round-trip (v19)");
     if (q.cars[0].tuneSlots[2].size() != 3 || q.cars[0].tuneSlots[2][1] != 101 || !q.cars[0].tuneSlots[0].empty())
         return Fail("tune slots round-trip (v20)");
+    if (q.inbox.size() != 2 || q.inbox[0].def != 0x12345678 || !q.inbox[0].read || !q.inbox[0].filed ||
+        q.inbox[0].deleted || q.inbox[1].def != 0x9abcdef0 || q.inbox[1].bodyKey != 0xb0bf75ff ||
+        q.inbox[1].subjKey != 0xd8d26325 || q.inbox[1].arg != 0x601462b5 || q.inbox[1].read ||
+        !q.inbox[1].popupShown || !q.inbox[1].deleted || !q.HasMessage(0x9abcdef0) || q.HasMessage(1))
+        return Fail("SMS inbox round-trip (v21)");
     if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
         return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)
