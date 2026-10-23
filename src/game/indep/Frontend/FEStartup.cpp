@@ -477,6 +477,15 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleOptionsLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_Status_Master.fng") == 0) {
+        HandleStatusMasterLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_Status_Career.fng") == 0 || strcasecmp(name, "UI_Status_Region.fng") == 0 ||
+        strcasecmp(name, "UI_Status_DVD.fng") == 0) {
+        HandleStatusPageLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_OptionsController.fng") == 0) {
         // Options > Controls: the PS2 build fills this from the pad configuration at run time, so the package
         // ships "SHIFT DOWN" placeholders.  The native build lists its keyboard bindings in the seven rows.
@@ -634,7 +643,8 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
         strcasecmp(name, "UI_PerformanceDyno_Chart.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceDyno_Results.fng") == 0 ||
         strcasecmp(name, "UI_ChooseVinylLayer.fng") == 0 || strcasecmp(name, "UI_DecalMain.fng") == 0 ||
-        strcasecmp(name, "UI_ICEMAIN.fng") == 0 || strcasecmp(name, "UI_CustomNeonMain.fng") == 0)
+        strcasecmp(name, "UI_ICEMAIN.fng") == 0 || strcasecmp(name, "UI_CustomNeonMain.fng") == 0 ||
+        strcasecmp(name, "UI_Status_Master.fng") == 0)
         return; // the pad is read in Tick()
     if (strcasecmp(name, "UI_PerformanceDyno_MAIN.fng") == 0 ||
         strcasecmp(name, "UI_PerformanceTuning_Master.fng") == 0) {
@@ -819,6 +829,15 @@ void FEStartupSequence::Tick(uint32_t nowMs)
 {
     if (!m_optionsLoaded)
         LoadOptions();
+    if (m_statusPushTicks > 0 && --m_statusPushTicks == 0)
+        SwitchStatusPage(0);
+    if (m_profile.valid) {
+        const std::string key = m_profile.name + "/" + std::to_string(m_profile.cars.size());
+        if (key == m_statKey && m_profile.money < m_statMoney)
+            m_profile.moneySpent += uint32_t(m_statMoney - m_profile.money);
+        m_statKey = key;
+        m_statMoney = m_profile.money;
+    }
     m_lastTickMs = m_nowMs;
     m_nowMs = nowMs;
     if (!m_engine)
@@ -962,6 +981,28 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             }
         } else if ((pressed & FENativeInterface::kPadBack) && !chart)
             PopScreen();
+        return;
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        (strcasecmp(top->GetName(), "UI_Status_Master.fng") == 0 || strncasecmp(top->GetName(), "UI_Status_", 10) == 0)) {
+        FEPackage *master = nullptr;
+        for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+            if (p->GetName() && strcasecmp(p->GetName(), "UI_Status_Master.fng") == 0)
+                master = p;
+        if (master) {
+            if (pressed & FENativeInterface::kPadLeft)
+                HandleStatusMessage(kMsgPadLeft, master);
+            else if (pressed & FENativeInterface::kPadRight)
+                HandleStatusMessage(kMsgPadRight, master);
+            else if (pressed & FENativeInterface::kPadUp)
+                HandleStatusMessage(kMsgPadUp, master);
+            else if (pressed & FENativeInterface::kPadDown)
+                HandleStatusMessage(kMsgPadDown, master);
+            else if (pressed & FENativeInterface::kPadAccept)
+                HandleStatusMessage(kMsgPadAccept, master);
+            else if (pressed & FENativeInterface::kPadBack)
+                HandleStatusMessage(kMsgPadBack, master);
+        }
         return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
@@ -3262,6 +3303,237 @@ constexpr uint32_t kNeonIcons[10] = {0xa9817b5e, 0xa9817b5f, 0xa9817b60, 0xa9817
 constexpr uint32_t kNeonPrice = 500, kTintPrice = 250;
 } // namespace
 
+// ---------------------------------------------------------------------------------------------
+// Career Status (ISSUES #243).  The pause/state class FUN_00360b28 opens UI_Status_Master.fng for the
+// career pause type 0x13 (and leaves to UI_PostraceWorldMap); its page carousel (0x001f0da8) lists
+// "Overall Career Statistics", "Stage <n> - <region> Status" and "DVD Unlocks", and L/R swap the page
+// package (UI_Status_Career / _Region / _DVD, 0x001f1148).  The Career page (0x001efe58) is a 7-row
+// scrolling list of headers and "label: value" rows; the row order below is that function's.
+namespace {
+constexpr uint32_t kStatusRowLabel[7] = {0x566bf789, 0x566bf78a, 0x566bf78b, 0x566bf78c, 0x566bf78d, 0x566bf78e, 0x566bf78f};
+constexpr uint32_t kStatusRowValue[7] = {0xa148528a, 0xa148528b, 0xa148528c, 0xa148528d, 0xa148528e, 0xa148528f, 0xa1485290};
+} // namespace
+
+static int CareerRaceType(const Career::Event &ev, const RaceInfo &);
+
+void FEStartupSequence::BuildStatusRows()
+{
+    m_statusRows.clear();
+    const Career::EventTable &table = Career::EventTable::Get();
+    auto done = [this](const Career::Event &e) {
+        return std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), e.id) != m_profile.completedEvents.end();
+    };
+    int wins[11] = {}, total[11] = {}, completed = 0, listed = 0;
+    uint32_t repByRegion[6] = {}, winsByRegion[6] = {};
+    for (const Career::Event &e : table.All()) {
+        if (e.races.empty())
+            continue;
+        const RaceInfo *r = nullptr;
+        for (const RaceInfo &ri : m_fe->Races())
+            if (ri.number == e.races[0])
+                r = &ri;
+        const int type = r ? CareerRaceType(e, *r) : 0;
+        ++listed;
+        ++total[type];
+        if (done(e)) {
+            ++completed, ++wins[type];
+            if (e.region < 6)
+                repByRegion[e.region] += e.respect, ++winsByRegion[e.region];
+        }
+    }
+    auto row = [this](const std::string &label, const std::string &value, bool header = false) {
+        m_statusRows.push_back({label, value, header});
+    };
+    auto text = [this](uint32_t h) { return m_fe->LanguageText(h); };
+    int allWins = 0;
+    for (int t : {0, 1, 2, 3, 4, 8, 10})
+        allWins += wins[t];
+    char b[64];
+    row(text(0x92260f04), "", true); // Overall Status
+    snprintf(b, sizeof b, "%d%%", listed ? completed * 100 / listed : 0);
+    row(text(0xabba6482), b); // Game Completion Status:
+    snprintf(b, sizeof b, "$%d", m_profile.money);
+    row(text(0x13b49408), b); // Bank:
+    snprintf(b, sizeof b, "$%u", m_profile.moneySpent);
+    row(text(0x3b10cb47), b); // Total Spent On Car:
+    snprintf(b, sizeof b, "%u", m_profile.racesEntered);
+    row(text(0xc967aee0), b); // Races Entered:
+    snprintf(b, sizeof b, "%d", allWins);
+    row(text(0x241be921), b); // Overall Wins:
+    snprintf(b, sizeof b, "%u%%", m_profile.racesEntered ? std::min(100u, uint32_t(allWins) * 100 / m_profile.racesEntered) : 0u);
+    row(text(0x0d817a4a), b); // Win Percent:
+    row(text(0xc3755f6d), "", true); // Races Won
+    static const struct { uint32_t label; int type; } kTypes[] = {{0x151c443f, 0}, {0x22a144ec, 1}, {0x8eab27c5, 3},
+                                                                   {0x8090b36a, 2}, {0xef317ada, 10}, {0xe6e0bc3f, 4}};
+    for (const auto &t : kTypes) { // Circuit, Sprint, Drift, Drag, Street X, URL
+        snprintf(b, sizeof b, "%d/%d", wins[t.type], total[t.type]);
+        row(text(t.label), b);
+    }
+    row(text(0x11f7ac44), "", true); // Rewards
+    row(text(0xc35dd09e), "0");      // Magazines Won: (the port has no magazine rewards)
+    row(text(0x678144ae), "0");      // DVD Covers Won:
+    snprintf(b, sizeof b, "%d/%d", m_profile.SignedSponsorCount(), Career::OwnedCar::kMaxDecals * 2);
+    row(text(0x5f77bb60), b); // Sponsorships Signed:
+    row(text(0xa49003ba), "", true); // Total Reputation
+    for (int s = 1; s <= 5; ++s) {
+        std::string label = text(0x8b84e940);
+        const size_t at = label.find("%d");
+        if (at != std::string::npos)
+            label.replace(at, 2, std::to_string(s));
+        snprintf(b, sizeof b, "%u", repByRegion[s]);
+        row(label, b);
+    }
+    row(text(0xa63a4af1), "", true); // Average Reputation Per Race
+    for (int s = 1; s <= 5; ++s) {
+        std::string label = text(0x8b84e940);
+        const size_t at = label.find("%d");
+        if (at != std::string::npos)
+            label.replace(at, 2, std::to_string(s));
+        snprintf(b, sizeof b, "%u", winsByRegion[s] ? repByRegion[s] / winsByRegion[s] : 0u);
+        row(label, b);
+    }
+}
+
+void FEStartupSequence::ShowStatusRows(FEPackage *pkg)
+{
+    for (size_t i = 0; i < 7; ++i) {
+        const size_t at = m_statusTop + i;
+        const bool have = at < m_statusRows.size();
+        FENativeInterface::SetString(pkg, kStatusRowLabel[i], have ? m_statusRows[at].label.c_str() : "");
+        FENativeInterface::SetString(pkg, kStatusRowValue[i], have ? m_statusRows[at].value.c_str() : "");
+        if (FEObject *o = pkg->FindObjectByHash(kStatusRowLabel[i]))
+            if (FEObjData *d = o->GetObjData()) // headers in the highlight green, rows in the package's red
+                if (have && m_statusRows[at].header)
+                    d->Col.r = 204, d->Col.g = 244, d->Col.b = 138;
+    }
+}
+
+void FEStartupSequence::HandleStatusPageLoaded(FEPackage *pkg)
+{
+    const std::string name = pkg->GetName();
+    if (name == "UI_Status_Career.fng") {
+        m_statusPage = 0;
+        BuildStatusRows();
+        ShowStatusRows(pkg);
+        // The row groups ship in their dim "UnHighlight" state; 0x0029a9f0 highlights the list, so run
+        // each group's Highlight script (0x249db7b7).
+        for (FEObject *o = pkg->GetFirstObject(); o; o = o->GetNext())
+            if (o->FindScript(0x249db7b7))
+                FENativeInterface::SetScript(pkg, o->NameHash, 0x249db7b7, true);
+        // The list's scroll arrows and the visual-rating strip are not driven by this list.
+    } else if (name == "UI_Status_Region.fng") {
+        m_statusPage = 1;
+        const Career::EventTable &table = Career::EventTable::Get();
+        int area = std::clamp(m_wmArea, 1, 5), n = 0, d = 0, sp = 0, spAll = 0, url = 0, urlAll = 0, wev = 0, wevAll = 0;
+        for (const Career::Event &e : table.All()) {
+            if (e.races.empty() || e.region != area)
+                continue;
+            const bool fin = std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), e.id) != m_profile.completedEvents.end();
+            ++n, d += fin;
+            if (e.kind == 2)
+                ++urlAll, url += fin;
+            else if (e.special)
+                ++spAll, sp += fin;
+            else
+                ++wevAll, wev += fin;
+        }
+        char b[32];
+        snprintf(b, sizeof b, "%d%%", n ? d * 100 / n : 0);
+        FENativeInterface::SetString(pkg, 0x317ad6f2, b);
+        snprintf(b, sizeof b, "%d/%d", wev, wevAll);
+        FENativeInterface::SetString(pkg, 0x317ad6f3, b);
+        snprintf(b, sizeof b, "%d/%d", sp, spAll);
+        FENativeInterface::SetString(pkg, 0x317ad6f4, b);
+        snprintf(b, sizeof b, "%d/%d", url, urlAll);
+        FENativeInterface::SetString(pkg, 0x317ad6f5, b);
+        FENativeInterface::SetString(pkg, 0x317ad6f6, "0%"); // DVD Covers: none won in the port
+    } else {
+        m_statusPage = 2;
+        FENativeInterface::SetString(pkg, 0x42e73d71, "Not Available");
+    }
+}
+
+void FEStartupSequence::HandleStatusMasterLoaded(FEPackage *pkg)
+{
+    m_statusTop = 0;
+    m_statusPage = 0;
+    if (getenv("NFSU2_STATUS_PENDING")) { // dev aid: behave as if arriving from a finished career event
+        m_statusPending = true;
+        m_cribRequested = true;
+    }
+    m_statusPushTicks = 6; // the first page goes over the master once its intro has started
+}
+
+// Shows the page title in the master's carousel text and the page package over it.
+void FEStartupSequence::SwitchStatusPage(int dir, FEPackage *masterHint)
+{
+    FEPackage *master = masterHint, *page = nullptr;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext()) {
+        if (!p->GetName())
+            continue;
+        if (strcasecmp(p->GetName(), "UI_Status_Master.fng") == 0)
+            master = p;
+        else if (strncasecmp(p->GetName(), "UI_Status_", 10) == 0)
+            page = p;
+    }
+    if (!master) {
+        printf("[Status] no master package\n");
+        return;
+    }
+    printf("[Status] page %d\n", std::clamp(m_statusPage + dir, 0, 2));
+    m_statusPage = std::clamp(m_statusPage + dir, 0, 2);
+    if (page)
+        m_engine->UnloadPackage(page);
+    static const char *kPages[3] = {"UI_Status_Career.fng", "UI_Status_Region.fng", "UI_Status_DVD.fng"};
+    m_engine->PushPackage(kPages[m_statusPage], 0, 0);
+    std::string title = m_fe->LanguageText(m_statusPage == 0 ? 0xa3532050u : m_statusPage == 1 ? 0x94d3715bu : 0x74e499b0u);
+    if (m_statusPage == 1) {
+        std::string region = m_fe->LanguageText(0xc08af0b2u + uint32_t(std::clamp(m_wmArea, 1, 5)));
+        char b[96];
+        snprintf(b, sizeof b, "Stage %d - %s Status", std::clamp(m_wmArea, 1, 5), region.c_str());
+        title = b;
+    }
+    FENativeInterface::SetString(master, 0x3223a234, title.c_str());
+}
+
+void FEStartupSequence::HandleStatusMessage(uint32_t msg, FEPackage *pkg)
+{
+    const std::string name = pkg->GetName();
+    if (name == "UI_Status_Master.fng") {
+        if (msg == kMsgPadBack || msg == kMsgPadAccept || msg == kMsgButtonPressed) {
+            if (!m_navPending) { // Continue: back to the pause menu
+                for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p;) {
+                    FEPackage *next = p->GetNext();
+                    if (p->GetName() && strncasecmp(p->GetName(), "UI_Status_", 10) == 0 && p != pkg)
+                        m_engine->UnloadPackage(p);
+                    p = next;
+                }
+                if (m_statusPending) { // Continue: on to the crib
+                    m_statusPending = false;
+                    m_engine->UnloadPackage(pkg);
+                    RequestRace();
+                    printf("[Career] status -> crib\n");
+                } else {
+                    m_navPending = true;
+                    m_engine->QueuePackageSwitch("UI_Pause.fng", 0xff);
+                }
+            }
+        } else if (msg == kMsgPadLeft) {
+            SwitchStatusPage(-1);
+        } else if (msg == kMsgPadRight) {
+            SwitchStatusPage(+1);
+        } else if (msg == kMsgPadUp && m_statusTop > 0) {
+            --m_statusTop;
+        } else if (msg == kMsgPadDown && m_statusTop + 7 < m_statusRows.size()) {
+            ++m_statusTop;
+        }
+        if (msg == kMsgPadUp || msg == kMsgPadDown)
+            for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+                if (p->GetName() && strcasecmp(p->GetName(), "UI_Status_Career.fng") == 0)
+                    ShowStatusRows(p);
+    }
+}
+
 void FEStartupSequence::HandleSpecialtyLoaded(FEPackage *pkg)
 {
     const bool neonPkg = strcasecmp(pkg->GetName(), "UI_CustomNeonMain.fng") == 0;
@@ -4450,6 +4722,8 @@ void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
     m_raceNumber = r->number;
     m_raceType = CareerRaceType(ev, *r);
     m_careerEventRun = true;
+    ++m_profile.racesEntered;
+    Career::SaveCareer(m_profile);
     m_careerReverse = ev.DirectionFor(r->number) != 0;
     printf("[Career] start event %08x: race %d type %d purse %u direction %s\n", ev.id, m_raceNumber, m_raceType,
            ev.purse, m_careerReverse ? "Reverse" : "Forward");
@@ -6694,6 +6968,7 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
         return;
+    m_statusReady = true; // the finished event is followed by the Career Status screen (#243)
     // The world map's Previous Time (0x00272e18 over the 0x4fb4ac table). The table's value is the
     // best lap (RaceSession::BestLap), matching the QR "Best Lap" label; drift events use the same
     // table through 0x00272ee8, which keeps the largest score instead of the smallest time.
@@ -7223,6 +7498,13 @@ void FEStartupSequence::ReturnFromRace()
         m_raceNumber = 0;
         m_raceType = 9;
         m_cribRequested = true;
+        if (m_statusReady) { // 0x00360b28: the finished event's Career Status, then back to the crib
+            m_statusReady = false;
+            m_statusPending = true;
+            m_engine->PushPackage("UI_Status_Master.fng", 0, 0xff);
+            printf("[Career] event over -> Career Status\n");
+            return;
+        }
         RequestRace();
         printf("[Career] event over -> crib\n");
         return;
@@ -7243,7 +7525,7 @@ void FEStartupSequence::HandlePauseLoaded(FEPackage *pkg)
     std::vector<FEIconScroller::Def> defs = {
         {0x12bb5ea2, 0xf6601088}, // Continue
         {0xb295a6b6, 0x80833fc2}, // Restart (0x00237d68: not in drift-trial type 7 or online)
-        {0x84d1d864, 0x7840428a}, // Options (0x00251bd0 -> UI_PauseOptionsMain.fng)
+        {0x520de4e3, 0xb34993c9}, // Options (0x00251bd0 -> UI_PauseOptionsMain.fng); 0x84d1d864 / 0x7840428a is Replay
         {0x4c9e34e6, 0xc7e1420c}, // Quit Race
     };
     m_pauseActions = {kPauseResume, kPauseRestart, kPauseOptions, kPauseQuit};

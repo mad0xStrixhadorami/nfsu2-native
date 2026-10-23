@@ -112,6 +112,9 @@ struct Profile {
         return n;
     }
     uint32_t playTime = 0; // seconds
+    // Career statistics for the Career Status screen (ISSUES #243).
+    uint32_t racesEntered = 0; // career races started
+    uint32_t moneySpent = 0;   // total spent in the shops
     // Best finishing times (the 0x4fb4ac best-time table, 0x00272e18: {race s16, direction u8, value}).
     struct BestTime {
         int race;

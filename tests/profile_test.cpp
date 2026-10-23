@@ -170,6 +170,8 @@ int main()
         p.cars[0].rimStyle = 4;
         p.cars[0].neon = 7;
         p.cars[0].tint = 2;
+        p.racesEntered = 12;
+        p.moneySpent = 3456;
     }
     p.cars[0].perfParts = {2, 3, 17};     // Performance Shop parts (ISSUES #198)
     p.cars[0].wideBody = 3;               // Body Shop wide-body kit (ISSUES #193)
@@ -231,6 +233,8 @@ int main()
         return Fail("rims round-trip (v17)");
     if (q.cars[0].neon != 7 || q.cars[0].tint != 2)
         return Fail("specialties round-trip (v18)");
+    if (q.racesEntered != 12 || q.moneySpent != 3456)
+        return Fail("statistics round-trip (v19)");
     if (q.cars[0].perfParts != std::vector<uint16_t>{2, 3, 17})
         return Fail("perf parts round-trip");
     if (q.cars[0].wideBody != 3)

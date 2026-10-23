@@ -221,6 +221,23 @@ private:
     // Graphics Shop vinyls (ISSUES #223): the layer chooser and the vinyl mode of the shared parts browser.
     void HandleVinylLayerLoaded(FEPackage *pkg);
     std::vector<Career::OwnedCar::VinylLayer> &PaintLayers() { return m_decalMode ? m_decalWork : m_vinylWork; } // the layers the repaint edits
+    // Career Status (ISSUES #243): UI_Status_Master.fng hosts the pages Career / Region / DVD.
+    struct StatusRow {
+        std::string label, value;
+        bool header = false;
+    };
+    void HandleStatusMasterLoaded(FEPackage *pkg);
+    void HandleStatusPageLoaded(FEPackage *pkg);
+    void HandleStatusMessage(uint32_t msg, FEPackage *pkg);
+    void BuildStatusRows();
+    void ShowStatusRows(FEPackage *pkg);
+    void SwitchStatusPage(int dir, FEPackage *masterHint = nullptr);
+    int m_statusPushTicks = 0;    // frames until the first page package is pushed over the master
+    bool m_statusReady = false;   // a career event finished: show Career Status on the way back
+    bool m_statusPending = false; // the Status screen is up on the way back to the crib
+    std::vector<StatusRow> m_statusRows;
+    size_t m_statusTop = 0;
+    int m_statusPage = 0; // 0 career, 1 region, 2 DVD
     void HandleSpecialtyLoaded(FEPackage *pkg);
     void HandleSpecialtyMessage(uint32_t msg, FEPackage *pkg);
     void PreviewSpecialty();
@@ -554,6 +571,9 @@ private:
     void LoadOptions();
     void SaveOptions() const;
     bool m_optionsLoaded = false;
+    // Career statistics tracking (ISSUES #243): shop spending seen as a money drop while the same profile is loaded.
+    std::string m_statKey;
+    int m_statMoney = 0;
     // UI_Options Gameplay toggles (0x004f12ec Jump Camera stored 0/127, 0x004f12e0 Rearview
     // Mirror, 0x004f12e8 Speedometer Units 0 MPH / 1 KM-H, 0x004f15e4 Career Difficulty 0..2,
     // 0x004f12ea Explore Map Mode, 0x004f12e9 Race Map Mode, 0x004fb4a0/a4 Save 0 Off/1 Prompt/
