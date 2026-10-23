@@ -73,6 +73,7 @@ public:
     bool SpeedoMph() const { return m_speedoUnits == 0; } // 0 MPH / 1 KM-H (0x004f12e8)
     int Brightness() const { return m_brightness; }
     int Contrast() const { return m_contrast; }
+    bool RearviewMirror() const { return m_rearviewMirror; }
     bool ShowGauges() const { return m_pGauges; }
     bool ShowRacePosition() const { return m_pRacePosition; }
     bool ShowLapInfo() const { return m_pLapInfo; }

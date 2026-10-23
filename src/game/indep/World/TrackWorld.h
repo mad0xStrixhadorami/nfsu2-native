@@ -42,7 +42,13 @@ public:
     void Render(SDL_Renderer *renderer, const Camera &cam, int width, int height);
     // Hardware path (TrackWorldGL.cpp): draws the world with OpenGL and a depth buffer between
     // SDL_Renderer batches. Returns false when the renderer is not SDL's OpenGL backend.
-    bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height);
+    // inset (optional): draw into a sub-rectangle of the window (pixels, origin top-left), optionally mirrored
+    // left-right; used for the rear-view mirror (ISSUES #245).
+    struct Inset {
+        int x, y, w, h;
+        bool mirror;
+    };
+    bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height, const Inset *inset = nullptr);
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;

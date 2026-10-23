@@ -108,8 +108,9 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     return id;
 }
 
-bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height)
+bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height, const Inset *inset)
 {
+    const int windowHeight = height;
     if (m_glState == 0)
         m_glState = GLBridge::Available(renderer) ? 1 : -1;
     if (m_glState != 1)
@@ -119,7 +120,15 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float fogColour[4] = {0.55f, 0.62f, 0.72f, 1.0f};
 
     GLBridge::Scope scope(renderer);
-    glViewport(0, 0, width, height);
+    if (inset) {
+        glViewport(inset->x, windowHeight - inset->y - inset->h, inset->w, inset->h);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(inset->x, windowHeight - inset->y - inset->h, inset->w, inset->h);
+        width = inset->w;
+        height = inset->h;
+    } else {
+        glViewport(0, 0, width, height);
+    }
     glDisable(GL_TEXTURE_2D);
     glShadeModel(GL_FLAT);
 
@@ -151,7 +160,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float aspect = float(height) / float(std::max(width, 1));
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glFrustum(-kNear * tanHalf, kNear * tanHalf, -kNear * tanHalf * aspect, kNear * tanHalf * aspect, kNear,
+    const float side = inset && inset->mirror ? -1.0f : 1.0f; // a mirror flips the image left-right
+    glFrustum(-kNear * tanHalf * side, kNear * tanHalf * side, -kNear * tanHalf * aspect, kNear * tanHalf * aspect, kNear,
               kDrawDistance);
     const float view[16] = {r[0], u[0], -f[0], 0, r[1], u[1], -f[1], 0, r[2], u[2], -f[2], 0,
                             -(r[0] * c[0] + r[1] * c[1] + r[2] * c[2]), -(u[0] * c[0] + u[1] * c[1] + u[2] * c[2]),
@@ -291,5 +301,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             first = last;
         }
     }
+    if (inset)
+        glDisable(GL_SCISSOR_TEST);
     return true;
 }

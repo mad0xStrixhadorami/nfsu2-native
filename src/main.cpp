@@ -1764,7 +1764,8 @@ int main(int argc, char **argv)
                 const float viewYaw = chaseYaw + camOrbit; // dev aid; 0 = the normal chase view
                 // Options > Player > Camera: 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far (distance, height).
                 static const float kCamBack[5] = {0.5f, 1.2f, 5.0f, 6.5f, 9.0f}, kCamUp[5] = {0.9f, 1.3f, 1.9f, 2.3f, 3.2f};
-                const int camSetting = std::clamp(startup.CameraSetting(), 0, 4);
+                // 0x0025ddf0 / 0x0025de60 / 0x0025df38 demote Super Far to Far for races; only free roam (0x0025ded8) uses it.
+                const int camSetting = std::clamp(startup.CameraSetting(), 0, race.IsFreeRun() ? 4 : 3);
                 camera.x = car.X() - std::cos(viewYaw) * kCamBack[camSetting];
                 camera.y = car.Y() - std::sin(viewYaw) * kCamBack[camSetting];
                 float camGround = car.Z();
@@ -1785,6 +1786,24 @@ int main(int argc, char **argv)
             SDL_RenderClear(ren);
             if (!world.RenderGL(ren, camera, w, h))
                 world.Render(ren, camera, w, h);
+            else if (startup.RearviewMirror() && inWorld && !cribPkg && !flyCamera) {
+                // Options > Gameplay > Rearview Mirror: a mirrored view from the car's rear in a strip at the top
+                // centre of the screen (the original's mirror is a HUD element, ISSUES #245).
+                const int iw = w * 30 / 100, ih = h * 15 / 100, ix = (w - iw) / 2, iy = h * 3 / 100;
+                TrackWorld::Camera rear = camera;
+                rear.x = car.X() - std::cos(car.Yaw()) * 2.4f;
+                rear.y = car.Y() - std::sin(car.Yaw()) * 2.4f;
+                rear.z = car.Z() + 1.25f;
+                rear.yaw = car.Yaw() + 3.14159265f;
+                rear.pitch = -0.03f;
+                const TrackWorld::Inset inset{ix, iy, iw, ih, true};
+                world.RenderGL(ren, rear, w, h, &inset);
+                SDL_SetRenderDrawColor(ren, 10, 10, 10, 255);
+                for (int k = 0; k < 3; ++k) {
+                    const SDL_Rect border{ix - k, iy - k, iw + 2 * k, ih + 2 * k};
+                    SDL_RenderDrawRect(ren, &border);
+                }
+            }
             SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             engine->Render();
             static Uint32 fpsStart = now, fpsFrames = 0;
