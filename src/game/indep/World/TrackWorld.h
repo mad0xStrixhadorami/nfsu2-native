@@ -267,6 +267,14 @@ private:
     // Light-beam textures the packs do not carry (spotlights / light poles / bridge lights name 0x2e95ce7c and
     // 0x2e95ce7d): drawn with a procedural additive gradient (ISSUES #254).
     static bool IsBeamTexture(uint32_t hash) { return hash == 0x2e95ce7cu || hash == 0x2e95ce7du; }
+    // Shader programs and the post-processing targets (ISSUES #263; TrackWorldGL.cpp).
+    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0;
+    unsigned m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
+    int m_postW = 0, m_postH = 0;
+    bool m_shadersTried = false;
+    void InitShaders();
+    void PostProcess(int w, int h);
+    void ReleasePost();
     unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
     std::vector<uint32_t> m_glTextureStale; // skin hashes whose GL texture must be rebuilt

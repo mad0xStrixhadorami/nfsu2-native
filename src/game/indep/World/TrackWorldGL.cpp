@@ -12,6 +12,8 @@
 
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/GLBridge.h"
+#include "game/indep/World/GLShader.h"
+#include "game/indep/World/Shaders.h"
 
 namespace {
 struct Vertex {
@@ -35,6 +37,7 @@ void TrackWorld::ReleaseGL()
     m_glPanorama = GLCell();
     m_glTextures.clear();
     m_glShadow = 0;
+    ReleasePost();
 }
 
 // Texture by name hash from the stream's texture packs, decoded and uploaded on first use;
@@ -135,6 +138,143 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     return id;
 }
 
+void TrackWorld::InitShaders()
+{
+    m_shadersTried = true;
+    if (!GLShader::Load())
+        return;
+    m_progWorld = GLShader::Build("world", Shaders::kWorldVS, Shaders::kWorldFS);
+    m_progCar = GLShader::Build("car", Shaders::kCarVS, Shaders::kCarFS, {{1, "aNormal"}, {2, "aGloss"}});
+    m_progBright = GLShader::Build("bright", Shaders::kPostVS, Shaders::kBrightFS);
+    m_progBlur = GLShader::Build("blur", Shaders::kPostVS, Shaders::kBlurFS);
+    m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
+    printf("[GLSL] programs: world %u, car %u, post %u / %u / %u\n", m_progWorld, m_progCar, m_progBright, m_progBlur, m_progComposite);
+}
+
+void TrackWorld::ReleasePost()
+{
+    if (m_postScene)
+        glDeleteTextures(1, &m_postScene);
+    for (unsigned &t : m_postBloom)
+        if (t)
+            glDeleteTextures(1, &t), t = 0;
+    if (m_postFboScene)
+        GLShader::DeleteFramebuffer(m_postFboScene);
+    for (unsigned &f : m_postFbo)
+        if (f)
+            GLShader::DeleteFramebuffer(f), f = 0;
+    m_postScene = m_postFboScene = 0;
+    m_postW = m_postH = 0;
+}
+
+// Post-processing of the finished world frame (ISSUES #263): the window framebuffer is resolved into a texture, its bright
+// parts are extracted at quarter size, blurred and added back, then a filmic curve, a touch of saturation and a vignette
+// are applied while writing the result to the window. Runs between the world and SDL's HUD draws.
+void TrackWorld::PostProcess(int w, int h)
+{
+    if (!m_progBright || !m_progBlur || !m_progComposite || w < 64 || h < 64 || getenv("NFSU2_NO_POST"))
+        return;
+    const int bw = std::max(16, w / 4), bh = std::max(16, h / 4);
+    auto makeTexture = [](unsigned &tex, int W, int H) {
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+    if (w != m_postW || h != m_postH) {
+        ReleasePost();
+        makeTexture(m_postScene, w, h);
+        makeTexture(m_postBloom[0], bw, bh);
+        makeTexture(m_postBloom[1], bw, bh);
+        m_postFboScene = GLShader::GenFramebuffer();
+        GLShader::BindFramebuffer(m_postFboScene);
+        bool ok = GLShader::AttachColor(m_postScene);
+        for (int i = 0; i < 2; ++i) {
+            m_postFbo[i] = GLShader::GenFramebuffer();
+            GLShader::BindFramebuffer(m_postFbo[i]);
+            ok &= GLShader::AttachColor(m_postBloom[i]);
+        }
+        GLShader::BindFramebuffer(0);
+        m_postW = w, m_postH = h;
+        if (!ok) {
+            fprintf(stderr, "[GLSL] post-processing framebuffers incomplete: disabled\n");
+            ReleasePost();
+            m_progComposite = 0;
+            return;
+        }
+    }
+    GLShader::BlitWindowTo(m_postFboScene, w, h); // resolves the multisampled frame
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_FOG);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    auto quad = [] {
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0), glVertex2f(-1, -1);
+        glTexCoord2f(1, 0), glVertex2f(1, -1);
+        glTexCoord2f(1, 1), glVertex2f(1, 1);
+        glTexCoord2f(0, 1), glVertex2f(-1, 1);
+        glEnd();
+    };
+    glEnable(GL_TEXTURE_2D);
+    // 1. bright pass into the quarter-size target
+    GLShader::BindFramebuffer(m_postFbo[0]);
+    glViewport(0, 0, bw, bh);
+    GLShader::Use(m_progBright);
+    GLShader::Set1i(GLShader::Uniform(m_progBright, "uScene"), 0);
+    GLShader::Set2f(GLShader::Uniform(m_progBright, "uTexel"), 1.0f / w, 1.0f / h);
+    GLShader::Set1f(GLShader::Uniform(m_progBright, "uThreshold"), 0.62f);
+    glBindTexture(GL_TEXTURE_2D, m_postScene);
+    quad();
+    // 2. two separable blur iterations (horizontal into fbo 1, vertical back into fbo 0)
+    GLShader::Use(m_progBlur);
+    GLShader::Set1i(GLShader::Uniform(m_progBlur, "uSrc"), 0);
+    const GLint dirLoc = GLShader::Uniform(m_progBlur, "uDir");
+    for (int it = 0; it < 2; ++it) {
+        GLShader::BindFramebuffer(m_postFbo[1]);
+        GLShader::Set2f(dirLoc, 1.4f / bw, 0.0f);
+        glBindTexture(GL_TEXTURE_2D, m_postBloom[0]);
+        quad();
+        GLShader::BindFramebuffer(m_postFbo[0]);
+        GLShader::Set2f(dirLoc, 0.0f, 1.4f / bh);
+        glBindTexture(GL_TEXTURE_2D, m_postBloom[1]);
+        quad();
+    }
+    // 3. composite into the window
+    GLShader::BindFramebuffer(0);
+    glViewport(0, 0, w, h);
+    GLShader::Use(m_progComposite);
+    GLShader::Set1i(GLShader::Uniform(m_progComposite, "uScene"), 0);
+    GLShader::Set1i(GLShader::Uniform(m_progComposite, "uBloom"), 1);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uBloomStrength"), getenv("NFSU2_BLOOM") ? float(atof(getenv("NFSU2_BLOOM"))) : 0.75f);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uVignette"), 0.34f);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uExposure"), 1.06f);
+    GLShader::ActiveTexture(1);
+    glBindTexture(GL_TEXTURE_2D, m_postBloom[0]);
+    GLShader::ActiveTexture(0);
+    glBindTexture(GL_TEXTURE_2D, m_postScene);
+    quad();
+    GLShader::ActiveTexture(1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    GLShader::ActiveTexture(0);
+    GLShader::Use(0);
+    glDepthMask(GL_TRUE);
+}
+
 bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height, const Inset *inset)
 {
     const int windowHeight = height;
@@ -147,6 +287,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float fogColour[4] = {0.55f, 0.62f, 0.72f, 1.0f};
 
     GLBridge::Scope scope(renderer);
+    if (!m_shadersTried)
+        InitShaders();
     if (inset) {
         glViewport(inset->x, windowHeight - inset->y - inset->h, inset->w, inset->h);
         glEnable(GL_SCISSOR_TEST);
@@ -217,6 +359,18 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
 
     static std::vector<Vertex> scratch;
 
+    // The world program: textured scenery with grading and fog (the fixed-function path stays as the fallback).
+    auto worldProgram = [&](float fogStart, float fogEnd) {
+        if (!m_progWorld)
+            return;
+        GLShader::Use(m_progWorld);
+        GLShader::Set1i(GLShader::Uniform(m_progWorld, "uTex"), 0);
+        GLShader::Set3f(GLShader::Uniform(m_progWorld, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogStart"), fogStart);
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogEnd"), fogEnd);
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
+    };
+
     // Upload render triangles once: grouped by texture, one draw range per texture.
     auto upload = [&](GLCell &cell, std::vector<RTri> &render) {
         if (render.empty())
@@ -267,6 +421,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glMatrixMode(GL_MODELVIEW);
         glDisable(GL_FOG);
         glDisable(GL_DEPTH_TEST);
+        worldProgram(1.0e9f, 2.0e9f); // no fog on the backdrop
         drawCell(m_glPanorama, 0);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FOG);
@@ -295,6 +450,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (cell.buffer)
                 drawn.push_back(&cell);
         }
+    worldProgram(kFogStart, kDrawDistance);
     // Opaque and punch-through first, then blended/additive with depth writes off.
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1) {
@@ -307,6 +463,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
 
+    GLShader::Use(0);
     // Contact shadows: a soft dark quad under each car, aligned with it and lying on the lowest point of its wheels
     // (stand-in for the original's SHD_SHADOWTILE projected shadow, ISSUES #255).
     if (!getenv("NFSU2_NO_SHADOWS")) {
@@ -398,67 +555,124 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDisable(GL_BLEND);
     }
 
-    // Cars: rebuilt every frame from client memory, one draw per texture run.
+    // Cars: rebuilt every frame from client memory, one draw per texture run. With the car program the paint is lit per
+    // pixel (normals and the gloss class travel as vertex attributes); without it the CPU lights the vertices.
     GLBridge::BindArrayBuffer(0);
-    for (const Car &car : m_cars) {
-        if (car.render.empty())
-            continue;
-        scratch.clear();
-        const bool lit = car.gloss.size() == car.render.size() && !getenv("NFSU2_CAR_FLAT");
-        for (size_t ti = 0; ti < car.render.size(); ++ti) {
-            const RTri &t = car.render[ti];
-            for (int k = 0; k < 3; ++k) {
-                const RVertex &v = t.v[k];
-                uint8_t cr = v.r, cg = v.g, cb = v.b;
-                if (lit && car.gloss[ti]) {
-                    // Per-vertex paint lighting: hemisphere ambient + sun diffuse + sun specular + a sky reflection with
-                    // a Fresnel term (the original reflects an environment map on the body, ISSUES #253).
-                    const float *n3 = &car.normals[ti * 9 + size_t(k) * 3];
-                    float nx = n3[0], ny = n3[1], nz = n3[2];
-                    const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
-                    if (nl > 1e-6f)
-                        nx /= nl, ny /= nl, nz /= nl;
-                    float vx = cam.x - v.x, vy = cam.y - v.y, vz = cam.z - v.z;
-                    const float vl = std::max(1e-6f, std::sqrt(vx * vx + vy * vy + vz * vz));
-                    vx /= vl, vy /= vl, vz /= vl;
-                    constexpr float lx = 0.40f, ly = 0.30f, lz = 0.866f;
-                    const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
-                    const float ndl = std::max(0.0f, (nx * lx + ny * ly + nz * lz) / ll);
-                    const float ndv = std::max(0.0f, nx * vx + ny * vy + nz * vz);
-                    const float hemi = 0.30f + 0.32f * (0.5f + 0.5f * nz);
-                    const float gl = car.gloss[ti] == 2 ? 1.0f : 0.6f;
-                    // Blinn specular
-                    float hx = lx / ll + vx, hy = ly / ll + vy, hz = lz / ll + vz;
-                    const float hl = std::max(1e-6f, std::sqrt(hx * hx + hy * hy + hz * hz));
-                    const float ndh = std::max(0.0f, (nx * hx + ny * hy + nz * hz) / hl);
-                    const float spec = std::pow(ndh, 48.0f) * 0.55f * gl;
-                    // Reflection of a sky gradient
-                    const float rz = 2.0f * ndv * nz - vz;
-                    const float sky = std::clamp(0.5f + 0.5f * rz, 0.0f, 1.0f);
-                    const float fres = (0.04f + 0.55f * std::pow(1.0f - ndv, 3.0f)) * gl;
-                    const float er = 0.10f + 0.55f * sky, eg = 0.11f + 0.64f * sky, eb = 0.13f + 0.80f * sky;
-                    const float diff = hemi + 0.62f * ndl;
-                    const float *alb = &car.albedo[ti * 3];
-                    auto mix = [&](float a, float e) {
-                        return uint8_t(std::clamp((a * diff * (1.0f - fres) + e * fres + spec) * 255.0f, 0.0f, 255.0f));
-                    };
-                    cr = mix(alb[0], er), cg = mix(alb[1], eg), cb = mix(alb[2], eb);
+    if (m_progCar) {
+        struct CarVertex {
+            float x, y, z, u, v;
+            uint8_t r, g, b, a;
+            float nx, ny, nz, gloss;
+        };
+        static std::vector<CarVertex> cv;
+        GLShader::Use(m_progCar);
+        GLShader::Set1i(GLShader::Uniform(m_progCar, "uTex"), 0);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uCam"), cam.x, cam.y, cam.z);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uFogStart"), kFogStart);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uFogEnd"), kDrawDistance);
+        GLShader::EnableAttrib(1);
+        GLShader::EnableAttrib(2);
+        for (const Car &car : m_cars) {
+            if (car.render.empty())
+                continue;
+            cv.clear();
+            const bool lit = car.gloss.size() == car.render.size() && car.normals.size() == car.render.size() * 9 && !getenv("NFSU2_CAR_FLAT");
+            for (size_t ti = 0; ti < car.render.size(); ++ti) {
+                const RTri &t = car.render[ti];
+                const uint8_t g = lit ? car.gloss[ti] : 0;
+                for (int k = 0; k < 3; ++k) {
+                    const RVertex &v = t.v[k];
+                    CarVertex o{v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a, 0, 0, 1, float(g)};
+                    if (g) {
+                        const float *a = &car.albedo[ti * 3], *n3 = &car.normals[ti * 9 + size_t(k) * 3];
+                        o.r = uint8_t(std::clamp(a[0], 0.0f, 1.0f) * 255.0f), o.g = uint8_t(std::clamp(a[1], 0.0f, 1.0f) * 255.0f),
+                        o.b = uint8_t(std::clamp(a[2], 0.0f, 1.0f) * 255.0f);
+                        o.nx = n3[0], o.ny = n3[1], o.nz = n3[2];
+                    }
+                    cv.push_back(o);
                 }
-                scratch.push_back({v.x, v.y, v.z, v.u, v.v, cr, cg, cb, v.a});
+            }
+            glVertexPointer(3, GL_FLOAT, sizeof(CarVertex), &cv[0].x);
+            glTexCoordPointer(2, GL_FLOAT, sizeof(CarVertex), &cv[0].u);
+            glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(CarVertex), &cv[0].r);
+            GLShader::AttribPointer(1, 3, GL_FLOAT, false, sizeof(CarVertex), &cv[0].nx);
+            GLShader::AttribPointer(2, 1, GL_FLOAT, false, sizeof(CarVertex), &cv[0].gloss);
+            for (size_t first = 0; first < car.render.size();) {
+                size_t last = first;
+                while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
+                    ++last;
+                glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
+                glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
+                first = last;
             }
         }
-        glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &scratch[0].x);
-        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &scratch[0].u);
-        glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &scratch[0].r);
-        for (size_t first = 0; first < car.render.size();) {
-            size_t last = first;
-            while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
-                ++last;
-            glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
-            glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
-            first = last;
+        GLShader::DisableAttrib(1);
+        GLShader::DisableAttrib(2);
+        GLShader::Use(0);
+    } else {
+        for (const Car &car : m_cars) {
+            if (car.render.empty())
+                continue;
+            scratch.clear();
+            const bool lit = car.gloss.size() == car.render.size() && !getenv("NFSU2_CAR_FLAT");
+            for (size_t ti = 0; ti < car.render.size(); ++ti) {
+                const RTri &t = car.render[ti];
+                for (int k = 0; k < 3; ++k) {
+                    const RVertex &v = t.v[k];
+                    uint8_t cr = v.r, cg = v.g, cb = v.b;
+                    if (lit && car.gloss[ti]) {
+                        // Per-vertex paint lighting: hemisphere ambient + sun diffuse + sun specular + a sky reflection with
+                        // a Fresnel term (the original reflects an environment map on the body, ISSUES #253).
+                        const float *n3 = &car.normals[ti * 9 + size_t(k) * 3];
+                        float nx = n3[0], ny = n3[1], nz = n3[2];
+                        const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+                        if (nl > 1e-6f)
+                            nx /= nl, ny /= nl, nz /= nl;
+                        float vx = cam.x - v.x, vy = cam.y - v.y, vz = cam.z - v.z;
+                        const float vl = std::max(1e-6f, std::sqrt(vx * vx + vy * vy + vz * vz));
+                        vx /= vl, vy /= vl, vz /= vl;
+                        constexpr float lx = 0.40f, ly = 0.30f, lz = 0.866f;
+                        const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+                        const float ndl = std::max(0.0f, (nx * lx + ny * ly + nz * lz) / ll);
+                        const float ndv = std::max(0.0f, nx * vx + ny * vy + nz * vz);
+                        const float hemi = 0.30f + 0.32f * (0.5f + 0.5f * nz);
+                        const float gl = car.gloss[ti] == 2 ? 1.0f : 0.6f;
+                        // Blinn specular
+                        float hx = lx / ll + vx, hy = ly / ll + vy, hz = lz / ll + vz;
+                        const float hl = std::max(1e-6f, std::sqrt(hx * hx + hy * hy + hz * hz));
+                        const float ndh = std::max(0.0f, (nx * hx + ny * hy + nz * hz) / hl);
+                        const float spec = std::pow(ndh, 48.0f) * 0.55f * gl;
+                        // Reflection of a sky gradient
+                        const float rz = 2.0f * ndv * nz - vz;
+                        const float sky = std::clamp(0.5f + 0.5f * rz, 0.0f, 1.0f);
+                        const float fres = (0.04f + 0.55f * std::pow(1.0f - ndv, 3.0f)) * gl;
+                        const float er = 0.10f + 0.55f * sky, eg = 0.11f + 0.64f * sky, eb = 0.13f + 0.80f * sky;
+                        const float diff = hemi + 0.62f * ndl;
+                        const float *alb = &car.albedo[ti * 3];
+                        auto mix = [&](float a, float e) {
+                            return uint8_t(std::clamp((a * diff * (1.0f - fres) + e * fres + spec) * 255.0f, 0.0f, 255.0f));
+                        };
+                        cr = mix(alb[0], er), cg = mix(alb[1], eg), cb = mix(alb[2], eb);
+                    }
+                    scratch.push_back({v.x, v.y, v.z, v.u, v.v, cr, cg, cb, v.a});
+                }
+            }
+            glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &scratch[0].x);
+            glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &scratch[0].u);
+            glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &scratch[0].r);
+            for (size_t first = 0; first < car.render.size();) {
+                size_t last = first;
+                while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
+                    ++last;
+                glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
+                glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
+                first = last;
+            }
         }
     }
+    if (!inset)
+        PostProcess(width, height);
     if (inset)
         glDisable(GL_SCISSOR_TEST);
     return true;

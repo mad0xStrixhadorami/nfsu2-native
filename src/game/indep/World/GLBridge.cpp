@@ -45,6 +45,8 @@ bool Available(SDL_Renderer *renderer)
             SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
             printf("[GL] renderer %s (%s, depth %d, %d samples)\n", g_state == 1 ? "on" : "unavailable",
                    name ? reinterpret_cast<const char *>(name) : "?", depth, samples);
+            const GLubyte *ver = glGetString(GL_VERSION), *glsl = glGetString(0x8B8C /* GL_SHADING_LANGUAGE_VERSION */);
+            printf("[GL] version %s, GLSL %s\n", ver ? reinterpret_cast<const char *>(ver) : "?", glsl ? reinterpret_cast<const char *>(glsl) : "?");
         }
     }
     return g_state == 1;
