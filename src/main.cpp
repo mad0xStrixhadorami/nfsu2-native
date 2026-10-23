@@ -1028,9 +1028,44 @@ int main(int argc, char **argv)
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
-                world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5],
+                const size_t oppWorldIndex = world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5],
                              nullptr, SDL_Color{38, 38, 38, 255}, &opponentCars[i].TriangleCalipers(),
                              SDL_Color{128, 128, 128, 255});
+                // Opponent vinyls: two of every three rivals carry one design from a few body-style groups
+                // (stand-in for the original's per-driver customization, ISSUES #231).
+                if (i % 3 != 2 && !getenv("NFSU2_NO_OPP_VINYLS")) {
+                    CarSkin::Vinyls vin;
+                    VinylCatalog cat;
+                    if (vin.Load(ReadGameFile(*fs, ("CARS\\" + name + "\\VINYLS.BIN").c_str()), name) && vin.Valid() &&
+                        cat.Build(*vin.Pack(), name)) {
+                        std::vector<const VinylDesign *> pick;
+                        for (const char *g : {"STRIPES", "FLAMES", "TRIBAL", "LIGHTNING", "MODERN"}) {
+                            const int gi = VinylCatalog::GroupIndexOf(g);
+                            if (gi >= 0)
+                                for (const VinylDesign *d : cat.InGroup(gi))
+                                    if (!d->set)
+                                        pick.push_back(d);
+                        }
+                        if (!pick.empty()) {
+                            CarSkin::Layer layer;
+                            layer.design = pick[(size_t(i) * 7 + name.size() * 13 + 5) % pick.size()]->name;
+                            const size_t count = fe.Paint().Count(PaintCatalog::kVinyl);
+                            if (count >= 3)
+                                for (int k = 0; k < 3; ++k) {
+                                    const PaintColor &pc = fe.Paint().At(PaintCatalog::kVinyl, (size_t(i) * 11 + 4 + size_t(k) * 13) % count);
+                                    layer.color[k][0] = pc.r, layer.color[k][1] = pc.g, layer.color[k][2] = pc.b;
+                                }
+                            std::vector<uint32_t> skin;
+                            const SDL_Color bc = kPaints[i % 5];
+                            if (vin.Compose(bc.r, bc.g, bc.b, {layer}, skin)) {
+                                world.SetCarSkin(oppWorldIndex,
+                                                 CarSkin::DetectBodySlot(opponentCars[i].Model(), opponentCars[i].TriangleTextures(), name),
+                                                 std::move(skin));
+                                printf("[World] opponent %d vinyl %s\n", i + 1, layer.design.c_str());
+                            }
+                        }
+                    }
+                }
                 world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + name + "\\TEXTURES.BIN").c_str()));
                 // Lane: keep each car on its own side of the route line; faster cars at the front.
                 // Resolve against lineS so a multi-lap Paths file does not place the grid on the
