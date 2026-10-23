@@ -144,6 +144,9 @@ public:
     // A world session started from a career screen (m_raceMode 1 = Resume, 8 = new career's car
     // select); quick race uses 2/4 and never pays career money.
     bool IsCareerRun() const { return m_raceMode == 1 || m_raceMode == 8; }
+    // The career World Map's list and cursor (the main loop marks the events on the live map, #261).
+    const std::vector<const Career::Event *> &WorldMapEvents() const { return m_wmEvents; }
+    size_t WorldMapSelected() const { return m_wmSel; }
     const Career::Profile &CareerProfile() const { return m_profile; } // the garage room shows its cars (#252)
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay

@@ -48,7 +48,7 @@ void Minimap::Build(const std::vector<float> &t)
 }
 
 void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots,
-                     int n, std::vector<uint32_t> &out) const
+                     int n, std::vector<uint32_t> &out, bool roundMask) const
 {
     out.assign(size_t(n) * size_t(n), 0);
     const float R = metres * 0.5f;
@@ -81,7 +81,7 @@ void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, c
         for (int i = 0; i < n; ++i) {
             const float u = ((i + 0.5f) / n * 2.0f - 1.0f) * R, v = (1.0f - (j + 0.5f) / n * 2.0f) * R;
             const float rr = std::sqrt(u * u + v * v) / R;
-            if (rr > 1.0f)
+            if (roundMask && rr > 1.0f)
                 continue;
             float wx, wy;
             toWorld(u, v, wx, wy);
@@ -94,7 +94,7 @@ void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, c
                 road = (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
                 road /= 255.0f;
             }
-            const float edge = std::clamp((1.0f - rr) * 18.0f, 0.0f, 1.0f); // soft rim
+            const float edge = roundMask ? std::clamp((1.0f - rr) * 18.0f, 0.0f, 1.0f) : 1.0f; // soft rim
             const uint8_t rch = uint8_t(14 + road * (205 - 14)), gch = uint8_t(20 + road * (210 - 20)), bch = uint8_t(34 + road * (220 - 34));
             out[size_t(j) * n + i] = uint32_t(edge * 235.0f) << 24 | uint32_t(bch) << 16 | uint32_t(gch) << 8 | rch;
         }
@@ -126,6 +126,8 @@ void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, c
         toPixel(d.x, d.y, sx, sv);
         plot(sx, sv, std::max(2, n / 48), d.r, d.g, d.b);
     }
+    if (!roundMask)
+        return; // the full map marks the player separately (RenderFull)
     // The player's arrow at the centre, pointing along the heading (up in rotate mode).
     const float ang = rotate ? 0.0f : std::atan2(cy * 0 + std::sin(yaw), std::cos(yaw)); // north-up: arrow follows the yaw
     const float a0 = rotate ? 0.0f : (1.5707963f - yaw); // clockwise angle from up
@@ -151,4 +153,33 @@ void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, c
             if (a >= 0 && b >= 0 && a + b <= 1 && x >= 0 && y >= 0 && x < n && y < n)
                 out[size_t(y) * n + x] = 0xffffffffu;
         }
+}
+
+void Minimap::RenderFull(const RaceRoute *route, const std::vector<Dot> &dots, int size, std::vector<uint32_t> &out, const Dot *player,
+                         float playerYaw) const
+{
+    if (!Valid()) {
+        out.assign(size_t(size) * size_t(size), 0);
+        return;
+    }
+    const float metres = float(std::max(m_w, m_h)) * kRes;
+    const float cx = m_x0 + float(m_w) * kRes * 0.5f, cy = m_y0 + float(m_h) * kRes * 0.5f;
+    std::vector<Dot> all = dots;
+    Render(cx, cy, 0.0f, metres, false, route, all, size, out, false);
+    if (player) { // a larger marker with a heading tick
+        const float R = metres * 0.5f;
+        const float sx = ((player->x - cx) / R * 0.5f + 0.5f) * size, sv = (0.5f - (player->y - cy) / R * 0.5f) * size;
+        const int rad = std::max(5, size / 45);
+        for (int dy = -rad; dy <= rad; ++dy)
+            for (int dx = -rad; dx <= rad; ++dx) {
+                const int x = int(sx) + dx, y = int(sv) + dy;
+                if (dx * dx + dy * dy <= rad * rad && x >= 0 && y >= 0 && x < size && y < size)
+                    out[size_t(y) * size + x] = 0xffffffffu;
+            }
+        for (int k = rad; k < rad * 3; ++k) {
+            const int x = int(sx + std::cos(playerYaw) * k), y = int(sv - std::sin(playerYaw) * k);
+            if (x >= 0 && y >= 0 && x < size && y < size)
+                out[size_t(y) * size + x] = 0xffffffffu;
+        }
+    }
 }

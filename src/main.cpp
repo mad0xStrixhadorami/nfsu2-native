@@ -1932,6 +1932,62 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            // The full-screen maps (career World Map, in-game World Map): the live road map of the region replaces the
+            // package's static outline, with the player / rivals / route, or the career events (ISSUES #261).
+            if (cribPkg && cribPkg->GetName() && minimap.Valid() && !getenv("NFSU2_NO_MINIMAP")) {
+                const bool careerMap = strcasecmp(cribPkg->GetName(), "UI_CareerWorldMap.fng") == 0;
+                const bool gameMap = strcasecmp(cribPkg->GetName(), "UI_InGame_WorldMap.fng") == 0;
+                if (careerMap || gameMap) {
+                    constexpr uint32_t kFullTex = 0x4d415046, kMapObj = 0x90fe80f3;
+                    static unsigned fullFrame = 0;
+                    if (fullFrame++ % 6 == 0) {
+                        std::vector<Minimap::Dot> dots;
+                        Minimap::Dot marker{0, 0, 255, 255, 255};
+                        bool haveMarker = false;
+                        float markerYaw = 0.0f;
+                        if (careerMap) {
+                            static std::map<std::string, std::vector<uint8_t>> markerCache;
+                            const auto &events = startup.WorldMapEvents();
+                            for (size_t i = 0; i < events.size(); ++i) {
+                                if (events[i]->races.empty())
+                                    continue;
+                                const int race = events[i]->races[0];
+                                std::string reg;
+                                for (const RaceInfo &r : fe.Races())
+                                    if (r.number == race)
+                                        reg = r.region;
+                                if (reg.empty())
+                                    continue;
+                                auto it = markerCache.find(reg);
+                                if (it == markerCache.end())
+                                    it = markerCache.emplace(reg, ReadGameFile(*fs, ("TRACKS\\ROUTES" + reg + "\\TRACKPOSMARKERSALL.BIN").c_str())).first;
+                                float x = 0, y = 0;
+                                if (it->second.empty() || !world.LineFromMarkers(it->second, race, x, y))
+                                    continue;
+                                if (i == startup.WorldMapSelected())
+                                    marker = {x, y, 255, 255, 255}, haveMarker = true, markerYaw = 1.5707963f;
+                                else
+                                    dots.push_back({x, y, 255, 214, 60});
+                            }
+                        } else {
+                            for (const PlayerCar &o : opponentCars)
+                                dots.push_back({o.X(), o.Y(), 255, 70, 70});
+                            marker = {car.X(), car.Y(), 255, 255, 255};
+                            markerYaw = car.Yaw();
+                            haveMarker = true;
+                        }
+                        minimap.RenderFull(gameMap && route.Valid() ? &route : nullptr, dots, 512, minimapPixels, haveMarker ? &marker : nullptr, markerYaw);
+                        fe.SetStreamTexture(kFullTex, minimapPixels.data(), 512, 512);
+                    }
+                    FENativeInterface::SetTextureHash(cribPkg, kMapObj, kFullTex);
+                    if (FEObject *mo = cribPkg->FindObjectByHash(kMapObj))
+                        if (mo->GetObjData()) {
+                            mo->GetObjData()->Col.a = 255;
+                            mo->Flags &= ~1u;
+                            mo->Flags |= 0x400000u;
+                        }
+                }
+            }
             // FEng runs on real time even while the race is paused (the pause menu animates).
             engine->Update(static_cast<i32>(std::min<Uint32>(100, now - frameStart)), 0);
             if (releaseInjectedPadAfterUpdate) // scripted taps reach FEng (pause menu) too

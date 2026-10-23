@@ -20,7 +20,10 @@ public:
     // Renders a size x size RGBA image (0xAABBGGRR) centred on (px, py). metres = the window's diameter. rotate: the
     // player's yaw is up, otherwise north (+Y) is up. route (optional) is drawn as a line.
     void Render(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots,
-                int size, std::vector<uint32_t> &out) const;
+                int size, std::vector<uint32_t> &out, bool roundMask = true) const;
+    // The whole region, north up, as a square image (the full-screen maps). `player` (optional) is drawn as an arrow.
+    void RenderFull(const RaceRoute *route, const std::vector<Dot> &dots, int size, std::vector<uint32_t> &out, const Dot *player = nullptr,
+                    float playerYaw = 0.0f) const;
 
 private:
     std::vector<uint8_t> m_road; // 255 on a road
