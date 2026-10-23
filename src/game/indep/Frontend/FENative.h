@@ -19,6 +19,7 @@
 #include "game/indep/Frontend/PerfModel.h"
 #include "game/indep/Frontend/TuneSystem.h"
 #include "game/indep/Frontend/DynoRatings.h"
+#include "game/indep/World/CarSkin.h"
 #include "platform/linux/PlatformMovie.h"
 
 class TexturePack;
@@ -209,6 +210,9 @@ public:
                     std::vector<uint8_t> &frame) const;
     // The performance parts fitted to the car on show (the career car's OwnedCar::perfParts).
     void SetPreviewPerfParts(const std::vector<uint16_t> &parts) { m_previewPerfParts = parts; }
+    // Vinyl layers drawn on the previewed car's paint skin (ISSUES #223); empty = plain paint.
+    void SetPreviewVinyls(const std::vector<CarSkin::Layer> &layers) { m_previewVinyls = layers; }
+    const std::vector<CarSkin::Layer> &PreviewVinyls() const { return m_previewVinyls; }
     void SetPreviewTune(const std::vector<uint8_t> &tune) { m_previewTune = tune; }
     const std::vector<uint8_t> &PreviewTune() const { return m_previewTune; }
     const std::vector<uint16_t> &PreviewPerfParts() const { return m_previewPerfParts; }
@@ -434,6 +438,14 @@ private:
     std::vector<uint8_t> m_previewTune;
     bool m_textInputMode = false;
     DynoRatings::Limits m_dynoLimits;
+    std::vector<CarSkin::Layer> m_previewVinyls;
+    CarSkin::Vinyls m_vinyls;
+    std::string m_vinylsCar;
+    std::vector<uint32_t> m_skinPixels;
+    std::string m_skinKey;
+    uint32_t m_skinVersion = 0;
+    void UpdatePreviewSkin(SDL_Color body);
+    uint32_t BodySlot() const;
     Tune::Table m_tuneTable;                       // chunk 0x34a1a slider definitions (#207)
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)
     PartCatalog m_parts;                           // the same pack's shop records (#184)

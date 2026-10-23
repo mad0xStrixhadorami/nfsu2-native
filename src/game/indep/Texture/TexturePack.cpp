@@ -139,13 +139,16 @@ const TextureInfo *TexturePack::Find(const char *name) const
 
 bool TexturePack::Decode(const TextureInfo &t, DecodedTexture &out) const
 {
-    if (t.bitsPerPixel != 8 && t.bitsPerPixel != 4)
+    // 128 / 129: 8-bit indexed data (width * height bytes + a 256-entry palette) with a flag in
+    // bit 7; ISSUES #223 treats them as 8-bit.
+    const uint8_t depth = t.bitsPerPixel >= 128 ? 8 : t.bitsPerPixel;
+    if (depth != 8 && depth != 4)
         return false;
     const uint8_t *pixels = t.pixels;
     // 4-bit textures: expand each byte to two 4-bit indices (low nibble first), then they use the
     // same block swizzle as 8-bit data. Found by scoring layouts against the font glyph table.
     std::vector<uint8_t> expanded;
-    if (t.bitsPerPixel == 4) {
+    if (depth == 4) {
         expanded.resize(size_t(t.width) * t.height);
         for (size_t i = 0; i < expanded.size() / 2 && i < t.dataSize; ++i) {
             expanded[2 * i] = pixels[i] & 0x0f;

@@ -29,3 +29,8 @@ bool DrawModelGL(SDL_Renderer *renderer, const std::vector<SolidMesh::Triangle> 
                                                                 // rimMask in rimPaint, caliperMask in caliperPaint;
                                                                 // mirrorMask / spoilerMask / aftermarket part
                                                                 // masks anywhere in their paint
+
+// The paint skin of the previewed car (ISSUES #223): triangles whose material slot is `slotHash`
+// are drawn textured with the 512 x 512 composite (R in the low byte of each pixel) instead of the
+// flat paint colour.  rgba == nullptr clears it; `version` changes when the pixels do.
+void SetModelViewSkin(uint32_t slotHash, const std::vector<uint32_t> *rgba, int size, uint32_t version);

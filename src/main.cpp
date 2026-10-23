@@ -265,6 +265,49 @@ int main(int argc, char **argv)
         return failures ? 1 : 0;
     if (argc > 3 && strcmp(argv[1], "--dump") == 0)
         return DumpFile(*fs, argv[2], argv[3]);
+    if (argc > 2 && strcmp(argv[1], "--tpk") == 0) { // dev aid: list the textures of an extracted pack file
+        FILE *f = fopen(argv[2], "rb");
+        if (!f)
+            return 1;
+        std::vector<uint8_t> data;
+        uint8_t buf[65536];
+        for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;)
+            data.insert(data.end(), buf, buf + n);
+        fclose(f);
+        TexturePack pack;
+        if (!pack.Parse(data.data(), data.size())) {
+            printf("not a texture pack\n");
+            return 1;
+        }
+        if (argc > 3) { // --tpk <file> <hash-hex> <out.ppm>: decode one texture
+            const uint32_t want = uint32_t(strtoul(argv[3], nullptr, 16));
+            for (size_t i = 0; i < pack.Count(); ++i)
+                if (pack.At(i).nameHash == want) {
+                    DecodedTexture img;
+                    const bool ok = pack.Decode(pack.At(i), img);
+                    printf("%s %dx%d decode %d\n", pack.At(i).name.c_str(), img.width, img.height, ok);
+                    if (ok && argc > 4)
+                        if (FILE *o = fopen(argv[4], "wb")) {
+                            fprintf(o, "P6\n%d %d\n255\n", img.width, img.height);
+                            for (uint32_t px : img.rgba) {
+                                const unsigned a = (px >> 24) & 0xff;
+                                const unsigned char rgb[3] = {uint8_t((px & 0xff) * a / 255), uint8_t(((px >> 8) & 0xff) * a / 255),
+                                                              uint8_t(((px >> 16) & 0xff) * a / 255)};
+                                fwrite(rgb, 1, 3, o);
+                            }
+                            fclose(o);
+                        }
+                    return ok ? 0 : 1;
+                }
+            return 1;
+        }
+        for (size_t i = 0; i < pack.Count(); ++i) {
+            const TextureInfo &t = pack.At(i);
+            printf("%4zu %08x %-32s %ux%u %u-bit pal %u data %u\n", i, t.nameHash, t.name.c_str(), t.width, t.height,
+                   t.bitsPerPixel, t.paletteSize, t.dataSize);
+        }
+        return 0;
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
         if (SDL_Init(SDL_INIT_VIDEO) != 0) {

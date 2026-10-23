@@ -25,6 +25,7 @@ extern FEMultiPool ObjDataPool; // FEObject.cpp: pool for FEObject transform dat
 #include "game/indep/Frontend/FEStartup.h"
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/ModelViewGL.h"
+#include "game/indep/World/CarMaterial.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/SolidMesh.h"
 
@@ -272,6 +273,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
             yaw = float(atof(previewYaw)) * 0.0174532925f;
         if (carSelect)
             UpdateStatBars(pkg);
+        UpdatePreviewSkin(body);
         if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, body, &m_carPreviewSlots,
                         m_carPreviewWheels, &m_carPreviewRims, rim, &m_carPreviewCalipers, caliper,
                         &m_carPreviewMirrors, mirror, &m_carPreviewSpoilers, spoiler,
@@ -608,6 +610,116 @@ void FENativeInterface::CycleCarPreview(int direction)
             return;
         }
     }
+}
+
+// The material slot of the painted body shell: the slot with the most triangles that spans the car
+// (the tyre slot is excluded by its name).  The shipped name of the slot is not known (the
+// "<CAR>_SKIN1" slot only holds trim edges, ISSUES #223).
+uint32_t FENativeInterface::BodySlot() const
+{
+    if (m_carPreviewSlots.size() != m_carPreviewModel.size())
+        return 0;
+    struct Extent {
+        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+        int count = 0;
+    };
+    std::map<uint32_t, Extent> slots;
+    float all[2] = {1e9f, -1e9f};
+    for (size_t i = 0; i < m_carPreviewModel.size(); ++i) {
+        Extent &e = slots[m_carPreviewSlots[i]];
+        ++e.count;
+        for (const SolidMesh::Point &p : m_carPreviewModel[i].v) {
+            const float c[3] = {p.x, p.y, p.z};
+            for (int a = 0; a < 3; ++a)
+                e.lo[a] = std::min(e.lo[a], c[a]), e.hi[a] = std::max(e.hi[a], c[a]);
+            all[0] = std::min(all[0], p.x), all[1] = std::max(all[1], p.x);
+        }
+    }
+    uint32_t best = 0;
+    int bestCount = 0;
+    for (const auto &kv : slots) {
+        if (kv.first == CarMaterial::NameHash((m_previewCarName + "_TIRE").c_str()) || kv.first == CarMaterial::NameHash((m_previewCarName + "_SKIN1").c_str()))
+            continue;
+        const Extent &e = kv.second;
+        if (e.hi[0] - e.lo[0] < 0.9f * (all[1] - all[0]))
+            continue; // does not span the car's length
+        if (e.count > bestCount)
+            best = kv.first, bestCount = e.count;
+    }
+    if (getenv("NFSU2_SLOT_DEBUG"))
+        printf("[Skin] body slot %08x (%d triangles)\n", best, bestCount);
+    return best;
+}
+
+// The preview's paint skin: the body colour with the vinyl layers over it (ISSUES #223).  Dev aid
+// NFSU2_VINYL_TEST="WILD_172A=ff0000,00ff00,0000ff;STRIPE_052A=..." puts layers on the car.
+void FENativeInterface::UpdatePreviewSkin(SDL_Color body)
+{
+    std::vector<CarSkin::Layer> layers = m_previewVinyls;
+    if (layers.empty())
+        if (const char *test = getenv("NFSU2_VINYL_TEST")) {
+            std::string spec = test;
+            for (size_t b = 0; b < spec.size();) {
+                size_t e = spec.find(';', b);
+                if (e == std::string::npos)
+                    e = spec.size();
+                std::string item = spec.substr(b, e - b);
+                b = e + 1;
+                const size_t eq = item.find('=');
+                CarSkin::Layer layer;
+                layer.design = item.substr(0, eq);
+                unsigned rgb[3][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
+                if (eq != std::string::npos) {
+                    unsigned v[3] = {0, 0, 0};
+                    size_t at = eq + 1;
+                    for (int k = 0; k < 3 && at < item.size(); ++k) {
+                        v[k] = unsigned(strtoul(item.c_str() + at, nullptr, 16));
+                        at = item.find(',', at);
+                        if (at == std::string::npos)
+                            break;
+                        ++at;
+                    }
+                    for (int k = 0; k < 3; ++k)
+                        rgb[k][0] = (v[k] >> 16) & 0xff, rgb[k][1] = (v[k] >> 8) & 0xff, rgb[k][2] = v[k] & 0xff;
+                }
+                for (int k = 0; k < 3; ++k)
+                    for (int ch = 0; ch < 3; ++ch)
+                        layer.color[k][ch] = uint8_t(rgb[k][ch]);
+                layers.push_back(layer);
+            }
+        }
+    if (layers.empty()) {
+        SetModelViewSkin(0, nullptr, 0, 0);
+        m_skinKey.clear();
+        return;
+    }
+    std::string key = m_previewCarName + std::to_string(body.r) + "," + std::to_string(body.g) + "," + std::to_string(body.b);
+    for (const CarSkin::Layer &l : layers) {
+        key += "|" + l.design;
+        for (auto &col : l.color)
+            for (uint8_t v : col)
+                key += "," + std::to_string(v);
+    }
+    if (key != m_skinKey) {
+        if (m_vinylsCar != m_previewCarName) {
+            m_vinylsCar = m_previewCarName;
+            m_vinyls.Load(m_readFile(("CARS\\" + m_previewCarName + "\\VINYLS.BIN").c_str()), m_previewCarName);
+        }
+        if (!m_vinyls.Compose(body.r, body.g, body.b, layers, m_skinPixels))
+            fprintf(stderr, "[Vinyl] a design is missing from %s's pack\n", m_previewCarName.c_str());
+        m_skinKey = key;
+        ++m_skinVersion;
+        if (const char *dump = getenv("NFSU2_SKIN_DUMP")) // dev aid: write the composite as a PPM
+            if (FILE *f = fopen(dump, "wb")) {
+                fprintf(f, "P6\n%d %d\n255\n", CarSkin::kSize, CarSkin::kSize);
+                for (uint32_t px : m_skinPixels) {
+                    const unsigned char rgb[3] = {uint8_t(px & 0xff), uint8_t((px >> 8) & 0xff), uint8_t((px >> 16) & 0xff)};
+                    fwrite(rgb, 1, 3, f);
+                }
+                fclose(f);
+            }
+    }
+    SetModelViewSkin(BodySlot(), &m_skinPixels, CarSkin::kSize, m_skinVersion);
 }
 
 // Restore a saved career car as the current car-select / race car (career save load).
