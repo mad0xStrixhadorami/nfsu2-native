@@ -30,6 +30,7 @@
 #include "game/indep/Frontend/PerfModel.h"
 #include "game/indep/Frontend/TuneSystem.h"
 #include "game/indep/Career/Events.h"
+#include "game/indep/Career/CarLot.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -430,6 +431,7 @@ int main(int argc, char **argv)
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
         Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         Career::SmsTable::Get().Load(globalB.data(), globalB.size());
+        Career::CarLotTable::Get().Load(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
@@ -496,6 +498,7 @@ int main(int argc, char **argv)
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
         Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         Career::SmsTable::Get().Load(globalB.data(), globalB.size());
+        Career::CarLotTable::Get().Load(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)

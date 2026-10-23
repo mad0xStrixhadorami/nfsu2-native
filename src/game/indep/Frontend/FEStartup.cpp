@@ -458,6 +458,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
         HandleCareerCarSelectLoaded(pkg);
         return;
     }
+    if (strcasecmp(name, "UI_CareerCarLot.fng") == 0) {
+        HandleCarLotLoaded(pkg);
+        return;
+    }
     if (strcasecmp(name, "UI_SMS_Mailbox.fng") == 0 || strcasecmp(name, "UI_EngageMessageDialog.fng") == 0) {
         HandleSmsLoaded(pkg);
         return;
@@ -716,6 +720,10 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
     if (strcasecmp(name, "UI_CareerCarSelect.fng") == 0) {
         HandleCareerCarSelectMessage(msg, pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_CareerCarLot.fng") == 0) {
+        HandleCarLotMessage(msg, pkg);
         return;
     }
     if (strcasecmp(name, "UI_SMS_Mailbox.fng") == 0 || strcasecmp(name, "UI_EngageMessageDialog.fng") == 0) {
@@ -4755,10 +4763,11 @@ void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
 {
     static const struct {
         uint32_t tex, label;
-        int action; // 0 explore, 1 world map, 2 car select, 3 parts, 4 tuning, 5 sponsors, 6 save, 7 exit, 8 inbox
+        int action; // 0 explore, 1 world map, 2 car select, 3 parts, 4 tuning, 5 sponsors, 6 save, 7 exit, 8 inbox, 9 car lot
     } kOptions[] = {
         {0xa230cd88, 0x194efa7a, 0}, {0x22f2ceab, 0x9c07ca52, 1}, {0xa964095b, 0x451879e2, 2},
         {0x511f9d75, 0xabb24bbc, 3}, {0x7a9b397a, 0x8513f2c0, 4}, {0x0878ffdf, 0xe0004602, 5},
+        {0xa964095b, 0x6ad3c7f6, 9}, // Car Lot (stand-in for the free-roam shop hot spot CC_CAR_LOT, #250)
         {0x4b9b8f5a, 0xc06e138a, 8}, // Inbox (stand-in for the free-roam pause menu's SMS card, #249)
         {0x8ada6fd4, 0x03ec7395, 6}, {0xfc39853f, 0x046e7d84, 7},
     };
@@ -4842,6 +4851,10 @@ void FEStartupSequence::HandleCareerCribMessage(uint32_t msg, FEPackage *pkg)
             break;
         case 8:
             OpenSms();
+            break;
+        case 9:
+            printf("[Career] crib: car lot\n");
+            m_careerMenuSwitch = "UI_CareerCarLot.fng";
             break;
         case 6:
             if (m_profile.valid && Career::SaveCareer(m_profile))
@@ -5143,6 +5156,102 @@ void FEStartupSequence::HandleCareerCarSelectMessage(uint32_t msg, FEPackage *pk
         m_raceType = 9;
         m_cribRequested = true;
         RequestRace();
+    }
+}
+
+// UI_CareerCarLot.fng (class 0x001e88b0, roster 0x001e9ba8, messages 0x001e8ec8): the cars the career has unlocked.
+// Nothing is bought: the lot lists every car 0x00268dd0 leaves available (CarLotTable: the 24 URL-gated cars need their
+// event done, the rest are free), and Select Car asks "Trade this car?" (language 0xfb75e78f) before the player's
+// car is exchanged for the chosen one. The original has seven modes (0x001e8cb0 / 0x001e8c88: none, trade-ins, one
+// or several owned cars, browsing the owned cars to pick the one to trade, a "Rachel needs her car back" prompt for
+// the loaner); the port trades the current car straight away and does not model the loaner. Stand-ins: the screen's
+// card scroller is not filled (the 3D preview, stat bars and arrows carry it); the crib offers the lot instead of the
+// free-roam shop hot spot.
+void FEStartupSequence::HandleCarLotLoaded(FEPackage *pkg)
+{
+    m_lotCars.clear();
+    const bool all = getenv("NFSU2_UNLOCK_ALL") != nullptr;
+    for (const std::string &name : m_fe->RaceableCars())
+        if (all || Career::CarLotTable::Get().Available(name, m_profile.completedEvents))
+            m_lotCars.push_back(name);
+    m_lotSel = 0;
+    if (const Career::OwnedCar *cur = m_profile.CurrentCar())
+        for (size_t i = 0; i < m_lotCars.size(); ++i)
+            if (strcasecmp(m_lotCars[i].c_str(), cur->model.c_str()) == 0)
+                m_lotSel = i;
+    printf("[Career] car lot: %zu cars available\n", m_lotCars.size());
+    RefreshCarLot(pkg);
+}
+
+void FEStartupSequence::RefreshCarLot(FEPackage *pkg)
+{
+    if (m_lotCars.empty())
+        return;
+    Career::OwnedCar stock; // a car off the lot is stock
+    stock.model = m_lotCars[m_lotSel];
+    ApplyOwnedCarPreview(stock);
+    m_fe->UpdateStatBars(pkg, true);
+    // The crib shows the world's own car and the roster card's artwork is not wired, so the car under the cursor is
+    // named in the one text field that is visible and long enough for a folder name: the bottom-left name plate
+    // (stand-in; the title and the card strings are shorter than the names or hidden by the package's scripts).
+    m_lotTitle = stock.model;
+    FENativeInterface::SetString(pkg, 0xeb406fec, m_lotTitle.c_str());
+    FENativeInterface::SetVisible(pkg, 0x26f1f64b, m_lotSel > 0);
+    FENativeInterface::SetVisible(pkg, 0x26f1f64c, m_lotSel + 1 < m_lotCars.size());
+}
+
+void FEStartupSequence::HandleCarLotMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (msg == kMsgPadBack && !m_navPending) {
+        if (const Career::OwnedCar *car = m_profile.CurrentCar())
+            ApplyOwnedCarPreview(*car); // leaving without a trade keeps the current car
+        printf("[Career] car lot: back to the crib\n");
+        m_careerMenuSwitch = "UI_CareerCrib.fng";
+        return;
+    }
+    if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        const size_t old = m_lotSel;
+        if (msg == kMsgPadLeft && m_lotSel > 0)
+            --m_lotSel;
+        if (msg == kMsgPadRight && m_lotSel + 1 < m_lotCars.size())
+            ++m_lotSel;
+        if (old != m_lotSel)
+            RefreshCarLot(pkg);
+        return;
+    }
+    if ((msg == kMsgButtonPressed || msg == kMsgPadAccept) && !m_navPending && !m_dialogPackage && !m_lotCars.empty()) {
+        if (std::chrono::steady_clock::now() - m_dialogClosedAt < std::chrono::milliseconds(300))
+            return; // the confirm dialog's Accept
+        const std::string model = m_lotCars[m_lotSel];
+        const Career::OwnedCar *cur = m_profile.CurrentCar();
+        if (cur && strcasecmp(cur->model.c_str(), model.c_str()) == 0) {
+            printf("[Career] car lot: %s is already the current car\n", model.c_str());
+            return;
+        }
+        ShowYesNoDialog(m_fe->LanguageText(0xfb75e78f).c_str(), [this, model]() { // "Trade this car?"
+            Career::OwnedCar fresh;
+            fresh.model = model;
+            bool owned = false;
+            for (size_t i = 0; i < m_profile.cars.size(); ++i)
+                if (strcasecmp(m_profile.cars[i].model.c_str(), model.c_str()) == 0) {
+                    m_profile.currentCar = int(i); // already in the garage: drive it
+                    owned = true;
+                }
+            if (!owned) {
+                if (m_profile.CurrentCar())
+                    m_profile.cars[size_t(m_profile.currentCar)] = fresh; // the trade
+                else {
+                    m_profile.cars.push_back(fresh);
+                    m_profile.currentCar = int(m_profile.cars.size()) - 1;
+                }
+            }
+            Career::SaveCareer(m_profile);
+            printf("[Career] car lot: now driving %s (%s)\n", model.c_str(), owned ? "already owned" : "traded");
+            m_raceNumber = 0; // rebuild the crib session around the new car
+            m_raceType = 9;
+            m_cribRequested = true;
+            RequestRace();
+        });
     }
 }
 
@@ -5698,6 +5807,9 @@ void FEStartupSequence::PreRender()
     // The mailbox's scripts rewrite the rows' colours and alphas every frame too (#249).
     if (FEPackage *box = m_engine->GetPackageList()->FindPackage("UI_SMS_Mailbox.fng"))
         ApplySmsMailbox(box);
+    if (FEPackage *lot = m_engine->GetPackageList()->FindPackage("UI_CareerCarLot.fng"))
+        if (!m_lotTitle.empty()) // the package's init script restores the label text
+            FENativeInterface::SetString(lot, 0xeb406fec, m_lotTitle.c_str());
     if (FEPackage *dlg = m_engine->GetPackageList()->FindPackage("UI_EngageMessageDialog.fng"))
         ApplySmsMessage(dlg);
     if (m_memcardFiles.empty())

@@ -13,6 +13,7 @@
 #include "game/indep/Career/Profile.h"
 #include "game/indep/Career/Memcard.h"
 #include "game/indep/Career/Events.h"
+#include "game/indep/Career/CarLot.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 
@@ -185,12 +186,6 @@ private:
     void UpdateQRCarSelect(FEPackage *pkg);
     void CycleCarFilter(int direction, FEPackage *pkg);
     void ApplyCarFilterLabel(FEPackage *pkg);
-    // Car Lot (UI_CareerCarLot.fng, class 0x001e88b0, 7 modes; ISSUES #248): the career car-lot roster.
-    // The roster carousel + stat bars are the Quick Race car-select machinery (CycleCarPreview /
-    // UpdateStatBars); Accept picks the previewed car into the career session, Back returns to the
-    // crib.  Screen state lives in the package until the entry point is wired (ISSUES #222/#183).
-    void HandleCarLotLoaded(FEPackage *pkg);
-    void UpdateCarLot(FEPackage *pkg);
     // Car shop paint flow (ISSUES #167/#168): UI_ChooseCustomizeCategory.fng -> UI_Paint.fng.
     // UI_Paint is two-state (0x002bc2f0): the nine part cards (AddOptions 0x002bcff8) select a
     // colorable part, Accept opens that part's swatch grid (0x002bdf10), Back closes the grid
@@ -492,6 +487,13 @@ private:
     // GLOBALB GLOSS color; 0 keeps the stock paint).
     void ApplyOwnedCarPreview(const Career::OwnedCar &car);
     size_t m_csSel = 0;
+    // UI_CareerCarLot.fng: trade the current car for one the Underground Racing League has unlocked (#250).
+    void HandleCarLotLoaded(FEPackage *pkg);
+    void HandleCarLotMessage(uint32_t msg, FEPackage *pkg);
+    void RefreshCarLot(FEPackage *pkg);
+    std::vector<std::string> m_lotCars;
+    size_t m_lotSel = 0;
+    std::string m_lotTitle;
     // UI_RewardsSponsor.fng: the signed sponsors, one scroller option per area with a sponsor (#165).
     void HandleSponsorViewLoaded(FEPackage *pkg);
     void HandleSponsorViewMessage(uint32_t msg, FEPackage *pkg);
