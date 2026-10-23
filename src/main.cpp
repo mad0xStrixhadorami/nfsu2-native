@@ -681,6 +681,13 @@ int main(int argc, char **argv)
     float physTestTime = 0;
     bool musicStarted = false;
     const float musicVolume = getenv("NFSU2_MUSIC_VOLUME") ? float(atof(getenv("NFSU2_MUSIC_VOLUME"))) : 1.0f;
+    if (const char *ids = getenv("NFSU2_PERF_PARTINFO")) // dev aid: category / level of part ids, e.g. 15,19,24
+        for (const char *s = ids; *s;) {
+            const uint32_t id = uint32_t(strtoul(s, nullptr, 10));
+            const PerfPackage *pk = fe.PerfParts().FindByPart(id);
+            printf("[PerfPart] id %u -> %s %u level %u\n", id, pk ? "category" : "none", pk ? pk->category : 0, pk ? pk->level : 0);
+            s = strchr(s, ',') ? strchr(s, ',') + 1 : s + strlen(s);
+        }
     UiSound uiSound; // front-end clicks (ISSUES.md #126)
     if (musicVolume > 0 && uiSound.Load(ReadGameFile(*fs, "SOUND\\GLOBAL\\FE_COMMON_MB.abk")))
         fe.SetSoundHook([&uiSound](uint32_t msg) { uiSound.OnMessage(msg); });
@@ -895,12 +902,21 @@ int main(int argc, char **argv)
         }
         // Car audio banks by car type and engine upgrade level (stock = 0) from UG2's table (ISSUES #128).
         if (musicVolume > 0) {
+            // The engine level is the highest engine package part fitted (0x0017a118: part ids 0x0f / 0x13 / 0x18).
+            int audioLevel = 0;
+            for (uint16_t id : fe.PreviewPerfParts())
+                audioLevel = std::max(audioLevel, id == 0x18 ? 3 : id == 0x13 ? 2 : id == 0xf ? 1 : 0);
             const CarAudio::Level &audio =
-                CarAudio::kRowLevels[CarAudio::RowForCarType(fe.CarTypeIndex(fe.PreviewCarName()))][0];
+                CarAudio::kRowLevels[CarAudio::RowForCarType(fe.CarTypeIndex(fe.PreviewCarName()))][audioLevel];
             if (getenv("NFSU2_SOUND_DEBUG"))
                 printf("[Engine] %s: %s, %s\n", fe.PreviewCarName().c_str(), CarAudio::kEngineBanks[audio.engine],
                        CarAudio::kGearBanks[audio.gearbox]);
             engineSound.Load(ReadGameFile(*fs, (std::string("SOUND\\ENGINE\\") + CarAudio::kEngineBanks[audio.engine]).c_str()));
+            // Engine records 9 and 38 have the turbo-sound flag (+0x10 of 0x004ab640) clear.
+            if (audio.engine != 9 && audio.engine != 38)
+                engineSound.LoadTurbo(ReadGameFile(*fs, (std::string("SOUND\\TURBO\\") + CarAudio::kTurboBanks[audio.turbo]).c_str()));
+            if (getenv("NFSU2_SOUND_DEBUG"))
+                printf("[Engine] level %d turbo bank %s\n", audioLevel, CarAudio::kTurboBanks[audio.turbo]);
             engineSound.LoadSkid(ReadGameFile(*fs, "SOUND\\SKIDS\\SKID_PAV_MB.abk"));
             engineSound.LoadRoad(ReadGameFile(*fs, "SOUND\\IG_GLOBAL\\ROADNOISE_00_MB.abk"));
             engineSound.LoadShift(ReadGameFile(*fs, (std::string("SOUND\\SHIFTING\\") + CarAudio::kGearBanks[audio.gearbox]).c_str()));

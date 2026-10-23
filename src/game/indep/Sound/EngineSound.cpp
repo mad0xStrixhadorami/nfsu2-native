@@ -161,6 +161,21 @@ bool EngineSound::LoadNitrous(const std::vector<uint8_t> &bank)
     return true;
 }
 
+bool EngineSound::LoadTurbo(const std::vector<uint8_t> &bank)
+{
+    std::vector<Loop> sounds;
+    if (!DecodeBank(bank, sounds) || sounds.empty() || !OpenDevice())
+        return false;
+    if (getenv("NFSU2_SOUND_DEBUG"))
+        for (size_t i = 0; i < sounds.size(); ++i)
+            printf("[Engine] turbo sound %zu: %.2f s at %.0f Hz\n", i, float(sounds[i].pcm.size()) / sounds[i].rate,
+                   sounds[i].rate);
+    SDL_LockAudioDevice(m_device);
+    m_turbo = std::move(sounds);
+    SDL_UnlockAudioDevice(m_device);
+    return true;
+}
+
 bool EngineSound::LoadCollision(const std::vector<uint8_t> &bank)
 {
     std::vector<Loop> sounds;
@@ -289,6 +304,19 @@ void EngineSound::Mix(float *out, int frames)
     if (!m_road.pcm.empty())
         MixLoop(m_road, running ? 0.12f * m_volTire * std::min(1.0f, speed / 50.0f) : 0.0f,
                 m_road.rate / m_rate * (0.8f + std::min(speed, 70.0f) / 120.0f), out, frames);
+    // Turbo (ISSUES #230): spool loops 0 and 4 swell with load and rpm, blow-off one-shots 1-3 play when the
+    // throttle is lifted off a spooled turbo.  Which bank sound is which is inferred from their lengths.
+    if (m_turbo.size() >= 5) {
+        const float want = running && m_throttle > 0.1f ? std::clamp((rpm - idle) / (redline - idle) * 1.3f, 0.0f, 1.0f) : 0.0f;
+        const float dt = float(frames) / float(m_rate);
+        const bool spooled = m_boost > 0.55f;
+        m_boost += (want - m_boost) * std::min(1.0f, dt * (want > m_boost ? 0.9f : 3.0f));
+        static int blow = 0;
+        if (spooled && running && m_throttle <= 0.1f && m_boost < 0.55f && m_voices.size() < 6)
+            m_voices.push_back({&m_turbo[size_t(1 + blow++ % 3)], 0.0f});
+        MixLoop(m_turbo[0], 0.16f * m_boost * (1.0f - 0.5f * m_boost) * m_volEngine, m_turbo[0].rate / m_rate * (0.8f + 0.5f * m_boost), out, frames);
+        MixLoop(m_turbo[4], 0.13f * m_boost * m_boost * m_volEngine, m_turbo[4].rate / m_rate * (0.85f + 0.4f * m_boost), out, frames);
+    }
     // One-shots (gear changes).
     for (Voice &v : m_voices) {
         const float step = v.sound->rate / m_rate;

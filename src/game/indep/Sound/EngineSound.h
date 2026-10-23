@@ -26,6 +26,8 @@ public:
     // sound when a burst starts (which sound is which is assumed: SOUND_DEBUG prints their lengths).
     bool LoadNitrous(const std::vector<uint8_t> &bank);
     void NitrousBurst(bool start);
+    // Turbo bank (SOUND\TURBO\TURBO_<size>_<level>_MB.abk, ISSUES #230): spool loop and blow-off one-shots.
+    bool LoadTurbo(const std::vector<uint8_t> &bank);
     // Impact sounds (SOUND\IG_GLOBAL\MB_Stich_Collision.abk, ISSUES #221).
     bool LoadCollision(const std::vector<uint8_t> &bank);
     void Crash(float closingSpeed);
@@ -55,7 +57,8 @@ private:
     int m_rate = 32000;
     std::vector<Loop> m_loops;
     Loop m_skid, m_road;
-    std::vector<Loop> m_shift, m_nitrous, m_collision;
+    std::vector<Loop> m_shift, m_nitrous, m_collision, m_turbo;
+    float m_boost = 0; // smoothed turbo spool 0..1
     struct Voice {
         const Loop *sound;
         float pos;
