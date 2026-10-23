@@ -7,10 +7,12 @@ inline const char *kWorldVS = R"(#version 120
 varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
+varying vec3 vWorld;
 void main() {
     gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
     vColor = gl_Color;
     vUV = gl_MultiTexCoord0.xy;
+    vWorld = gl_Vertex.xyz;
     vDist = length((gl_ModelViewMatrix * gl_Vertex).xyz);
 }
 )";
@@ -21,12 +23,42 @@ uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uGrade;
+uniform vec3 uCam;
+uniform float uWet;
 varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
+varying vec3 vWorld;
+float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y);
+}
 void main() {
     vec4 t = texture2D(uTex, vUV);
     vec4 c = t * vColor; // the PS2's MODULATE (vertex colours were doubled on the CPU)
+    float wetMask = 0.0;
+    if (uWet > 0.0 && vDist < 90.0) {
+        // road-like surface: facing up, grey and not bright
+        vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        float mx = max(t.r, max(t.g, t.b)), mn = min(t.r, min(t.g, t.b));
+        float road = smoothstep(0.85, 0.97, abs(N.z)) * (1.0 - smoothstep(0.25, 0.5, (mx - mn) / max(mx, 0.01))) * (1.0 - smoothstep(0.45, 0.65, mx)) * t.a;
+        float puddles = smoothstep(0.50, 0.66, vnoise(vWorld.xy * 0.11) * 0.65 + vnoise(vWorld.xy * 0.43) * 0.35);
+        wetMask = road * mix(0.35, 1.0, puddles) * uWet * (1.0 - smoothstep(55.0, 90.0, vDist));
+        c.rgb *= 1.0 - 0.38 * wetMask; // wet asphalt is darker
+        vec3 V = normalize(uCam - vWorld);
+        float fres = 0.05 + 0.95 * pow(1.0 - clamp(V.z, 0.0, 1.0), 4.0);
+        vec3 sky = mix(vec3(0.04, 0.06, 0.10), vec3(0.22, 0.28, 0.40), clamp(1.0 - V.z, 0.0, 1.0));
+        // reflected light sources: stretched along the view direction on the ground, warm and cool lamps on a sparse grid
+        vec2 g = vWorld.xy / 13.0;
+        vec2 cell = floor(g);
+        vec2 local = fract(g) - 0.5 - (vec2(h12(cell), h12(cell + 5.0)) - 0.5) * 0.5;
+        vec2 away = normalize(V.xy + 1e-4);
+        float along = dot(local, away), across = dot(local, vec2(-away.y, away.x));
+        float streak = exp(-across * across * 220.0) * exp(-pow(max(along + 0.15, 0.0), 2.0) * 7.0) * step(0.55, h12(cell + 9.0));
+        vec3 lamp = mix(vec3(1.0, 0.62, 0.25), vec3(0.35, 0.6, 1.0), step(0.7, h12(cell + 2.0)));
+        c.rgb += wetMask * (sky * fres * 1.2 + lamp * streak * (0.35 + 0.65 * fres) * 0.9);
+    }
     // grade: a little saturation and a gentle shadow lift so the baked lighting does not crush to black
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
     c.rgb = mix(vec3(l), c.rgb, 1.0 + 0.16 * uGrade);
