@@ -464,8 +464,9 @@ void RaceSession::UpdateHud(const PlayerCar &car)
     // Speedometer (km/h, the PAL default) and the tachometer. A drag race shows its manual gearbox
     // (m_gear / m_rpm); otherwise the car's own automatic, or a stand-in without a database record.
     const float speed = std::fabs(car.Speed());
-    snprintf(text, sizeof(text), "%d", int(speed * 3.6f + 0.5f));
+    snprintf(text, sizeof(text), "%d", int(speed * (m_mph ? 2.236936f : 3.6f) + 0.5f));
     FENativeInterface::SetString(m_hud, kSpeed, text);
+    FENativeInterface::SetString(m_hud, 0xc3383b63, m_mph ? "MPH" : "KM/H"); // the units label (Options > Speedometer Units)
     float rpm;
     if (IsDrag()) {
         rpm = m_rpm;

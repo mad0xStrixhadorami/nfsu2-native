@@ -142,6 +142,9 @@ constexpr uint32_t kHashFadeIn = 0x5b0d9106;         // bStringHash("FadeIn")
 FEStartupSequence::FEStartupSequence(FEngine *engine, FENativeInterface *fe, bool isPal)
     : m_engine(engine), m_fe(fe), m_isPal(isPal)
 {
+    m_careerDifficulty = 1; // Medium
+    m_speedoUnits = isPal ? 1 : 0; // PAL shows km/h by default (0x004f12e8: 0 MPH / 1 KM-H)
+    LoadOptions();
     // 0x0023ae10: iterate the 12-entry region table and append non-empty package names.
     const char *const *table = m_isPal ? kStartupTablePAL : kStartupTableNTSC;
     for (size_t i = 0; i < 12; ++i) {
@@ -722,8 +725,73 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     }
 }
 
+// The Options screens' settings persist in OPTIONS.CFG beside the saves ("key value" lines; NFSU2_MEMCARD
+// redirects it with the saves, so tests do not touch the real file).
+static std::string OptionsPath()
+{
+    return Career::MemoryCard::Get().SlotDir() + "/OPTIONS.CFG";
+}
+
+void FEStartupSequence::SaveOptions() const
+{
+    FILE *f = fopen(OptionsPath().c_str(), "w");
+    if (!f)
+        return;
+    for (int i = 0; i < 7; ++i)
+        fprintf(f, "volume%d %.2f\n", i, m_audioVolume[i]);
+    fprintf(f, "audioMode %d\njump %d\nrearview %d\nunits %d\ndifficulty %d\nexploreMap %d\nraceMap %d\nsave %d\n", m_audioMode,
+            m_jumpCamera, m_rearviewMirror, m_speedoUnits, m_careerDifficulty, m_exploreMapMode, m_raceMapMode, m_saveState);
+    fprintf(f, "widescreen %d\nbrightness %d\ncontrast %d\n", m_widescreen, m_brightness, m_contrast);
+    fprintf(f, "manual %d\nstability %d\ncamera %d\nsteerRight %d\ngauges %d\nracePos %d\nlapInfo %d\nsplit %d\nscore %d\nleaderboard %d\naskTrans %d\n",
+            m_pTransmissionManual, m_pStability, m_pCamera, m_pSteerRight, m_pGauges, m_pRacePosition, m_pLapInfo, m_pSplitTime,
+            m_pScore, m_pLeaderboard, m_pAskTransmission);
+    fclose(f);
+}
+
+void FEStartupSequence::LoadOptions()
+{
+    m_optionsLoaded = true;
+    FILE *f = fopen(OptionsPath().c_str(), "r");
+    if (!f)
+        return;
+    char key[32];
+    double v;
+    while (fscanf(f, "%31s %lf", key, &v) == 2) {
+        const int n = int(v);
+        const std::string k = key;
+        if (k.compare(0, 6, "volume") == 0 && k.size() == 7 && k[6] >= '0' && k[6] <= '6')
+            m_audioVolume[k[6] - '0'] = float(std::clamp(v, 0.0, 1.0));
+        else if (k == "audioMode") m_audioMode = n % 3;
+        else if (k == "jump") m_jumpCamera = n != 0;
+        else if (k == "rearview") m_rearviewMirror = n != 0;
+        else if (k == "units") m_speedoUnits = n;
+        else if (k == "difficulty") m_careerDifficulty = std::clamp(n, 0, 2);
+        else if (k == "exploreMap") m_exploreMapMode = n;
+        else if (k == "raceMap") m_raceMapMode = n;
+        else if (k == "save") m_saveState = n;
+        else if (k == "widescreen") m_widescreen = n != 0;
+        else if (k == "brightness") m_brightness = std::clamp(n, -15, 15);
+        else if (k == "contrast") m_contrast = std::clamp(n, -15, 15);
+        else if (k == "manual") m_pTransmissionManual = n != 0;
+        else if (k == "stability") m_pStability = n != 0;
+        else if (k == "camera") m_pCamera = std::clamp(n, 0, 4);
+        else if (k == "steerRight") m_pSteerRight = n != 0;
+        else if (k == "gauges") m_pGauges = n != 0;
+        else if (k == "racePos") m_pRacePosition = n != 0;
+        else if (k == "lapInfo") m_pLapInfo = n != 0;
+        else if (k == "split") m_pSplitTime = n;
+        else if (k == "score") m_pScore = n != 0;
+        else if (k == "leaderboard") m_pLeaderboard = n != 0;
+        else if (k == "askTrans") m_pAskTransmission = n != 0;
+    }
+    fclose(f);
+    printf("[Options] loaded %s\n", OptionsPath().c_str());
+}
+
 void FEStartupSequence::Tick(uint32_t nowMs)
 {
+    if (!m_optionsLoaded)
+        LoadOptions();
     m_lastTickMs = m_nowMs;
     m_nowMs = nowMs;
     if (!m_engine)
@@ -7050,6 +7118,8 @@ void FEStartupSequence::HandleOptionsMessage(uint32_t msg, FEPackage *pkg)
         return;
     }
     m_widgets.HandleMessage(msg);
+    if (msg == kMsgPadLeft || msg == kMsgPadRight)
+        SaveOptions();
 }
 
 void FEStartupSequence::SwitchFlow(const char *from, const char *to)

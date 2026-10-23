@@ -69,6 +69,10 @@ public:
     }
     int RaceType() const { return m_raceType; } // DAT_004f13b0: 0 circuit .. 10 street x
     int RaceLaps() const { return m_options[m_raceType & 15].laps; }
+    // Options that reach the game (ISSUES #237).
+    bool SpeedoMph() const { return m_speedoUnits == 0; } // 0 MPH / 1 KM-H (0x004f12e8)
+    int CameraSetting() const { return m_pCamera; }       // 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far
+    int CareerDifficulty() const { return m_careerDifficulty; } // 0 easy / 1 normal / 2 hard
     int RaceTraffic() const { return m_options[m_raceType & 15].traffic; } // 0 none .. 3 maximum
     int RaceOpponents() const { return m_options[m_raceType & 15].opponents; }
     // Race direction: 0x004f13b0 settings +4 for Quick Race; a career event carries its own slot
@@ -537,6 +541,9 @@ private:
     // Template init 0x002006d8 etc. clamps to [0,1] with a per-row step (uGpffff9644..).
     float m_audioVolume[7] = {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f};
     int m_audioMode = 1;
+    void LoadOptions();
+    void SaveOptions() const;
+    bool m_optionsLoaded = false;
     // UI_Options Gameplay toggles (0x004f12ec Jump Camera stored 0/127, 0x004f12e0 Rearview
     // Mirror, 0x004f12e8 Speedometer Units 0 MPH / 1 KM-H, 0x004f15e4 Career Difficulty 0..2,
     // 0x004f12ea Explore Map Mode, 0x004f12e9 Race Map Mode, 0x004fb4a0/a4 Save 0 Off/1 Prompt/

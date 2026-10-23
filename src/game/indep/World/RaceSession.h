@@ -11,6 +11,7 @@ class RaceRoute;
 // names were recovered by hashing executable strings against the stripped package (ISSUES #106).
 class RaceSession {
 public:
+    void SetMph(bool mph) { m_mph = mph; } // Options: speedometer units
     struct Config {
         int laps = 2;
         int type = 0;             // DAT_004f13b0: 0 circuit, 1 sprint, 2 drag, 3 drift, 4 URL, 10 street x
@@ -95,6 +96,7 @@ public:
     static constexpr float kOutrunEscape = 200.0f; // metre lead that ends the duel (stand-in)
 
 private:
+    bool m_mph = false;
     void SetupHud();
     void UpdateHud(const PlayerCar &car);
     void UpdateRoute(const PlayerCar &car, const std::vector<float> &opponents, float dt);

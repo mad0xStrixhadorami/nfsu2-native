@@ -1089,6 +1089,7 @@ int main(int argc, char **argv)
                 // NFSU2_AI_SKILL scales the opponents' pace (test aid: set the field slower so an
                 // automated player can lead, e.g. to exercise the URL knockout).
                 float skill = 0.86f + 0.04f * float(opponents - i) / opponents;
+                skill *= startup.CareerDifficulty() == 0 ? 0.94f : startup.CareerDifficulty() == 2 ? 1.06f : 1.0f; // Options > Gameplay
                 if (const char *s = getenv("NFSU2_AI_SKILL"))
                     skill *= std::clamp(float(atof(s)), 0.1f, 2.0f);
                 ai[i].Init(&opponentCars[i], &route, lane, skill, slotS);
@@ -1344,6 +1345,7 @@ int main(int argc, char **argv)
             uiSound.SetVolume(0.5f * master * vol(4));
             engineSound.SetVolumes(master * vol(6), master * vol(5), master * vol(4));
         }
+        race.SetMph(startup.SpeedoMph());
         music.SetPaused(pausePkg != nullptr);
         music.Update();
         Uint32 now = SDL_GetTicks();
@@ -1741,11 +1743,14 @@ int main(int argc, char **argv)
                 float diff = std::remainder(car.Yaw() - chaseYaw, 6.2831853f);
                 chaseYaw += diff * std::min(1.0f, 5.0f * dt);
                 const float viewYaw = chaseYaw + camOrbit; // dev aid; 0 = the normal chase view
-                camera.x = car.X() - std::cos(viewYaw) * 6.5f;
-                camera.y = car.Y() - std::sin(viewYaw) * 6.5f;
+                // Options > Player > Camera: 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far (distance, height).
+                static const float kCamBack[5] = {0.5f, 1.2f, 5.0f, 6.5f, 9.0f}, kCamUp[5] = {0.9f, 1.3f, 1.9f, 2.3f, 3.2f};
+                const int camSetting = std::clamp(startup.CameraSetting(), 0, 4);
+                camera.x = car.X() - std::cos(viewYaw) * kCamBack[camSetting];
+                camera.y = car.Y() - std::sin(viewYaw) * kCamBack[camSetting];
                 float camGround = car.Z();
                 world.GroundHeight(camera.x, camera.y, car.Z() + 2.0f, camGround);
-                camera.z = std::max(car.Z(), camGround) + 2.3f;
+                camera.z = std::max(car.Z(), camGround) + kCamUp[camSetting];
                 camera.yaw = viewYaw;
                 camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
             }
