@@ -835,6 +835,19 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         LoadOptions();
     if (m_statusPushTicks > 0 && --m_statusPushTicks == 0)
         SwitchStatusPage(0);
+    if (const char *ev = getenv("NFSU2_DONE_EVENTS"); ev && m_profile.valid) { // dev aid: complete events (use NFSU2_MEMCARD on a copy)
+        static bool applied = false;
+        if (!applied) {
+            applied = true;
+            for (const char *s = ev; *s;) {
+                char *end;
+                const uint32_t id = uint32_t(strtoul(s, &end, 16));
+                if (std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), id) == m_profile.completedEvents.end())
+                    m_profile.completedEvents.push_back(id);
+                s = *end ? end + 1 : end;
+            }
+        }
+    }
     if (m_profile.valid && nowMs - m_dvdCheckMs > 1500) { // the covers are checked about every second and a half
         m_dvdCheckMs = nowMs;
         UpdateDvdUnlocks();
