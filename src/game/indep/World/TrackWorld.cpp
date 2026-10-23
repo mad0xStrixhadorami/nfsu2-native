@@ -530,8 +530,16 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.render.clear();
     car.tris.reserve(car.model->size());
     car.render.reserve(car.model->size());
-    if (car.modelNormals.size() != car.model->size() * 9)
+    if (car.modelNormals.size() != car.model->size() * 9) {
         BuildSmoothNormals(*car.model, car.modelNormals);
+        float lx = 0, ly = 0;
+        for (const SolidMesh::Triangle &t : *car.model)
+            for (const SolidMesh::Point &p : t.v)
+                lx = std::max(lx, std::fabs(p.x)), ly = std::max(ly, std::fabs(p.y));
+        car.halfLen = std::max(1.0f, lx), car.halfWid = std::max(0.6f, ly);
+    }
+    memcpy(car.xf, m, sizeof(float) * 12);
+    car.groundZ = 1e9f;
     car.normals.clear();
     car.albedo.clear();
     car.gloss.clear();
@@ -611,6 +619,8 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
                 car.skinProj.Map(t.v[k].x, t.v[k].z, leftSide, u, v);
             r.v[k] = {w.v[k * 3], w.v[k * 3 + 1], w.v[k * 3 + 2], u, v, w.shade[0], w.shade[1], w.shade[2], 255};
         }
+        for (int k = 0; k < 3; ++k)
+            car.groundZ = std::min(car.groundZ, w.v[k * 3 + 2]);
         car.tris.push_back(w);
         car.render.push_back(r);
         // World-space smooth normals (rotation of m) and the unlit colour, for RenderGL's per-vertex lighting.

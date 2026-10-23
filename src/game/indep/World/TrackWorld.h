@@ -212,6 +212,9 @@ private:
         // glossy triangles with the camera known.
         std::vector<float> modelNormals; // car space, 9 floats per model triangle (built once)
         std::vector<float> normals, albedo;
+        float xf[12] = {};                 // the car-to-world transform of the last SetCarTransform (row-major 3x4)
+        float halfLen = 2.2f, halfWid = 1.0f; // model extent along the car's x (forward) and y (left), for the shadow
+        float groundZ = 0.0f;              // lowest point of the car in the world (the shadow's height)
         std::vector<uint8_t> gloss;
     };
     // Car material slot -> texture (0 = untextured) and base colour.
@@ -241,6 +244,7 @@ private:
     // Light-beam textures the packs do not carry (spotlights / light poles / bridge lights name 0x2e95ce7c and
     // 0x2e95ce7d): drawn with a procedural additive gradient (ISSUES #254).
     static bool IsBeamTexture(uint32_t hash) { return hash == 0x2e95ce7cu || hash == 0x2e95ce7du; }
+    unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
     std::vector<uint32_t> m_glTextureStale; // skin hashes whose GL texture must be rebuilt
     std::map<uint32_t, std::vector<uint32_t>> m_skinPixels; // composed 512 x 512 skins by texture hash

@@ -34,6 +34,7 @@ void TrackWorld::ReleaseGL()
     m_glCells.clear();
     m_glPanorama = GLCell();
     m_glTextures.clear();
+    m_glShadow = 0;
 }
 
 // Texture by name hash from the stream's texture packs, decoded and uploaded on first use;
@@ -96,6 +97,8 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
             }
         glGenTextures(1, &id);
         glBindTexture(GL_TEXTURE_2D, id);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -116,6 +119,8 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
                 px |= 0xff000000u;
         glGenTextures(1, &id);
         glBindTexture(GL_TEXTURE_2D, id);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, decoded.width, decoded.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      decoded.rgba.data());
@@ -300,6 +305,63 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     }
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+
+    // Contact shadows: a soft dark quad under each car, aligned with it and lying on the lowest point of its wheels
+    // (stand-in for the original's SHD_SHADOWTILE projected shadow, ISSUES #255).
+    if (!getenv("NFSU2_NO_SHADOWS")) {
+        if (!m_glShadow) {
+            constexpr int n = 64;
+            std::vector<uint8_t> px(n * n * 4, 0);
+            for (int y = 0; y < n; ++y)
+                for (int x = 0; x < n; ++x) {
+                    const float fx = (x + 0.5f) / n * 2.0f - 1.0f, fy = (y + 0.5f) / n * 2.0f - 1.0f;
+                    const float d = std::pow(std::pow(std::fabs(fx), 3.0f) + std::pow(std::fabs(fy), 3.0f), 1.0f / 3.0f); // rounded box
+                    const float a = std::clamp(1.0f - d, 0.0f, 1.0f);
+                    px[size_t(y * n + x) * 4 + 3] = uint8_t(255.0f * std::sqrt(a) * 0.9f);
+                }
+            glGenTextures(1, &m_glShadow);
+            glBindTexture(GL_TEXTURE_2D, m_glShadow);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, n, n, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        GLBridge::BindArrayBuffer(0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-4.0f, -8.0f);
+        glBindTexture(GL_TEXTURE_2D, m_glShadow);
+        for (const Car &car : m_cars) {
+            if (car.render.empty() || car.groundZ > 1e8f)
+                continue;
+            const float *m = car.xf;
+            float fx = m[0], fy = m[1], lx = m[4], ly = m[5]; // car x (forward) and y (left) axes in the world, flattened
+            const float fl = std::max(1e-4f, std::hypot(fx, fy)), ll = std::max(1e-4f, std::hypot(lx, ly));
+            fx /= fl, fy /= fl, lx /= ll, ly /= ll;
+            const float cx = m[3], cy = m[7], z = car.groundZ + 0.08f;
+            if (getenv("NFSU2_SHADOW_DEBUG"))
+                printf("[Shadow] car at %.2f %.2f %.2f groundZ %.2f half %.2f x %.2f\n", cx, cy, m[11], car.groundZ, car.halfLen, car.halfWid);
+            const float hl = car.halfLen * 1.3f, hw = car.halfWid * 1.5f;
+            std::vector<Vertex> q;
+            auto vert = [&](float a, float b, float u, float v) {
+                q.push_back({cx + fx * a + lx * b, cy + fy * a + ly * b, z, u, v, 0, 0, 0, 255});
+            };
+            vert(-hl, -hw, 0, 0), vert(hl, -hw, 1, 0), vert(hl, hw, 1, 1);
+            vert(-hl, -hw, 0, 0), vert(hl, hw, 1, 1), vert(-hl, hw, 0, 1);
+            glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &q[0].x);
+            glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &q[0].u);
+            glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &q[0].r);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
 
     // Cars: rebuilt every frame from client memory, one draw per texture run.
     GLBridge::BindArrayBuffer(0);
