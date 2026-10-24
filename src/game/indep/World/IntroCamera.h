@@ -49,30 +49,38 @@ inline Result Evaluate(float t, float total, const Pose &car, const TrackWorld::
     const float fx = std::cos(car.yaw), fy = std::sin(car.yaw); // forward
     const float lx = -fy, ly = fx;                              // left
     auto at = [&](float f, float l, float h) { return std::array<float, 3>{car.x + fx * f + lx * l, car.y + fy * f + ly * l, car.z + h}; };
-    const float s1 = total * 0.34f, s2 = total * 0.66f, blendLen = std::min(1.0f, total * 0.14f);
+    const float s1 = total * 0.30f, s2 = total * 0.58f, blendLen = std::min(2.4f, total * 0.34f);
     TrackWorld::Camera cam;
     if (t < s1) { // shot 1: the dolly
-        const float u = Smooth(t / s1);
-        const auto p = at(Lerp(-17.0f, -1.0f, u), Lerp(5.4f, 3.3f, u), Lerp(0.75f, 1.05f, u));
-        const auto tg = at(Lerp(-3.0f, 1.2f, u), 0.0f, 0.55f);
+        const float u = t / s1; // constant velocity: a dolly that eases to a stop at the cut looks like a stutter
+        const auto p = at(Lerp(-17.0f, -4.2f, u), Lerp(5.4f, 3.7f, u), Lerp(0.75f, 1.0f, u)); // stays well back: a gentle pan, not a whip
+        const auto tg = at(Lerp(-3.0f, 0.4f, u), 0.0f, 0.55f);
         cam = LookAt(p[0], p[1], p[2], tg[0], tg[1], tg[2], Lerp(84.0f, 72.0f, u));
     } else if (t < s2) { // shot 2: the orbit
-        const float u = (t - s1) / (s2 - s1), e = Smooth(u);
+        const float u = (t - s1) / (s2 - s1), e = u;
         const float a = Lerp(-2.45f, -0.75f, e); // angle around the car: behind-right sweeping to front-right
         const float r = Lerp(5.6f, 4.3f, e), h = Lerp(0.8f, 1.15f, e);
         const auto p = at(std::cos(a) * r, std::sin(a) * r, h);
         const auto tg = at(Lerp(-0.2f, 0.6f, e), 0.0f, 0.55f);
         cam = LookAt(p[0], p[1], p[2], tg[0], tg[1], tg[2], Lerp(62.0f, 54.0f, e));
-    } else { // shot 3: low front quarter, then the crane into the chase camera
-        const float u = (t - s2) / std::max(0.01f, total - s2), e = Smooth(u);
-        const auto p = at(Lerp(3.9f, 3.0f, e), Lerp(-1.9f, -2.5f, e), Lerp(0.34f, 0.5f, e));
+    } else { // shot 3: low front quarter pushing in slowly, then an orbit round the car into the chase camera
+        const float u = (t - s2) / std::max(0.01f, total - s2), e = u;
+        const auto p = at(Lerp(4.6f, 3.1f, e), Lerp(-2.3f, -2.5f, e), Lerp(0.36f, 0.52f, e));
         const auto tg = at(1.35f, -0.9f, 0.42f);
-        cam = LookAt(p[0], p[1], p[2], tg[0], tg[1], tg[2], Lerp(52.0f, 58.0f, e));
+        cam = LookAt(p[0], p[1], p[2], tg[0], tg[1], tg[2], Lerp(54.0f, 50.0f, e));
         const float bt = (t - (total - blendLen)) / blendLen;
-        if (bt > 0.0f) { // crane up and round into the chase view
-            const float b = Smooth(bt);
-            cam.x = Lerp(cam.x, chase.x, b), cam.y = Lerp(cam.y, chase.y, b), cam.z = Lerp(cam.z, chase.z, b);
-            cam.yaw = AngleLerp(cam.yaw, chase.yaw, b), cam.pitch = Lerp(cam.pitch, chase.pitch, b), cam.fov = Lerp(cam.fov, chase.fov, b);
+        if (bt > 0.0f) {
+            // Sweep round the car (polar about it, so the path never cuts through the body) while the look target slides
+            // from the wheel to the point the chase camera looks at; position, target and lens all ease with smootherstep.
+            const float b = Smooth(bt); // eased start and finish, a peak of only 1.5x the average speed
+            const float cp = std::cos(chase.pitch);
+            const float lookX = chase.x + std::cos(chase.yaw) * cp * 12.0f, lookY = chase.y + std::sin(chase.yaw) * cp * 12.0f,
+                        lookZ = chase.z + std::sin(chase.pitch) * 12.0f;
+            const float x0 = cam.x - car.x, y0 = cam.y - car.y, x1 = chase.x - car.x, y1 = chase.y - car.y;
+            const float r0 = std::hypot(x0, y0), r1 = std::hypot(x1, y1);
+            const float a0 = std::atan2(y0, x0), ang = AngleLerp(a0, std::atan2(y1, x1), b), r = Lerp(r0, r1, b);
+            const float px = car.x + std::cos(ang) * r, py = car.y + std::sin(ang) * r, pz = Lerp(cam.z, chase.z, b);
+            cam = LookAt(px, py, pz, Lerp(tg[0], lookX, b), Lerp(tg[1], lookY, b), Lerp(tg[2], lookZ, b), Lerp(cam.fov, chase.fov, b));
         }
     }
     Result r;

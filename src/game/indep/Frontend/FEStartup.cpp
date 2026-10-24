@@ -2373,6 +2373,53 @@ void FEStartupSequence::RefreshPartsBrowserList(FEPackage *pkg)
     RefreshPartsBrowserInfo(pkg);
 }
 
+// Where the garage camera should look for the open shop screen (the Most Wanted behaviour: the camera moves to the part).
+GarageShot FEStartupSequence::GarageShotNow() const
+{
+    const std::string &m = m_lastMenu;
+    auto is = [&](const char *n) { return strcasecmp(m.c_str(), n) == 0; };
+    if (is("UI_GenericParts_Browser.fng")) {
+        if (m_vinylBrowser)
+            return GarageShot::Side;
+        if (m_partsCategorySel == kPartsRimsCard)
+            return GarageShot::Wheel;
+        if (const CarPart *p = SelectedPartsShopPart())
+            switch (p->partId) {
+            case 0x1: return GarageShot::FrontBumper;
+            case 0x2: return GarageShot::RearBumper;
+            case 0x6: case 0xb: return GarageShot::Skirt;
+            case 0x7: return GarageShot::Roof;
+            case 0x9: return GarageShot::Hood;
+            case 0xc: return GarageShot::Spoiler;
+            case 0xe: return GarageShot::Headlight;
+            case 0xf: return GarageShot::Taillight;
+            case 0x10: return GarageShot::Exhaust;
+            default: break;
+            }
+        return GarageShot::Side;
+    }
+    if (is("UI_Paint.fng") || is("UI_ChoosePaintCategory.fng") || is("UI_ChooseVinylLayer.fng") || is("UI_DecalMain.fng")) {
+        if (is("UI_Paint.fng") && !m_paintVinyl)
+            switch (m_paintPart) { // 0 Base Paint, 1 Spoiler, 2 Roof Scoop, 3 Mirrors, 4 Rims, 5 Spinners, 6 Brakes, 7 Engine, 8 Muffler
+            case 1: return GarageShot::Spoiler;
+            case 2: return GarageShot::Roof;
+            case 3: return GarageShot::Headlight; // the mirrors sit just behind the front corner
+            case 4: case 5: case 6: return GarageShot::Wheel;
+            case 7: return GarageShot::Hood;
+            case 8: return GarageShot::Exhaust;
+            default: break;
+            }
+        return GarageShot::Side;
+    }
+    if (is("UI_ICEMAIN.fng") || is("UI_CustomNeonMain.fng"))
+        return GarageShot::Underglow;
+    if (is("UI_ChoosePerformanceCategory.fng") || is("UI_ChoosePerformancePackage.fng") || is("UI_BuyPerformanceParts.fng") ||
+        is("UI_PerformanceTuning_Master.fng") || is("UI_PerformanceTuning_Sliders.fng") || is("UI_PerformanceTuning_Setting.fng") ||
+        is("UI_PerformanceTuning_NOS.fng") || is("UI_PerformanceTuning_Graph.fng"))
+        return GarageShot::Hood;
+    return GarageShot::Overview;
+}
+
 const CarPart *FEStartupSequence::SelectedPartsShopPart() const
 {
     if (m_partsShopItems.empty())

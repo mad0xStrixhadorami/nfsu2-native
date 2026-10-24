@@ -46,6 +46,7 @@
 #include "game/indep/World/AiDriver.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/CarCollision.h"
+#include "game/indep/World/CameraRig.h"
 #include "game/indep/World/IntroCamera.h"
 #include "game/indep/World/Minimap.h"
 #include "game/indep/World/RaceRoute.h"
@@ -704,6 +705,9 @@ int main(int argc, char **argv)
     u32 worldLastPad = 0;
     RaceSession::Config raceConfig;
     float chaseYaw = 0.0f, steer = 0.0f;
+    CameraRig::Chase chaseRig;       // ISSUES #285
+    CameraRig::Garage garageRig;
+    CameraRig::Clearance introClear;
     const bool autoDrive = getenv("NFSU2_AUTODRIVE") != nullptr; // test aid: hold the throttle
     const bool dragAuto = getenv("NFSU2_DRAG_AUTO") != nullptr;  // test aid: hold throttle + auto-upshift
     // Dev aid: NFSU2_AI_LANE offsets the autodrive player's racing line (metres, + = left).
@@ -2026,21 +2030,28 @@ int main(int argc, char **argv)
                         m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
                     world.SetCarTransform(i, m);
                 }
-                // Chase camera: behind and above, lagging the car's heading.
-                float diff = std::remainder(car.Yaw() - chaseYaw, 6.2831853f);
-                chaseYaw += diff * std::min(1.0f, 5.0f * dt);
-                const float viewYaw = chaseYaw + camOrbit; // dev aid; 0 = the normal chase view
+                // Chase camera (ISSUES #285): a spring rig behind the car; see World/CameraRig.h.
                 // Options > Player > Camera: 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far (distance, height).
                 static const float kCamBack[5] = {0.5f, 1.2f, 5.0f, 6.5f, 9.0f}, kCamUp[5] = {0.9f, 1.3f, 1.9f, 2.3f, 3.2f};
                 // 0x0025ddf0 / 0x0025de60 / 0x0025df38 demote Super Far to Far for races; only free roam (0x0025ded8) uses it.
                 const int camSetting = std::clamp(startup.CameraSetting(), 0, race.IsFreeRun() ? 4 : 3);
-                camera.x = car.X() - std::cos(viewYaw) * kCamBack[camSetting];
-                camera.y = car.Y() - std::sin(viewYaw) * kCamBack[camSetting];
-                float camGround = car.Z();
-                world.GroundHeight(camera.x, camera.y, car.Z() + 2.0f, camGround);
-                camera.z = std::max(car.Z(), camGround) + kCamUp[camSetting];
-                camera.yaw = viewYaw;
-                camera.pitch = camOrbit == 0.0f ? -0.17f : -0.08f;
+                {
+                    static int rigSetting = -1;
+                    if (rigSetting != camSetting)
+                        chaseRig.Reset(), rigSetting = camSetting;
+                    CameraRig::Chase::In in{};
+                    in.x = car.X(), in.y = car.Y(), in.z = car.Z(), in.yaw = car.Yaw(), in.speed = car.Speed();
+                    in.back = kCamBack[camSetting], in.up = kCamUp[camSetting];
+                    const float bx = car.X() - std::cos(car.Yaw()) * in.back, by = car.Y() - std::sin(car.Yaw()) * in.back;
+                    in.groundZ = car.Z();
+                    world.GroundHeight(bx, by, car.Z() + 2.0f, in.groundZ);
+                    in.nitrous = car.NitrousActive();
+                    in.rigid = camSetting < 2;
+                    in.orbit = camOrbit;
+                    in.timeS = float(now) * 0.001f;
+                    camera = chaseRig.Update(world, in, dt > 0.0f ? dt : 0.016f);
+                    chaseYaw = camera.yaw - camOrbit;
+                }
                 introBars = 0.0f;
                 if (race.InIntro() && !sceneMode) {
                     const TrackWorld::Camera chaseCam = camera;
@@ -2048,55 +2059,58 @@ int main(int argc, char **argv)
                                                                            {car.X(), car.Y(), car.Z(), car.Yaw()}, chaseCam);
                     camera = shot.camera;
                     introBars = shot.bars;
-                    // Keep the lens out of the buildings: pull the camera in along the line to the car until the segment
-                    // is clear of walls, and above the road.
+                    // Keep the lens out of the buildings: pull in along the line to the car (snapping in, easing out), above the road.
                     {
-                        const float ax = car.X(), ay = car.Y(), az = car.Z() + 0.7f;
-                        const float dx = camera.x - ax, dy = camera.y - ay, dz = camera.z - az;
-                        float k = 1.0f;
-                        for (; k > 0.18f; k -= 0.06f)
-                            if (!world.HitsWall(ax, ay, az, ax + dx * (k + 0.04f), ay + dy * (k + 0.04f), az + dz * (k + 0.04f)))
-                                break;
-                        static float smoothK = 1.0f; // eased so a passing pillar does not jerk the shot
-                        smoothK += (k - smoothK) * std::min(1.0f, 12.0f * std::max(dt, 0.016f));
-                        k = std::min(k, std::max(smoothK, k));
-                        camera.x = ax + dx * k, camera.y = ay + dy * k, camera.z = az + dz * k;
+                        if (race.IntroElapsed() < 0.05f)
+                            introClear.Reset();
+                        introClear.Apply(world, car.X(), car.Y(), car.Z() + 0.7f, camera.x, camera.y, camera.z, dt > 0.0f ? dt : 0.016f);
                         float g = camera.z - 1.0f;
                         if (world.GroundHeight(camera.x, camera.y, camera.z + 1.5f, g))
                             camera.z = std::max(camera.z, g + 0.35f);
                     }
                     if ((pressed & FENativeInterface::kPadAccept) && race.IntroElapsed() > 0.8f)
                         race.SkipIntro(); // Accept skips the cinematic (not the press that started the race)
-                } else {
-                    camera.fov = 70.0f;
                 }
                 if (sceneMode && cribPkg) {
-                    // Garage showroom: sway 7 m in front of a car on its disc. On the crib's own menu the focus
-                    // visits each car in the garage in turn (16 s round: the player's car 9 s, the others 3.5 s
-                    // each); the shop screens stay on the player's car.
-                    static float fx = 0, fy = 0;
-                    static bool fInit = false;
-                    float tx = car.X(), ty = car.Y();
+                    // Garage showroom (ISSUES #251 / #285). On the crib's own menu the focus visits each car in the garage in
+                    // turn (16 s round: the player's car 9 s, the others 3.5 s each); the shop screens stay on the player's
+                    // car and the camera moves to the side of it that the browsed part lives on (CameraRig::Garage).
+                    const PlayerCar *shown = &car;
                     const bool topMenu = startup.LastMenu() && strcasecmp(startup.LastMenu(), "UI_CareerCrib.fng") == 0;
                     if (topMenu && !garageCars.empty()) {
                         const float phase = std::fmod(float(now) * 0.001f, 16.0f);
                         const size_t which = phase < 9.0f ? 0 : phase < 12.5f ? 1 : 2;
                         if (which >= 1 && which <= garageCars.size())
-                            tx = garageCars[which - 1].X(), ty = garageCars[which - 1].Y();
+                            shown = &garageCars[which - 1];
                     }
-                    if (!fInit) {
-                        fx = tx, fy = ty, fInit = true;
+                    GarageShot shot = topMenu ? GarageShot::Overview : startup.GarageShotNow();
+                    if (const char *gs = getenv("NFSU2_GARAGE_SHOT")) // dev aid: force a shot number
+                        shot = GarageShot(std::clamp(atoi(gs), 0, int(GarageShot::Count) - 1));
+                    if (getenv("NFSU2_GARAGE_DEBUG")) {
+                        static GarageShot lastShot = GarageShot::Count;
+                        if (shot != lastShot)
+                            printf("[Garage] camera shot %d (%s)\n", int(shot), startup.LastMenu()), lastShot = shot;
                     }
-                    const float k = std::min(1.0f, 2.2f * std::max(dt, 0.016f));
-                    fx += (tx - fx) * k, fy += (ty - fy) * k;
-                    float a = -1.5707963f + 0.6f * std::sin(float(now) * 0.00035f);
-                    if (const char *ga = getenv("NFSU2_GARAGE_YAW")) // dev aid: a fixed camera angle (radians from the front view)
-                        a = -1.5707963f + float(atof(ga));
-                    camera.x = fx + std::cos(a) * 7.0f;
-                    camera.y = fy + std::sin(a) * 7.0f;
-                    camera.z = car.Z() + 1.7f;
-                    camera.yaw = std::atan2(fy - camera.y, fx - camera.x);
-                    camera.pitch = -0.1f;
+                    float halfLen = 2.1f;
+                    {
+                        static const std::vector<SolidMesh::Triangle> *sizedFor = nullptr;
+                        static float sized = 2.1f;
+                        if (sizedFor != &shown->Model()) {
+                            float lx = 0;
+                            for (const SolidMesh::Triangle &t : shown->Model())
+                                for (const SolidMesh::Point &p : t.v)
+                                    lx = std::max(lx, std::fabs(p.x));
+                            sized = std::clamp(lx, 1.6f, 3.2f), sizedFor = &shown->Model();
+                        }
+                        halfLen = sized;
+                    }
+                    camera = garageRig.Update(world, shot, shown->X(), shown->Y(), car.Z(), shown->Yaw(), halfLen / 2.1f,
+                                              float(now) * 0.001f, dt > 0.0f ? dt : 0.016f);
+                    if (const char *ga = getenv("NFSU2_GARAGE_YAW")) { // dev aid: a fixed camera angle (radians from the front view)
+                        const float a = -1.5707963f + float(atof(ga));
+                        camera.x = shown->X() + std::cos(a) * 7.0f, camera.y = shown->Y() + std::sin(a) * 7.0f;
+                        camera.z = car.Z() + 1.7f, camera.yaw = std::atan2(shown->Y() - camera.y, shown->X() - camera.x), camera.pitch = -0.1f;
+                    }
                 }
             }
             // The HUD minimap: a heading-up window of the road bitmap around the player with the route, the rivals and an
@@ -2196,6 +2210,8 @@ int main(int argc, char **argv)
             SDL_RenderClear(ren);
             Perf::Lap(Perf::kUpdate);
             Perf::GpuBegin();
+            if (getenv("NFSU2_CAM_LOG"))
+                printf("[Cam] %u %.3f %.3f %.3f %.4f %.4f %.2f\n", unsigned(now), camera.x, camera.y, camera.z, camera.yaw, camera.pitch, camera.fov);
             const bool glWorldOk = world.RenderGL(ren, camera, w, h);
             Perf::GpuEnd();
             Perf::Lap(Perf::kWorld);
