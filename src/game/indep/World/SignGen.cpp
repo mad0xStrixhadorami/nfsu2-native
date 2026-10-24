@@ -319,6 +319,29 @@ bool Make(int kind, int variant, int w, int h, std::vector<uint32_t> &rgba)
     } else if (kind == 1) {
         const auto &s = kStreets[variant % StreetVariants()];
         Panel(cv, s.he, Rgba(0, 76, 150), Rgba(255, 255, 255), s.en, Rgba(255, 255, 255));
+    } else if (kind == 3) { // roller shutter ("trisim"): horizontal slats in grey / beige / green / blue-grey
+        static const int cols[4][3] = {{150, 154, 158}, {205, 190, 160}, {95, 135, 105}, {110, 130, 160}};
+        const int *c = cols[variant & 3];
+        const int slats = 28;
+        for (int y = 0; y < h; ++y) {
+            const float f = float(y) / h * slats, fr = f - std::floor(f);
+            const float shade = 0.72f + 0.38f * std::sin(fr * 3.14159f) - (fr < 0.08f ? 0.25f : 0.0f);
+            for (int x = 0; x < w; ++x) {
+                const float grain = 0.97f + 0.03f * float((x * 31 + int(f) * 17) % 7) / 7.0f;
+                cv.px[size_t(y) * w + x] = Rgba(int(c[0] * shade * grain), int(c[1] * shade * grain), int(c[2] * shade * grain), 255);
+            }
+        }
+        Fill(cv, 0, h - h / 24, w, h, Rgba(c[0] / 2, c[1] / 2, c[2] / 2, 255)); // the bottom bar
+        Fill(cv, w / 2 - w / 40, h - h / 14, w / 2 + w / 40, h - h / 40, Rgba(30, 30, 30, 255)); // handle
+    } else if (kind == 4) { // sun awning ("markiza"): vertical stripes
+        static const int cols[4][3] = {{35, 120, 70}, {200, 60, 50}, {40, 90, 170}, {225, 170, 40}};
+        const int *c = cols[variant & 3];
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const bool on = (x * 10 / w) % 2 == 0;
+                const float shade = 0.82f + 0.18f * float(y) / h;
+                cv.px[size_t(y) * w + x] = on ? Rgba(int(c[0] * shade), int(c[1] * shade), int(c[2] * shade), 255) : Rgba(int(238 * shade), int(236 * shade), int(228 * shade), 255);
+            }
     } else {
         // the flag is 11:8: draw it at that ratio, then squeeze it into the requested picture (the prop quad un-squeezes it)
         Canvas wide(h * 11 / 8, h);

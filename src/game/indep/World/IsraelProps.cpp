@@ -185,7 +185,7 @@ struct PropBuilder {
 };
 
 namespace {
-constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u; // generated sign atlases (512 x 512)
+constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u, kShutterTex = 0x5e500030u, kAwningTex = 0x5e500040u; // generated sign atlases (512 x 512)
 bool g_signs = false;
 const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3] = {120, 98, 74}, kGrey[3] = {170, 170, 175},
               kLightGrey[3] = {205, 205, 205}, kDarkGrey[3] = {50, 52, 56}, kWhite[3] = {235, 235, 230},
@@ -361,6 +361,40 @@ void ShopSign(PropBuilder &b, V3 c, V3 along, V3 out, int variant, float width)
     }
 }
 
+// A concrete balcony with a solid parapet, jutting out of the wall along `out`.
+void Balcony(PropBuilder &b, V3 c, V3 along, V3 out, float width, int shade)
+{
+    static const uint8_t cols[3][3] = {{236, 232, 222}, {214, 200, 170}, {190, 190, 192}};
+    const uint8_t *col = cols[shade % 3];
+    const float depth = 1.25f;
+    b.Box(c - along * (width * 0.5f) - out * 0.1f, along * width, out * (depth + 0.1f), {0, 0, 0.16f}, col); // slab
+    b.Box(c + out * depth - along * (width * 0.5f) + V3{0, 0, 0.16f}, along * width, out * 0.08f, {0, 0, 0.95f}, col); // front parapet
+    for (int s = -1; s <= 1; s += 2) // side parapets
+        b.Box(c + along * (width * 0.5f * s) - out * 0.1f + V3{0, 0, 0.16f} - (s > 0 ? along * 0.08f : V3{0, 0, 0}), along * 0.08f, out * (depth + 0.1f), {0, 0, 0.95f}, col);
+    if (shade % 3 == 1) // some have a sun shade stretched over them
+        b.Box(c + V3{0, 0, 2.15f} - along * (width * 0.5f), along * width, out * (depth + 0.3f), {0, 0, 0.04f}, kStone);
+}
+
+// A roller shutter (closed) over a ground-floor opening: ribbed slats and its housing.
+void Shutter(PropBuilder &b, V3 c, V3 along, V3 out, float width, float height, int variant)
+{
+    static const uint8_t housing[3] = {120, 122, 126};
+    b.Box(c + V3{0, 0, height} - along * (width * 0.5f) - out * 0.02f, along * width, out * 0.34f, {0, 0, 0.3f}, housing);
+    const V3 a = c - along * (width * 0.5f) + out * 0.09f, bb = c + along * (width * 0.5f) + out * 0.09f;
+    b.TexQuad(a, bb, bb + V3{0, 0, height}, a + V3{0, 0, height}, kShutterTex + (variant & 3), 0, 1, 0, 1);
+    b.TexQuad(bb, a, a + V3{0, 0, height}, bb + V3{0, 0, height}, kShutterTex + (variant & 3), 0, 1, 0, 1);
+}
+
+// A striped sun awning sloping out from the wall over a window or shop front.
+void Awning(PropBuilder &b, V3 c, V3 along, V3 out, float width, int variant)
+{
+    const V3 a0 = c - along * (width * 0.5f), a1 = c + along * (width * 0.5f);
+    const V3 b0 = a0 + out * 1.1f - V3{0, 0, 0.55f}, b1 = a1 + out * 1.1f - V3{0, 0, 0.55f};
+    b.TexQuad(b0, b1, a1, a0, kAwningTex + (variant & 3), 0, 1, 0, 1);
+    b.TexQuad(b1, b0, a0, a1, kAwningTex + (variant & 3), 0, 1, 0, 1);
+    b.TexQuad(b0 - V3{0, 0, 0.25f}, b1 - V3{0, 0, 0.25f}, b1, b0, kAwningTex + (variant & 3), 0, 1, 0.85f, 1); // the valance
+}
+
 void Scooter(PropBuilder &b, V3 base, float yaw, Rng &r)
 {
     const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
@@ -420,8 +454,15 @@ void TrackWorld::AddIsraeliProps()
         std::vector<uint32_t> flag;
         if (SignGen::Make(2, 0, 512, 512, flag))
             m_skinPixels[kFlagTex] = std::move(flag);
+        for (int v = 0; v < 4; ++v) {
+            std::vector<uint32_t> t;
+            if (SignGen::Make(3, v, 512, 512, t))
+                m_skinPixels[kShutterTex + v] = std::move(t);
+            if (SignGen::Make(4, v, 512, 512, t))
+                m_skinPixels[kAwningTex + v] = std::move(t);
+        }
     }
-    const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1200000;
+    const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1600000;
 
     // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
     std::unordered_set<int64_t> road4;
@@ -445,10 +486,11 @@ void TrackWorld::AddIsraeliProps()
     std::vector<PropSolid> solids;
     PropBuilder b{&props, propCap, &solids};
     std::unordered_set<int64_t> busCells, signCells;
-    const size_t kRoofBudget = 220000, kWallBudget = 120000;
+    const size_t kRoofBudget = 220000, kWallBudget = 520000;
     size_t roofTris = 0, wallTris = 0;
     size_t flatTris = 0, flatGround = 0, flatRoad = 0, flatNear = 0, flatNoGround = 0;
-    size_t nShopSigns = 0, nStreetSigns = 0, nFlags = 0;
+    size_t nShopSigns = 0, nStreetSigns = 0, nFlags = 0, nBalconies = 0, nShutters = 0, nAwnings = 0, facadeTris = 0;
+    const size_t kFacadeBudget = 260000;
     std::unordered_set<int64_t> streetCells;
     // Shop signs only go on storefront facades (not freeway walls): by texture name.
     std::unordered_map<uint32_t, bool> storefront;
@@ -636,6 +678,48 @@ void TrackWorld::AddIsraeliProps()
                         ++nWalls;
                     }
                     wallTris += props.size() - before;
+                    // Israeli facade dressing: balconies on the upper floors, roller shutters and awnings at street level.
+                    if (g_signs && facadeTris < kFacadeBudget) {
+                        const size_t fbefore = props.size();
+                        // which side of the wall is the street? the first road met walking out each way
+                        auto reach = [&](float sgn) {
+                            for (int d = 3; d <= 18; d += 3)
+                                if (road4.count(Key(int(std::floor((c.x + hz.x * sgn * d) / 4.0f)), int(std::floor((c.y + hz.y * sgn * d) / 4.0f)))))
+                                    return d;
+                            return 99;
+                        };
+                        const int ra = reach(1.0f), rb = reach(-1.0f);
+                        if (ra != rb && std::min(ra, rb) < 99) {
+                            const V3 out = hz * (ra < rb ? 1.0f : -1.0f);
+                            const V3 along = Norm(V3{-out.y, out.x, 0});
+                            const float base = nearIt->second.first;
+                            const int nb = int(area / 55.0f + rng.f());
+                            for (int i = 0; i < nb; ++i) { // balconies
+                                const V3 q = inTri(0.75f);
+                                const int k = 1 + int(rng.f() * 4.0f);
+                                const float zb = base + 3.4f * float(k);
+                                if (zb > minz + 0.3f && zb < maxz - 1.4f && rng.f() < 0.8f) {
+                                    Balcony(b, V3{q.x, q.y, zb}, along, out, 2.2f + 1.6f * rng.f(), int(rng.f() * 2.99f));
+                                    if (getenv("NFSU2_PROP_DEBUG") && nBalconies % 400 == 0)
+                                        printf("[Balcony] %.1f %.1f %.1f out %.2f %.2f\n", q.x, q.y, zb, out.x, out.y);
+                                    ++nBalconies;
+                                }
+                            }
+                            if (minz < base + 1.2f && maxz > base + 2.8f) { // ground floor: shutters and awnings
+                                const int ns = int(area / 40.0f + rng.f());
+                                for (int i = 0; i < ns; ++i) {
+                                    const V3 q = inTri(0.75f);
+                                    const float r = rng.f();
+                                    if (r < 0.45f) {
+                                        Shutter(b, V3{q.x, q.y, base}, along, out, 1.8f + 1.2f * rng.f(), 2.2f, int(rng.f() * 3.99f)), ++nShutters;
+                                    } else if (r < 0.8f) {
+                                        Awning(b, V3{q.x, q.y, base + 2.7f}, along, out, 2.0f + 1.5f * rng.f(), int(rng.f() * 3.99f)), ++nAwnings;
+                                    }
+                                }
+                            }
+                        }
+                        facadeTris += props.size() - fbefore;
+                    }
                 }
             }
         }
@@ -658,6 +742,6 @@ void TrackWorld::AddIsraeliProps()
     m_groundSource = savedSource;
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
-           "%zu signs, %zu scooters, %zu cafes, %zu Hebrew shop signs, %zu street-name signs, %zu flags\n",
-           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nShopSigns, nStreetSigns, nFlags);
+           "%zu signs, %zu scooters, %zu cafes, %zu Hebrew shop signs, %zu street-name signs, %zu flags, %zu balconies, %zu shutters, %zu awnings\n",
+           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nShopSigns, nStreetSigns, nFlags, nBalconies, nShutters, nAwnings);
 }
