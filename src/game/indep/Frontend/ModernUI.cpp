@@ -41,6 +41,8 @@ SDL_Color Alpha(SDL_Color c, float a) { return {c.r, c.g, c.b, Uint8(std::clamp(
 
 ModernUI::~ModernUI()
 {
+    if (m_map)
+        SDL_DestroyTexture(m_map);
     if (m_font)
         SDL_DestroyTexture(m_font);
     if (m_glow)
@@ -240,10 +242,85 @@ void ModernUI::DrawWind(int w, int h, float strength, float nitro, float t)
     }
 }
 
+void ModernUI::DrawMinimap(int w, int h, const Hud &hud, float t)
+{
+    if (!m_font || !hud.mapPixels || hud.mapSize <= 0)
+        return;
+    if (!m_map || m_mapTexSize != hud.mapSize) {
+        if (m_map)
+            SDL_DestroyTexture(m_map);
+        m_map = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, hud.mapSize, hud.mapSize);
+        m_mapTexSize = hud.mapSize;
+        if (m_map)
+            SDL_SetTextureBlendMode(m_map, SDL_BLENDMODE_BLEND);
+    }
+    if (!m_map)
+        return;
+    SDL_UpdateTexture(m_map, nullptr, hud.mapPixels, hud.mapSize * 4);
+    const float s = float(h) / 720.0f;
+    const float R = 104.0f * s, cx = 34.0f * s + R + 16.0f * s, cy = float(h) - 56.0f * s - R;
+    // The glass bezel: a soft blue glow, a dark rim, the map, a thin bright ring and an amber inner rim line.
+    Glow(cx, cy, R * 1.55f, {20, 70, 165, 70});
+    auto ring = [&](float r0, float r1, SDL_Color c) {
+        constexpr int kSeg = 72;
+        for (int i = 0; i < kSeg; ++i)
+            ArcSegment(cx, cy, r0, r1, 6.2831853f * float(i) / kSeg, 6.2831853f * float(i + 1.05f) / kSeg, c);
+    };
+    ring(R - 0.5f * s, R + 8.0f * s, {6, 10, 20, 215});
+    const SDL_FRect dst{cx - R, cy - R, R * 2.0f, R * 2.0f};
+    SDL_RenderCopyF(m_r, m_map, nullptr, &dst);
+    ring(R + 8.0f * s, R + 9.8f * s, {150, 205, 255, 170});
+    ring(R - 2.0f * s, R, {255, 255, 255, 40});
+    // The compass: ticks every 15 degrees turning with the map, longer at the cardinal points, an amber N at north.
+    const float northA = hud.mapRotate ? hud.mapYaw : 1.5707963f; // north is at pixel offset (-cos a, -sin a) from the centre
+    for (int k = 0; k < 24; ++k) {
+        const float ang = northA + float(k) * (6.2831853f / 24.0f); // k = 0: north; then clockwise on the screen
+        const float dx = -std::cos(ang), dy = -std::sin(ang);
+        const bool major = k % 6 == 0;
+        const float r0 = R + 11.0f * s, r1 = r0 + (major ? 9.0f : 4.5f) * s;
+        const SDL_Color c = k == 0 ? SDL_Color{255, 170, 60, 255} : SDL_Color{190, 215, 245, major ? Uint8(170) : Uint8(80)};
+        // tick as a thin quad
+        const float nx = -dy * 1.1f * s, ny = dx * 1.1f * s;
+        Quad({cx + dx * r0 + nx, cy + dy * r0 + ny}, {cx + dx * r0 - nx, cy + dy * r0 - ny}, {cx + dx * r1 - nx, cy + dy * r1 - ny},
+             {cx + dx * r1 + nx, cy + dy * r1 + ny}, c, c, c, c);
+    }
+    {
+        const float dx = -std::cos(northA), dy = -std::sin(northA), rr = R + 30.0f * s;
+        Glow(cx + dx * rr, cy + dy * rr, 15.0f * s, {255, 150, 40, 90});
+        Text(cx + dx * rr, cy + dy * rr - 9.0f * s, 18.0f * s, "N", {255, 190, 90, 255}, 1);
+    }
+    // The player: a bright arrowhead with a soft halo (up when the map turns with the car).
+    const float psi = hud.mapRotate ? 0.0f : 1.5707963f - hud.mapYaw; // clockwise from up
+    auto rot = [&](float x, float y) { return SDL_FPoint{cx + (x * std::cos(psi) - y * std::sin(psi)) * s, cy + (x * std::sin(psi) + y * std::cos(psi)) * s}; };
+    Glow(cx, cy, 24.0f * s, {120, 200, 255, 90});
+    const SDL_FPoint tip = rot(0, -14), l = rot(-9.5f, 11), n = rot(0, 5), r = rot(9.5f, 11);
+    Quad(tip, l, n, tip, {255, 255, 255, 255}, {200, 225, 255, 255}, {170, 205, 255, 255}, {255, 255, 255, 255});
+    Quad(tip, n, r, tip, {255, 255, 255, 255}, {170, 205, 255, 255}, {200, 225, 255, 255}, {255, 255, 255, 255});
+    // The readout under the map: distance to the finish, or the map scale in free roam.
+    char buf[48];
+    if (hud.finishKm >= 0.0f)
+        snprintf(buf, sizeof buf, "%.1f KM", hud.finishKm);
+    else
+        snprintf(buf, sizeof buf, "%d M", int(hud.mapMetres + 0.5f));
+    const float pw = 112.0f * s, py = cy + R + 24.0f * s;
+    Glass(cx - pw * 0.5f, py, pw, 30.0f * s, 10.0f * s, {8, 14, 28, 170}, {120, 190, 255, 120});
+    Text(cx + 7.0f * s, py + 3.0f * s, 22.0f * s, buf, hud.finishKm >= 0 ? SDL_Color{255, 214, 80, 255} : SDL_Color{200, 225, 250, 235}, 1);
+    if (hud.finishKm >= 0.0f) { // a tiny chequered flag glyph
+        const float fx = cx - pw * 0.5f + 14.0f * s, fy = py + 8.0f * s, q = 4.2f * s;
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b) {
+                const SDL_Color c = (a + b) % 2 ? SDL_Color{255, 255, 255, 240} : SDL_Color{20, 24, 34, 240};
+                Quad({fx + a * q, fy + b * q}, {fx + (a + 1) * q, fy + b * q}, {fx + (a + 1) * q, fy + (b + 1) * q}, {fx + a * q, fy + (b + 1) * q}, c, c, c, c);
+            }
+    }
+    (void)t;
+}
+
 void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
 {
     if (!m_font)
         return;
+    DrawMinimap(w, h, hud, t);
     const float s = float(h) / 720.0f;
     const SDL_Color glass{8, 14, 28, 150}, edge{120, 190, 255, 120};
     char buf[64];

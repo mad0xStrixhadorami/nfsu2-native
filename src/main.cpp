@@ -666,6 +666,8 @@ int main(int argc, char **argv)
     std::vector<std::vector<uint8_t>> hudTexturePacks; // kept alive: the front end keeps pointers into them
     float introBars = 0.0f; // letterbox amount of the pre-race camera (#265)
     Minimap minimap; // the HUD's round map (#259)
+    bool mapNative = false, mapRotate = true; // the Unbound-style native map is being drawn (#296)
+    float mapWindow = 260.0f;
     std::vector<uint32_t> minimapPixels;
     bool minimapBound = false;
     std::vector<PlayerCar> garageCars; // the career's other cars on the garage room's discs (#252)
@@ -2303,14 +2305,31 @@ int main(int argc, char **argv)
                     dots.clear();
                     for (const PlayerCar &o : opponentCars)
                         dots.push_back({o.X(), o.Y(), 255, 70, 70});
-                    const float window = 260.0f + std::min(160.0f, std::fabs(car.Speed()) * 3.0f); // zooms out with speed
-                    minimap.Render(car.X(), car.Y(), car.Yaw(), window, mode == 2, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
-                    fe.SetStreamTexture(kMapTex, minimapPixels.data(), 256, 256);
-                    if (!minimapBound) {
+                    static float windowSm = 260.0f;
+                    const float windowWant = 240.0f + std::min(190.0f, std::fabs(car.Speed()) * 3.4f); // zooms out with speed
+                    windowSm += (windowWant - windowSm) * std::min(1.0f, 3.0f * std::max(dt, 0.001f));
+                    const float window = windowSm;
+                    // The Unbound-style map (ISSUES #296): drawn natively by ModernUI with the modern HUD; the FEng map is hidden then.
+                    mapNative = modernUi.Ready() && race.ModernHud() && !getenv("NFSU2_CLASSIC_MAP");
+                    mapWindow = window, mapRotate = mode == 2;
+                    if (mapNative) {
+                        minimap.RenderModern(car.X(), car.Y(), car.Yaw(), window, mapRotate, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
+                        if (FEObject *mo = hud->FindObjectByHash(kMapObj))
+                            mo->Flags |= 1u;
+                        if (FEObject *no = hud->FindObjectByHash(kNorthObj))
+                            no->Flags |= 1u;
+                        if (FEObject *bg = hud->FindObjectByHash(0x40cdc515)) // the original's black backing disc
+                            bg->Flags |= 1u;
+                    } else {
+                        minimap.Render(car.X(), car.Y(), car.Yaw(), window, mode == 2, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
+                        fe.SetStreamTexture(kMapTex, minimapPixels.data(), 256, 256);
+                    }
+                    if (!mapNative && !minimapBound) {
                         FENativeInterface::SetTextureHash(hud, kMapObj, kMapTex);
                         minimapBound = true;
                     }
                     // The north marker orbits the map (rotate mode) or stays on top (north up).
+                    if (!mapNative) {
                     FEObject *mapObj = hud->FindObjectByHash(kMapObj), *north = hud->FindObjectByHash(kNorthObj);
                     if (mapObj && north && mapObj->GetObjData() && north->GetObjData()) {
                         const float a = mode == 2 ? car.Yaw() : 1.5707963f;
@@ -2319,6 +2338,9 @@ int main(int argc, char **argv)
                         north->GetObjData()->Pos.y = mapObj->GetObjData()->Pos.y - std::sin(a) * r;
                         north->Flags |= 0x400000u;
                     }
+                    } // !mapNative
+                } else {
+                    mapNative = false; // the player turned the map off in the options
                 }
             }
             // The full-screen maps (career World Map, in-game World Map): the live road map of the region replaces the
@@ -2498,6 +2520,10 @@ int main(int argc, char **argv)
                 mh.drifting = car.Drifting(), mh.driftAngle = car.DriftAngleDeg(), mh.driftChain = car.DriftChain();
                 mh.driftMult = car.DriftMultiplier(), mh.driftBanner = car.DriftBanner(), mh.driftBank = car.DriftLastBank();
                 mh.driftTotal = car.DriftTotal();
+                if (mapNative) {
+                    mh.mapPixels = minimapPixels.data(), mh.mapSize = 256, mh.mapRotate = mapRotate, mh.mapYaw = car.Yaw(), mh.mapMetres = mapWindow;
+                    mh.finishKm = (race.IsFreeRun() || race.RaceLength() < 50.0f || !route.Valid()) ? -1.0f : std::max(0.0f, (race.RaceLength() - race.PlayerDistance()) * 0.001f);
+                }
                 // Wind (ISSUES #292): streaks from ~90 km/h, full by ~200; nitrous adds a blue tunnel.
                 static float windSm = 0, nitroSm = 0;
                 const float frameDt = 1.0f / 60.0f;

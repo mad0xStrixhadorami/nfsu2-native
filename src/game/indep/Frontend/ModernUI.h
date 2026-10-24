@@ -24,6 +24,13 @@ public:
         bool drifting = false;
         float driftAngle = 0, driftChain = 0, driftBanner = 0, driftBank = 0, driftTotal = 0;
         int driftMult = 1;
+        // The map (ISSUES #296): the RGBA window from Minimap::RenderModern, its heading and how far to the finish.
+        const uint32_t *mapPixels = nullptr;
+        int mapSize = 0;
+        bool mapRotate = true; // heading up; otherwise north up
+        float mapYaw = 0;      // the car's yaw (rad)
+        float mapMetres = 0;   // the window's diameter in metres (the scale label)
+        float finishKm = -1;   // < 0: no finish (free roam)
     };
     bool Init(SDL_Renderer *r);
     bool Ready() const { return m_font != nullptr; }
@@ -41,13 +48,15 @@ public:
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
     ~ModernUI();
+    void DrawMinimap(int w, int h, const Hud &hud, float seconds);
 
 private:
     struct Glyph {
         float x0, y0, x1, y1, xoff, yoff, xadv; // atlas rect and layout (pixels at kBakePx)
     };
     SDL_Renderer *m_r = nullptr;
-    SDL_Texture *m_font = nullptr, *m_glow = nullptr;
+    SDL_Texture *m_font = nullptr, *m_glow = nullptr, *m_map = nullptr;
+    int m_mapTexSize = 0;
     Glyph m_glyphs[96] = {};
     int m_atlasW = 0, m_atlasH = 0;
     static constexpr float kBakePx = 96.0f;

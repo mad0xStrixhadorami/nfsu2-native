@@ -189,6 +189,125 @@ void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, c
         }
 }
 
+void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots, int n,
+                           std::vector<uint32_t> &out) const
+{
+    out.assign(size_t(n) * size_t(n), 0);
+    const float R = metres * 0.5f;
+    const float cy = std::cos(rotate ? yaw : 0.0f), sy = std::sin(rotate ? yaw : 0.0f);
+    auto toWorld = [&](float u, float v, float &wx, float &wy) {
+        if (rotate)
+            wx = px + v * cy + u * sy, wy = py + v * sy - u * cy;
+        else
+            wx = px + u, wy = py + v;
+    };
+    auto toPixel = [&](float wx, float wy, float &sx, float &sv) {
+        const float dx = wx - px, dy = wy - py;
+        const float u = rotate ? dx * sy - dy * cy : dx, v = rotate ? dx * cy + dy * sy : dy;
+        sx = (u / R * 0.5f + 0.5f) * n;
+        sv = (0.5f - v / R * 0.5f) * n;
+    };
+    auto roadAt = [&](float bx, float by) { // bilinear road coverage 0..1 (smooth edges)
+        bx -= 0.5f, by -= 0.5f;
+        const int x = int(std::floor(bx)), y = int(std::floor(by));
+        const float fx = bx - float(x), fy = by - float(y);
+        auto at = [&](int xx, int yy) { return (xx < 0 || yy < 0 || xx >= m_w || yy >= m_h) ? 0.0f : float(m_road[size_t(yy) * size_t(m_w) + size_t(xx)]); };
+        return ((at(x, y) * (1 - fx) + at(x + 1, y) * fx) * (1 - fy) + (at(x, y + 1) * (1 - fx) + at(x + 1, y + 1) * fx) * fy) * (1.0f / 255.0f);
+    };
+    auto blendPx = [&](int x, int y, float r, float g, float b, float a) {
+        if (x < 0 || y < 0 || x >= n || y >= n)
+            return;
+        uint32_t &px2 = out[size_t(y) * n + x];
+        if ((px2 >> 24) == 0)
+            return;
+        const float dr = float(px2 & 255), dg = float((px2 >> 8) & 255), db = float((px2 >> 16) & 255);
+        const uint32_t nr = uint32_t(std::clamp(dr + (r - dr) * a, 0.0f, 255.0f)), ng = uint32_t(std::clamp(dg + (g - dg) * a, 0.0f, 255.0f)),
+                       nb = uint32_t(std::clamp(db + (b - db) * a, 0.0f, 255.0f));
+        px2 = (px2 & 0xff000000u) | nb << 16 | ng << 8 | nr;
+    };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const float u = ((i + 0.5f) / n * 2.0f - 1.0f) * R, v = (1.0f - (j + 0.5f) / n * 2.0f) * R;
+            const float rr = std::sqrt(u * u + v * v) / R;
+            if (rr > 1.0f)
+                continue;
+            float wx, wy;
+            toWorld(u, v, wx, wy);
+            const float bx = (wx - m_x0) / kRes, by = (wy - m_y0) / kRes;
+            const float c0 = roadAt(bx, by);
+            // roads: the fill, its edge (inside, against the nearest non-road) and a soft glow around it
+            const float e = 2.2f;
+            const float nb = std::min({roadAt(bx + e, by), roadAt(bx - e, by), roadAt(bx, by + e), roadAt(bx, by - e)});
+            const float edge = std::clamp(c0 * (1.0f - nb) * 1.25f, 0.0f, 1.0f);
+            float glow = 0.0f;
+            for (int k = 0; k < 8; ++k) {
+                const float a = float(k) * 0.785398f;
+                glow += roadAt(bx + std::cos(a) * 4.5f, by + std::sin(a) * 4.5f);
+            }
+            glow = (glow * 0.125f) * (1.0f - c0);
+            const float grad = 0.5f + 0.5f * v / R;                       // lighter towards the top: a gentle sky-to-ground feel
+            const float vig = 1.0f - 0.38f * rr * rr;
+            float r = (10.0f + 8.0f * grad) * vig, g = (17.0f + 14.0f * grad) * vig, b = (32.0f + 22.0f * grad) * vig;
+            const float fill = c0 * 0.55f;
+            r += fill * 52.0f * vig, g += fill * 74.0f * vig, b += fill * 112.0f * vig;
+            r += glow * 40.0f, g += glow * 110.0f, b += glow * 230.0f;
+            r += edge * 150.0f, g += edge * 178.0f, b += edge * 215.0f;
+            const float aa = std::clamp((1.0f - rr) * float(n) * 0.5f, 0.0f, 1.0f); // a 1-2 pixel anti-aliased rim
+            out[size_t(j) * n + i] = uint32_t(aa * 255.0f) << 24 | uint32_t(std::clamp(b, 0.0f, 255.0f)) << 16 | uint32_t(std::clamp(g, 0.0f, 255.0f)) << 8 |
+                                     uint32_t(std::clamp(r, 0.0f, 255.0f));
+        }
+    auto disc = [&](float sx, float sv, float rad, float r, float g, float b, float a) {
+        const int ir = int(std::ceil(rad)) + 1;
+        for (int dy = -ir; dy <= ir; ++dy)
+            for (int dx = -ir; dx <= ir; ++dx) {
+                const float d = std::sqrt(float(dx * dx + dy * dy));
+                if (d <= rad + 0.5f)
+                    blendPx(int(sx) + dx, int(sv) + dy, r, g, b, a * std::clamp(rad + 0.5f - d, 0.0f, 1.0f));
+            }
+    };
+    if (route && route->Valid()) {
+        const float len = route->Length();
+        const float rad = std::max(2.4f, n / 56.0f);
+        for (int pass = 0; pass < 3; ++pass)
+            for (float s = 0; s < len; s += 2.0f) {
+                float x, y, dx, dy, sx, sv;
+                route->Sample(s, x, y, dx, dy);
+                if (std::fabs(x - px) > R * 1.25f || std::fabs(y - py) > R * 1.25f)
+                    continue;
+                toPixel(x, y, sx, sv);
+                if (pass == 0)
+                    disc(sx, sv, rad + 2.6f, 255, 130, 20, 0.16f); // the glow
+                else if (pass == 1)
+                    disc(sx, sv, rad + 0.9f, 215, 105, 12, 0.95f); // the outline
+                else
+                    disc(sx, sv, rad - 0.4f, 255, 212, 66, 1.0f);  // the line
+            }
+        for (float s = 6.0f; s < len; s += 14.0f) { // direction dots
+            float x, y, dx, dy, sx, sv;
+            route->Sample(s, x, y, dx, dy);
+            if (std::fabs(x - px) > R * 1.1f || std::fabs(y - py) > R * 1.1f)
+                continue;
+            toPixel(x, y, sx, sv);
+            disc(sx, sv, std::max(0.9f, rad * 0.28f), 255, 252, 235, 0.9f);
+        }
+        float fx, fy, fdx, fdy, sx, sv; // the finish: a ringed flag dot at the end of the route
+        route->Sample(len, fx, fy, fdx, fdy);
+        toPixel(fx, fy, sx, sv);
+        const float rrf = std::hypot(sx - n * 0.5f, sv - n * 0.5f) / (n * 0.5f);
+        if (rrf < 0.92f) {
+            disc(sx, sv, rad + 3.4f, 255, 255, 255, 1.0f);
+            disc(sx, sv, rad + 1.6f, 14, 18, 30, 1.0f);
+            disc(sx, sv, rad - 0.2f, 255, 255, 255, 1.0f);
+        }
+    }
+    for (const Dot &d : dots) {
+        float sx, sv;
+        toPixel(d.x, d.y, sx, sv);
+        disc(sx, sv, std::max(4.2f, n / 54.0f), 255, 255, 255, 0.95f);
+        disc(sx, sv, std::max(2.8f, n / 80.0f), d.r, d.g, d.b, 1.0f);
+    }
+}
+
 void Minimap::RenderFull(const RaceRoute *route, const std::vector<Dot> &dots, int size, std::vector<uint32_t> &out, const Dot *player,
                          float playerYaw) const
 {

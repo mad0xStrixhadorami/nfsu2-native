@@ -24,6 +24,11 @@ public:
     // player's yaw is up, otherwise north (+Y) is up. route (optional) is drawn as a line.
     void Render(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots,
                 int size, std::vector<uint32_t> &out, bool roundMask = true) const;
+    // The Unbound-style map (ISSUES #296): the same window as Render but styled for ModernUI to draw natively: a dark gradient ground, roads as
+    // a blue-grey fill with bright edges and a soft glow, the route as a thick glowing amber line with direction dots, the finish as a
+    // flag marker at the end of the route, rivals as red dots with a white ring. No player arrow (ModernUI draws it crisp on top).
+    void RenderModern(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots, int size,
+                      std::vector<uint32_t> &out) const;
     // The whole region, north up, as a square image (the full-screen maps). `player` (optional) is drawn as an arrow.
     void RenderFull(const RaceRoute *route, const std::vector<Dot> &dots, int size, std::vector<uint32_t> &out, const Dot *player = nullptr,
                     float playerYaw = 0.0f) const;
