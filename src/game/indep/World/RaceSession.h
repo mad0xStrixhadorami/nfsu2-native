@@ -29,6 +29,7 @@ public:
         // Options > Player / Gameplay (ISSUES #239): HUD elements and the minimap mode (0 off, 1 static, 2 rotate).
         bool showGauges = true, showPosition = true, showLapInfo = true, showLeaderboard = true;
         int raceMapMode = 2, exploreMapMode = 2;
+        bool modernHud = true;    // gauges / position / lap / time are drawn by ModernUI instead of the FEng elements
         float introSeconds = 0;   // the cinematic pre-race camera (ISSUES #265): the countdown starts after it
     };
     enum Phase { kCountdown, kRacing, kFinished };
@@ -44,6 +45,12 @@ public:
     float RaceDistance(float startS, float progress) const;
     float LapLength() const;
     int Laps() const { return m_config.laps; }
+    int Lap() const { return m_lap; }                 // the modern HUD (ISSUES #276)
+    float LapTime() const { return m_lapTime; }
+    int Position() const { return m_position; }
+    int Racers() const { return m_racers; }
+    int GaugeScale() const { return m_gaugeLines; }
+    bool ModernHud() const { return m_config.modernHud; }
     float RaceLength() const { return m_config.laps * LapLength(); } // finish distance
     bool Running() const { return m_phase == kRacing; }
     float PlayerDistance() const { return RaceDistance(m_startS, m_progress); }
@@ -137,6 +144,7 @@ private:
     float m_startS = 0;        // route distance where the player started
     float m_progress = 0;      // unwrapped metres driven along the route
     int m_position = 1;
+    int m_racers = 1;
     float m_wrongWay = 0;      // seconds spent driving against the route
     // Drag gearbox (see IsDrag).
     int m_gear = 1;

@@ -144,14 +144,18 @@ void RaceSession::SetupHud()
         return;
     // Show only the single-race elements; the package also holds online, career, drag, drift and
     // world-map widgets that UG2's HUD class hides per mode.
-    static const uint32_t kShown[] = {kGaugeCluster, kGaugeBacking, kMinimapMask, kMinimapNorth, kTrackMap,
-                                      kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText};
+    static const uint32_t kShownClassic[] = {kGaugeCluster, kGaugeBacking, kMinimapMask, kMinimapNorth, kTrackMap,
+                                             kPosition, kPositionBacking, kLapGroup, kLapTimeGroup, kCountdownText};
+    // The modern HUD (ModernUI) draws the gauges, position, lap and time itself.
+    static const uint32_t kShownModern[] = {kMinimapMask, kMinimapNorth, kTrackMap, kCountdownText};
+    const uint32_t *const kShown = m_config.modernHud ? kShownModern : kShownClassic;
+    const size_t kShownCount = m_config.modernHud ? std::size(kShownModern) : std::size(kShownClassic);
     // Drift races (HUD_Drift.fng) also show the drift gauge and the style-point groups.
     static const uint32_t kDriftShown[] = {kStylePointsGroup, kDriftBannerGroup, kDriftTotalGroup,
                                            kSpeedTrapGroup, kAngleGroup};
     const bool sprint = m_config.route && m_config.route->Valid() && !m_config.route->Closed();
     for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext()) {
-        bool shown = std::find(std::begin(kShown), std::end(kShown), o->NameHash) != std::end(kShown);
+        bool shown = std::find(kShown, kShown + kShownCount, o->NameHash) != kShown + kShownCount;
         if (IsDrift() && std::find(std::begin(kDriftShown), std::end(kDriftShown), o->NameHash) != std::end(kDriftShown))
             shown = true;
         // URL races show the standings board (the row children are set in UpdateHud).
@@ -431,6 +435,7 @@ void RaceSession::UpdateLine(const PlayerCar &car)
 
 bool RaceSession::Update(const PlayerCar &car, const std::vector<float> &opponents, float dt)
 {
+    m_racers = int(opponents.size()) + 1;
     if (m_phase == kCountdown && m_intro > 0.0f) { // the cinematic camera runs; nothing else moves
         if (m_intro == m_introTotal && m_hud)
             for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext())

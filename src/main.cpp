@@ -32,6 +32,7 @@
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/CarLot.h"
 #include "game/indep/Career/Hotspots.h"
+#include "game/indep/Frontend/ModernUI.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -405,6 +406,9 @@ int main(int argc, char **argv)
         english = ReadGameFile(*fs, "LANGUAGES\\ENGLISH.BIN");
     printf("[Lang] language file %s\n", languageName.c_str());
     FENativeInterface fe(ren);
+    ModernUI modernUi; // ISSUES #276: NFSU2_CLASSIC_UI=1 keeps the original look
+    if (!getenv("NFSU2_CLASSIC_UI"))
+        modernUi.Init(ren);
     fe.AddBundle(globalA.data(), globalA.size());
     fe.AddBundle(langTextures.data(), langTextures.size());
     fe.AddBundle(english.data(), english.size());
@@ -834,6 +838,7 @@ int main(int argc, char **argv)
         raceConfig = RaceSession::Config();
         raceConfig.laps = startup.RaceLaps();
         raceConfig.showGauges = startup.ShowGauges();
+        raceConfig.modernHud = !getenv("NFSU2_CLASSIC_HUD");
         raceConfig.showPosition = startup.ShowRacePosition();
         raceConfig.showLapInfo = startup.ShowLapInfo();
         raceConfig.showLeaderboard = startup.ShowLeaderboard();
@@ -2132,6 +2137,24 @@ int main(int argc, char **argv)
             }
             SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             engine->Render();
+            if (modernUi.Ready() && hud && !pausePkg && !cribPkg && !flyCamera && race.ModernHud() && !race.InIntro() &&
+                race.GetPhase() != RaceSession::kFinished) { // the redesigned race HUD (ISSUES #276)
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                ModernUI::Hud mh;
+                mh.speedKmh = car.Speed() * 3.6f;
+                mh.rpm = car.Rpm();
+                mh.rpmScale = float(race.GaugeScale());
+                mh.gear = car.Gear();
+                mh.hasNitrous = car.HasNitrous();
+                mh.nitrous = car.NitrousFraction();
+                mh.nitrousActive = car.NitrousActive();
+                mh.race = !race.IsFreeRun();
+                mh.position = race.Position(), mh.racers = race.Racers(), mh.lap = race.Lap(), mh.laps = race.Laps();
+                mh.lapTime = race.LapTime(), mh.bestLap = race.BestLap();
+                mh.mph = startup.SpeedoMph();
+                modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
             static Uint32 fpsStart = now, fpsFrames = 0;
             if (++fpsFrames == 60) {
                 for (size_t i = 0; i < ai.size() && getenv("NFSU2_WORLD_DEBUG"); ++i)
@@ -2157,6 +2180,13 @@ int main(int argc, char **argv)
 
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
+            if (modernUi.Ready()) { // the animated full-window backdrop under the 4:3 FEng box
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int bw, bh;
+                SDL_GetRendererOutputSize(ren, &bw, &bh);
+                modernUi.DrawBackdrop(bw, bh, float(elapsed) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
             startup.PreRender(); // after the FEng script update, before the frame is drawn
             engine->Render();
             // The dialog is a package on top of the shop; the preview overlay is drawn outside the
