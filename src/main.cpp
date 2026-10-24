@@ -378,7 +378,7 @@ int main(int argc, char **argv)
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa);
     }
     SDL_Window *win = SDL_CreateWindow("Need for Speed Underground 2 (native)", SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, 1280, 960, SDL_WINDOW_RESIZABLE);
+                                       SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_RESIZABLE); // 16:9; FEng keeps its 4:3 box (pillarboxed, never stretched)
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
     SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
@@ -1532,7 +1532,7 @@ int main(int argc, char **argv)
                 printf("[Career] explore mode (HUD %s)\n", hud ? currentHudName.c_str() : "missing");
             }
             if (!pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished &&
-                (pressed & FENativeInterface::kPadStart)) {
+                (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) { // Esc pauses too
                 pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff);
                 printf("[Race] paused\n");
                 if (getenv("NFSU2_WORLD_DEBUG"))
@@ -2133,7 +2133,9 @@ int main(int argc, char **argv)
                 int w, h;
                 SDL_GetRendererOutputSize(ren, &w, &h);
                 SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
-                SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
+                SDL_Rect whole{0, 0, w, h}; // the whole window, not just the 4:3 box of the logical size
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                SDL_RenderReadPixels(ren, &whole, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
                 SDL_SaveBMP(s, shot);
                 SDL_FreeSurface(s);
                 running = false;

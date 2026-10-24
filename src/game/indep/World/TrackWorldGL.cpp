@@ -353,8 +353,11 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float r[3] = {sy, -cy, 0.0f};
     const float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
     const float c[3] = {cam.x, cam.y, cam.z};
-    const float tanHalf = std::tan(std::clamp(cam.fov, 20.0f, 120.0f) * 0.5f * 3.14159265f / 180.0f); // horizontal FOV (70 by default)
+    // Horizontal FOV (70 by default) is authored for 4:3; wider windows keep the vertical FOV (Hor+) so the picture is
+    // widened, not stretched or cropped.
     const float aspect = float(height) / float(std::max(width, 1));
+    const float tanHalf = std::tan(std::clamp(cam.fov, 20.0f, 120.0f) * 0.5f * 3.14159265f / 180.0f) *
+                          std::max(1.0f, (1.0f / aspect) * 0.75f);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     const float side = inset && inset->mirror ? -1.0f : 1.0f; // a mirror flips the image left-right
