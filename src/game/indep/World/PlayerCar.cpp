@@ -451,6 +451,14 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // LOD suffix _A.._D; names are cut to 27 characters, and the A level comes first.
         if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
             continue;
+        if (const char *want = getenv("NFSU2_SLOT_SOLIDS")) { // dev aid: which solids use a material slot hash (hex)
+            const uint32_t w = uint32_t(strtoul(want, nullptr, 16));
+            size_t n3 = 0;
+            for (uint32_t h : s.textures)
+                n3 += h == w;
+            if (n3)
+                printf("[SlotSolid] %s uses %08x (%zu of %zu tris) bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", n.c_str(), w, size_t(std::count_if(s.tris.begin(), s.tris.end(), [&](const SolidMesh::Triangle &t) { return t.tex >= 0 && size_t(t.tex) < s.textures.size() && s.textures[t.tex] == w; })), s.tris.size(), s.bboxMin[0], s.bboxMin[1], s.bboxMin[2], s.bboxMax[0], s.bboxMax[1], s.bboxMax[2]);
+        }
         if (getenv("NFSU2_LIGHT_DEBUG") && (Contains(n, "LIGHT") || Contains(n, "LAMP") || Contains(n, "SIGNAL"))) {
             printf("[Light] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) slots:", n.c_str(), s.tris.size(), s.bboxMin[0], s.bboxMin[1],
                    s.bboxMin[2], s.bboxMax[0], s.bboxMax[1], s.bboxMax[2]);
