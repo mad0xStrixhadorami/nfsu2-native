@@ -208,25 +208,75 @@ Vec3 Vehicle::ToBody(const Vec3 &v) const
 void Vehicle::CollideWorld(const TrackWorld &world, float dt)
 {
     Body &b = m_body;
-    if (Len(b.vel) < 0.05f)
+    if (Len(b.vel) < 0.05f && Len(b.omega) < 0.05f)
         return;
-    const Vec3 fwd = b.rot.r[0];
-    const Vec3 p1 = b.pos + b.vel * dt;
-    for (float k : {-1.8f, 0.0f, 1.8f}) {
-        const Vec3 a = b.pos + fwd * k;
-        const Vec3 c = p1 + fwd * k;
-        float n[3];
-        if (world.HitsWall(a.x, a.y, a.z, c.x, c.y, c.z, n)) {
-            const Vec3 nn = {n[0], n[1], n[2]};
-            const float vn = Dot(b.momentum, nn);
-            if (vn < 0) {
-                m_wallImpact = std::max(m_wallImpact, -vn * b.invMass);
-                b.momentum = b.momentum - nn * vn;
+    // Footprint contact (ISSUES #293). The old stand-in cast three rays along the centreline and only cancelled the normal momentum:
+    // the nose could sit metres inside a wall, a sliding car never touched anything with its flanks and nothing made it spin. Now eight
+    // points of the body rectangle (corners, mid-sides, nose and tail centre) are swept along their own velocity, and a hit applies a
+    // proper impulse at that point: restitution for hard hits, Coulomb friction along the wall, so glancing blows rotate the car.
+    static const bool legacy = getenv("NFSU2_OLD_WALLS") != nullptr;
+    if (legacy) {
+        const Vec3 fwd = b.rot.r[0];
+        const Vec3 p1 = b.pos + b.vel * dt;
+        for (float k : {-1.8f, 0.0f, 1.8f}) {
+            const Vec3 a = b.pos + fwd * k, c = p1 + fwd * k;
+            float n[3];
+            if (world.HitsWall(a.x, a.y, a.z, c.x, c.y, c.z, n)) {
+                const Vec3 nn = {n[0], n[1], n[2]};
+                const float vn = Dot(b.momentum, nn);
+                if (vn < 0) {
+                    m_wallImpact = std::max(m_wallImpact, -vn * b.invMass);
+                    b.momentum = b.momentum - nn * vn;
+                }
+                b.pos = b.pos + nn * 0.02f;
+                UpdateDerived();
+                return;
             }
-            b.pos = b.pos + nn * 0.02f;
-            UpdateDerived();
-            return;
         }
+        return;
+    }
+    float cx, hl, hw;
+    Footprint(cx, hl, hw);
+    const Vec3 pts[8] = {{cx + hl, hw, 0}, {cx + hl, -hw, 0}, {cx - hl, hw, 0}, {cx - hl, -hw, 0},
+                         {cx, hw, 0},      {cx, -hw, 0},      {cx + hl, 0, 0},  {cx - hl, 0, 0}};
+    for (int pass = 0; pass < 3; ++pass) {
+        bool any = false;
+        for (const Vec3 &local : pts) {
+            const Vec3 p = b.pos + ToWorld(local);
+            const Vec3 v = VelocityAt(p);
+            const float vl = Len(v);
+            if (vl < 0.05f)
+                continue;
+            const Vec3 q = p + v * dt + v * (0.06f / vl); // swept along its own velocity, plus a little look-ahead
+            float n[3];
+            if (!world.HitsWall(p.x, p.y, p.z, q.x, q.y, q.z, n))
+                continue;
+            Vec3 nn = {n[0], n[1], 0.0f}; // walls are vertical: no vertical impulse (the suspension handles the ground)
+            const float nl = Len(nn);
+            if (nl < 1e-3f)
+                continue;
+            nn = nn * (1.0f / nl);
+            const float vn = Dot(v, nn);
+            if (vn >= 0)
+                continue; // already moving away
+            const float invM = InverseMassAlong(p, nn);
+            const float e = -vn > 4.0f ? 0.22f : 0.0f;
+            const float j = -(1.0f + e) * vn / invM;
+            Vec3 J = nn * j;
+            const Vec3 vt = v - nn * vn;
+            const float vtl = Len(vt);
+            if (vtl > 1e-3f) {
+                const Vec3 t = vt * (1.0f / vtl);
+                const float jt = std::min(vtl / InverseMassAlong(p, t), 0.35f * j); // friction: stops the slide, never reverses it
+                J = J - t * jt;
+            }
+            ApplyImpulse(J, p);
+            m_wallImpact = std::max(m_wallImpact, -vn);
+            b.pos = b.pos + nn * 0.03f;
+            any = true;
+        }
+        if (!any)
+            break;
     }
 }
 
@@ -445,6 +495,12 @@ void Vehicle::Update(const TrackWorld &world, const Controls &in, float dt)
     for (int k = 0; k < n; ++k)
         Substep(world, h);
 
+    static const bool shiftDebug = getenv("NFSU2_SHIFT_DEBUG") != nullptr;
+    if (shiftDebug && (m_drive.mode != 3 || m_drive.gear != m_shiftDbgGear)) {
+        printf("[Shift] v %.1f gear %d->%d mode %d clutch %.2f rpm %.0f thr %.2f\n", ForwardSpeed(), m_drive.gear, m_drive.targetGear, m_drive.mode,
+               m_drive.clutch, Rpm(), m_in.throttle);
+        m_shiftDbgGear = m_drive.gear;
+    }
     static const bool debug = getenv("NFSU2_PHYS_DEBUG") != nullptr;
     m_accum += dt;
     if (debug && m_accum >= 0.25f) {
@@ -469,7 +525,18 @@ void Vehicle::AutoGearbox()
     Drivetrain &d = m_drive;
     if (d.mode != 3)
         return;
-    const float rpm = m_engine.speed * kRadToRpm;
+    // The shift decision uses the rpm the engine runs at in the CURRENT gear, from the driven wheels' speed. The engine's own speed
+    // is still the free-revved value of the shift that just ended (about 6500 rpm), so judging by it made the box upshift again and
+    // again: a Focus went 1-2-3-4-5 at 33 mph and then hunted, taking 20 s to 60 mph instead of 7 (ISSUES #293).
+    float rpm = m_engine.speed * kRadToRpm;
+    if (d.gear >= 2) {
+        float driven = 0, spinSum = 0;
+        for (const Wheel &w : m_wheel)
+            if (w.driven)
+                driven += 1, spinSum += w.spin;
+        if (driven > 0)
+            rpm = std::max(0.0f, spinSum / driven * d.ratio[d.gear] * (d.rearSplit > 0.5f ? d.rearFinal : d.frontFinal) * kRadToRpm);
+    }
     const float fwd = ForwardSpeed();
     int target = d.gear;
     if (d.gear == 0) {

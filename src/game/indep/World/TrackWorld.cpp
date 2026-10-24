@@ -197,6 +197,14 @@ bool TrackWorld::CollisionGround(float x, float y, float zq, float &z, float *no
 
 bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *normal) const
 {
+    if (m_flat) {
+        if (zMax < m_flatZ)
+            return false;
+        z = m_flatZ;
+        if (normal)
+            normal[0] = normal[1] = 0.0f, normal[2] = 1.0f;
+        return true;
+    }
     // The game's own surface first (the collision mesh); the render triangles only where it has no
     // face at all (the ISSUES #133 hybrid let a tunnel roof count as ground, #145).
     if (m_groundSource != 1 && CollisionGround(x, y, zMax, z, normal))
@@ -405,6 +413,8 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, in
 
 bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal) const
 {
+    if (m_flat)
+        return false;
     // Walls are the collision mesh's wall faces (0x00337888 collects the flag-0x02 faces of the cells
     // the move crosses; barrier groups only while the race enabled them, #147). The scenery's own steep render
     // triangles (kerbs, poles, tunnel linings) are not walls: they stopped the car at low ledges (#146).

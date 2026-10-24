@@ -47,6 +47,40 @@ void Minimap::Build(const std::vector<float> &t)
     printf("[Minimap] road bitmap %d x %d (%.1f m / px), %zu road triangles\n", m_w, m_h, kRes, t.size() / 6);
 }
 
+void Minimap::BuildFromLinks(const std::vector<float> &seg, float width)
+{
+    m_road.clear();
+    m_w = m_h = 0;
+    if (seg.size() < 4)
+        return;
+    float lo[2] = {1e9f, 1e9f}, hi[2] = {-1e9f, -1e9f};
+    for (size_t i = 0; i + 1 < seg.size(); i += 2) {
+        lo[0] = std::min(lo[0], seg[i]), hi[0] = std::max(hi[0], seg[i]);
+        lo[1] = std::min(lo[1], seg[i + 1]), hi[1] = std::max(hi[1], seg[i + 1]);
+    }
+    m_x0 = lo[0] - 40.0f, m_y0 = lo[1] - 40.0f;
+    m_w = std::min(6000, int((hi[0] - lo[0] + 80.0f) / kRes) + 1), m_h = std::min(6000, int((hi[1] - lo[1] + 80.0f) / kRes) + 1);
+    m_road.assign(size_t(m_w) * size_t(m_h), 0);
+    const float rad = std::max(1.0f, width * 0.5f / kRes);
+    const int ri = int(std::ceil(rad));
+    for (size_t i = 0; i + 3 < seg.size(); i += 4) {
+        const float ax = (seg[i] - m_x0) / kRes, ay = (seg[i + 1] - m_y0) / kRes, bx = (seg[i + 2] - m_x0) / kRes, by = (seg[i + 3] - m_y0) / kRes;
+        const float len = std::hypot(bx - ax, by - ay);
+        const int steps = std::max(1, int(len / (rad * 0.5f)));
+        for (int k = 0; k <= steps; ++k) {
+            const float cx = ax + (bx - ax) * float(k) / float(steps), cy = ay + (by - ay) * float(k) / float(steps);
+            for (int dy = -ri; dy <= ri; ++dy)
+                for (int dx = -ri; dx <= ri; ++dx) {
+                    const int x = int(cx) + dx, y = int(cy) + dy;
+                    if (x < 0 || y < 0 || x >= m_w || y >= m_h || float(dx * dx + dy * dy) > rad * rad)
+                        continue;
+                    m_road[size_t(y) * size_t(m_w) + size_t(x)] = 255;
+                }
+        }
+    }
+    printf("[Minimap] city map from %zu lane links: bitmap %d x %d, roads %.0f m wide\n", seg.size() / 4, m_w, m_h, width);
+}
+
 void Minimap::Render(float px, float py, float yaw, float metres, bool rotate, const RaceRoute *route, const std::vector<Dot> &dots,
                      int n, std::vector<uint32_t> &out, bool roundMask) const
 {

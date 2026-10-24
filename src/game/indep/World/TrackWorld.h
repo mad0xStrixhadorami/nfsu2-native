@@ -64,6 +64,8 @@ public:
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
+    // A bare plane at height z with no walls: the physics benchmark's test strip (NFSU2_DYNO_BENCH, ISSUES #293).
+    void SetFlatGround(float z) { m_flat = true, m_flatZ = z; }
     // Career hot-spot markers (ISSUES #269): translucent light columns standing on the ground at (x, y).
     struct Beacon {
         float x = 0, y = 0, radius = 5, z = 0;
@@ -241,6 +243,8 @@ private:
     size_t m_triangleCount = 0;
     std::vector<std::vector<uint8_t>> m_extraPacks;
     std::vector<float> m_roadTris;
+    bool m_flat = false;
+    float m_flatZ = 0;
     std::vector<float> m_roadTriZ; // one centroid height per road triangle (IsraelProps pavement test)
     bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;

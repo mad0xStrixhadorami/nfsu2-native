@@ -205,6 +205,7 @@ private:
         int mult = 1;
     };
     Drift m_drift;
+    int m_shiftDbgGear = -1;
     bool m_driftHbWas = false; // handbrake state last update (edge for the flick)
     void UpdateDrift(float dt);
     void DriftForces(float h);

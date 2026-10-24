@@ -12,6 +12,9 @@ class Minimap {
 public:
     // roadTris: x0 y0 x1 y1 x2 y2 per triangle (world metres).
     void Build(const std::vector<float> &roadTris);
+    // The city-wide map of the career World Map (ISSUES #293): lane-link segments (x0 y0 x1 y1 per link, world metres) drawn as roads
+    // `width` metres wide. The loaded region's own bitmap only covers its 1 km, while events sit all over the 4 km city.
+    void BuildFromLinks(const std::vector<float> &segments, float width);
     bool Valid() const { return m_w > 0; }
     struct Dot {
         float x, y;

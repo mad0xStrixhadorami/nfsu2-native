@@ -1453,6 +1453,86 @@ int main(int argc, char **argv)
         }
         inWorld = true;
     };
+    if (getenv("NFSU2_DYNO_BENCH")) { // dev aid (ISSUES #293): every car flat out on a bare plane: times vs the dyno model
+        std::vector<std::string> all = fe.RaceableCars();
+        if (const char *only = getenv("NFSU2_BENCH_CAR"))
+            all = {only};
+        printf("[Bench] %-11s %7s %7s %7s %7s %7s | %7s %7s %7s | %s\n", "car", "0-60mph", "0-100km", "0-100mp", "1/4mile", "top km/h", "model60", "model100", "modelTop", "notes");
+        for (const std::string &name : all) {
+            PlayerCar::Performance perf;
+            PlayerCar::Wheel w[4];
+            const uint8_t *rec = fe.CarRecordData(name);
+            std::vector<uint8_t> geometry = ReadCarGeometry(*fs, name);
+            if (!rec || !fe.CarPerformance(name, perf) || geometry.empty())
+                continue;
+            PlayerCar bc;
+            if (!bc.LoadModel(geometry, fe.CarWheels(name, w) ? w : nullptr))
+                continue;
+            bc.SetPerformance(perf);
+            if (!bc.UseUG2Physics(rec))
+                continue;
+            TrackWorld flat;
+            flat.SetFlatGround(0.0f);
+            bc.Place(0, 0, 0, 0);
+            float t = 0, t60 = 0, t100k = 0, t100m = 0, tq = 0, top = 0;
+            const float dt = 1.0f / 120.0f;
+            for (int i = 0; i < 120 * 90; ++i, t += dt) { // 90 s: enough to reach the limiter
+                bc.Update(flat, 1.0f, 0.0f, 0.0f, dt, true, 1.0f);
+                const float v = bc.Speed();
+                top = std::max(top, v);
+                if (!t60 && v >= 26.82f) t60 = t;
+                if (!t100k && v >= 27.78f) t100k = t;
+                if (!t100m && v >= 44.70f) t100m = t;
+                if (!tq && std::hypot(bc.X(), bc.Y()) >= 402.3f) tq = t;
+            }
+            PlayerCar::RunTimes rt = PlayerCar::SimulateRun(perf, w[0].radius > 0 ? w[0].radius : 0.32f);
+            printf("[Bench] %-11s %7.2f %7.2f %7.2f %7.2f %7.0f | %7.2f %7.2f %7.0f | limiter %.0f km/h\n", name.c_str(), t60, t100k, t100m, tq, top * 3.6f,
+                   rt.zeroTo60mph, rt.zeroTo100mph, rt.topSpeed * 3.6f, perf.limiter * 1.609f);
+        }
+        return 0;
+    }
+    if (getenv("NFSU2_STRAIGHT_TEST")) { // dev aid: the longest straight lane chain of L4RA (a strip for physics benchmarks)
+        TrafficNet net;
+        const std::vector<uint8_t> data = ReadGameFile(*fs, "TRACKS\\ROUTESL4RA\\PATHSFREEROAM.BIN");
+        if (net.Load(data)) {
+            const auto &L = net.Links();
+            float best = 0, bx = 0, by = 0, bdx = 0, bdy = 0;
+            for (size_t i = 0; i < L.size(); ++i) {
+                float len = 0, dx0 = L[i].x1 - L[i].x0, dy0 = L[i].y1 - L[i].y0;
+                const float l0 = std::hypot(dx0, dy0);
+                if (l0 < 1.0f)
+                    continue;
+                dx0 /= l0, dy0 /= l0;
+                int k = int(i);
+                int guard = 0;
+                while (k >= 0 && guard++ < 200) {
+                    float dx = L[k].x1 - L[k].x0, dy = L[k].y1 - L[k].y0;
+                    const float l = std::hypot(dx, dy);
+                    if (l < 0.5f || (dx * dx0 + dy * dy0) / l < 0.9995f)
+                        break;
+                    len += l;
+                    k = L[k].next;
+                }
+                if (len > best)
+                    best = len, bx = L[i].x0, by = L[i].y0, bdx = dx0, bdy = dy0;
+            }
+            printf("[Straight] longest %.0f m from (%.1f, %.1f) heading %.4f rad\n", best, bx, by, std::atan2(bdy, bdx));
+        }
+    }
+    if (getenv("NFSU2_CITYMAP_TEST")) { // dev aid: extents of every region's free-roam road network (ISSUES #293)
+        for (const char *reg : {"L4RA", "L4RB", "L4RC", "L4RD", "L4RE", "L4RF", "L4RG"}) {
+            TrafficNet net;
+            const std::vector<uint8_t> data = ReadGameFile(*fs, (std::string("TRACKS\\ROUTES") + reg + "\\PATHSFREEROAM.BIN").c_str());
+            if (data.empty() || !net.Load(data)) {
+                printf("[CityMap] %s: no free-roam network\n", reg);
+                continue;
+            }
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const TrafficNet::Link &l : net.Links())
+                x0 = std::min({x0, l.x0, l.x1}), y0 = std::min({y0, l.y0, l.y1}), x1 = std::max({x1, l.x0, l.x1}), y1 = std::max({y1, l.y0, l.y1});
+            printf("[CityMap] %s: %zu links, x %.0f..%.0f y %.0f..%.0f\n", reg, net.Links().size(), x0, x1, y0, y1);
+        }
+    }
     if (getenv("NFSU2_WHEEL_AUDIT")) { // dev aid: does every car get four wheels, and where is each hub (ISSUES #289)?
         std::vector<std::string> all = fe.RaceableCars();
         for (const std::string &n : fe.TrafficCars())
@@ -2188,6 +2268,48 @@ int main(int argc, char **argv)
             if (cribPkg && cribPkg->GetName() && minimap.Valid() && !getenv("NFSU2_NO_MINIMAP")) {
                 const bool careerMap = strcasecmp(cribPkg->GetName(), "UI_CareerWorldMap.fng") == 0;
                 const bool gameMap = strcasecmp(cribPkg->GetName(), "UI_InGame_WorldMap.fng") == 0;
+                // The career World Map shows the whole city (every region's free-roam road network), not just the loaded region.
+                static Minimap cityMap;
+                static bool cityBuilt = false;
+                if (careerMap && !cityBuilt) {
+                    // Load L4RA's road geometry in a throwaway world (the career garage session runs in a small region, but the events
+                    // are spread over the whole city), build its map once; fall back to the lane-link network if that fails.
+                    cityBuilt = true;
+                    const Uint32 t0 = SDL_GetTicks();
+                    bool ok = false;
+                    {
+                        std::vector<uint8_t> stream = ReadGameFile(*fs, "TRACKS\\STREAML4RA.BUN");
+                        std::vector<std::vector<uint8_t>> nd;
+                        for (const char *other : {"L4RB", "L4RC", "L4RD", "L4RF", "L4RG"}) {
+                            nd.push_back(ReadGameFile(*fs, (std::string("TRACKS\\STREAM") + other + ".BUN").c_str()));
+                            if (nd.back().empty())
+                                nd.pop_back();
+                        }
+                        std::vector<const std::vector<uint8_t> *> nb;
+                        for (const auto &n : nd)
+                            nb.push_back(&n);
+                        if (!stream.empty()) {
+                            TrackWorld cityWorld;
+                            if (cityWorld.Load(stream, nb)) {
+                                cityMap.Build(cityWorld.RoadTriangles());
+                                ok = cityMap.Valid();
+                            }
+                        }
+                    }
+                    if (!ok) {
+                        std::vector<float> segs;
+                        for (const char *reg : {"L4RA", "L4RB", "L4RC", "L4RD", "L4RF", "L4RG"}) {
+                            TrafficNet net;
+                            const std::vector<uint8_t> data = ReadGameFile(*fs, (std::string("TRACKS\\ROUTES") + reg + "\\PATHSFREEROAM.BIN").c_str());
+                            if (data.empty() || !net.Load(data))
+                                continue;
+                            for (const TrafficNet::Link &l : net.Links())
+                                segs.insert(segs.end(), {l.x0, l.y0, l.x1, l.y1});
+                        }
+                        cityMap.BuildFromLinks(segs, 14.0f);
+                    }
+                    printf("[WorldMap] city map %s in %u ms\n", ok ? "built from L4RA road geometry" : "from lane links", SDL_GetTicks() - t0);
+                }
                 if (careerMap || gameMap) {
                     constexpr uint32_t kFullTex = 0x4d415046, kMapObj = 0x90fe80f3;
                     static unsigned fullFrame = 0;
@@ -2214,7 +2336,10 @@ int main(int argc, char **argv)
                                 if (it == markerCache.end())
                                     it = markerCache.emplace(reg, ReadGameFile(*fs, ("TRACKS\\ROUTES" + reg + "\\TRACKPOSMARKERSALL.BIN").c_str())).first;
                                 float x = 0, y = 0;
-                                if (it->second.empty() || !world.LineFromMarkers(it->second, race, x, y))
+                                const bool okMarker = !it->second.empty() && world.LineFromMarkers(it->second, race, x, y);
+                                if (getenv("NFSU2_WM_DEBUG") && fullFrame == 1)
+                                    printf("[WorldMap] event %zu race %d region %s marker %s (%.0f, %.0f)\n", i, race, reg.c_str(), okMarker ? "ok" : "none", x, y);
+                                if (!okMarker)
                                     continue;
                                 if (i == startup.WorldMapSelected())
                                     marker = {x, y, 255, 255, 255}, haveMarker = true, markerYaw = 1.5707963f;
@@ -2224,11 +2349,22 @@ int main(int argc, char **argv)
                         } else {
                             for (const PlayerCar &o : opponentCars)
                                 dots.push_back({o.X(), o.Y(), 255, 70, 70});
+                            // The shops and the garage (the same colours as their light columns): the legend lists them (#293).
+                            {
+                                for (const Career::Hotspot &h : Career::HotspotTable::Get().All()) {
+                                    switch (h.kind()) {
+                                    case Career::Hotspot::kCrib: dots.push_back({h.x, h.y, 80, 255, 120}); break;
+                                    case Career::Hotspot::kCarLot: dots.push_back({h.x, h.y, 255, 220, 60}); break;
+                                    case Career::Hotspot::kPerformance: dots.push_back({h.x, h.y, 255, 70, 60}); break;
+                                    default: dots.push_back({h.x, h.y, 70, 190, 255}); break;
+                                    }
+                                }
+                            }
                             marker = {car.X(), car.Y(), 255, 255, 255};
                             markerYaw = car.Yaw();
                             haveMarker = true;
                         }
-                        minimap.RenderFull(gameMap && route.Valid() ? &route : nullptr, dots, 512, minimapPixels, haveMarker ? &marker : nullptr, markerYaw);
+                        (careerMap && cityMap.Valid() ? cityMap : minimap).RenderFull(gameMap && route.Valid() ? &route : nullptr, dots, 512, minimapPixels, haveMarker ? &marker : nullptr, markerYaw);
                         fe.SetStreamTexture(kFullTex, minimapPixels.data(), 512, 512);
                     }
                     FENativeInterface::SetTextureHash(cribPkg, kMapObj, kFullTex);
