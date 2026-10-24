@@ -62,6 +62,12 @@ public:
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
+    // Career hot-spot markers (ISSUES #269): translucent light columns standing on the ground at (x, y).
+    struct Beacon {
+        float x = 0, y = 0, radius = 5, z = 0;
+        uint8_t r = 255, g = 255, b = 255;
+    };
+    void SetBeacons(const std::vector<Beacon> &beacons);
     // Does the segment a->b cross a steep (wall) triangle? If hit, the surface normal (facing the
     // segment start) is written to normal when non-null.
     bool HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal = nullptr) const;
@@ -257,6 +263,7 @@ private:
     // Car material slot -> texture (0 = untextured) and base colour.
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;
     std::vector<Car> m_cars;
+    std::vector<Beacon> m_beacons;
     struct Barrier {
         float bbox[6];
         std::vector<Tri> tris;

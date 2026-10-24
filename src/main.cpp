@@ -31,6 +31,7 @@
 #include "game/indep/Frontend/TuneSystem.h"
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/CarLot.h"
+#include "game/indep/Career/Hotspots.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -441,6 +442,7 @@ int main(int argc, char **argv)
         Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         Career::SmsTable::Get().Load(globalB.data(), globalB.size());
         Career::CarLotTable::Get().Load(globalB.data(), globalB.size());
+        Career::HotspotTable::Get().LoadShops(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
@@ -508,6 +510,7 @@ int main(int argc, char **argv)
         Career::SponsorTable::Get().Load(globalB.data(), globalB.size());
         Career::SmsTable::Get().Load(globalB.data(), globalB.size());
         Career::CarLotTable::Get().Load(globalB.data(), globalB.size());
+        Career::HotspotTable::Get().LoadShops(globalB.data(), globalB.size());
         startup.LoadBootProfile();
         // 3. EndBootLoadingScreen (0x002e0258): unload loading_boot.fng.
         if (bootPkg)
@@ -669,6 +672,9 @@ int main(int argc, char **argv)
     };
     // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
     FEPackage *cribPkg = nullptr;
+    bool shopFromWorld = false;       // the open shop screen was entered from a free-roam hot spot (#269)
+    const Career::Hotspot *hotArmed = nullptr; // a hot spot stays disarmed until the car leaves its circle
+
     int playerSkinIndex = -1;       // the player's car in the world (vinyl skin, ISSUES #223)
     std::string playerSkinKey;
     // Post-race results (UI_PostRaceResults.fng): opponents' finish times on a race clock.
@@ -1051,6 +1057,8 @@ int main(int argc, char **argv)
                                           SDL_Color{150, 150, 150, 255}));
             playerSkinIndex = int(playerCarIndex);
             playerSkinKey.clear(); // the per-frame check below composes the skin
+            if (const char *spawn = getenv("NFSU2_SPAWN")) // dev aid: x,y,yaw (rad) -- put the player there (any grid)
+                sscanf(spawn, "%f,%f,%f", &camera.x, &camera.y, &camera.yaw), camera.z = getenv("NFSU2_SPAWN_Z") ? float(atof(getenv("NFSU2_SPAWN_Z"))) : 20.0f;
             float ground = camera.z - 2.0f;
             world.GroundHeight(camera.x, camera.y, camera.z, ground);
             car.Place(camera.x, camera.y, ground, camera.yaw);
@@ -1158,6 +1166,28 @@ int main(int argc, char **argv)
         // Ambient traffic (ISSUES #130): service vehicles on the free-roam lane links.
         trafficCars.clear();
         traffic = Traffic();
+        // Career hot spots (ISSUES #269): the shops, car lots and the crib stand as light columns in free roam.
+        {
+            std::vector<TrackWorld::Beacon> beacons;
+            if (raceConfig.type == 9 || getenv("NFSU2_HOTSPOTS")) {
+                char hotPath[96];
+                snprintf(hotPath, sizeof(hotPath), "TRACKS\\ROUTES%s\\PATHSFREEROAM.BIN", region.c_str());
+                Career::HotspotTable &hot = Career::HotspotTable::Get();
+                printf("[Hotspots] %zu placed in %s\n", hot.LoadPositions(ReadGameFile(*fs, hotPath)), hotPath);
+                for (const Career::Hotspot &h : hot.All()) {
+                    TrackWorld::Beacon b;
+                    b.x = h.x, b.y = h.y, b.radius = 5.0f;
+                    switch (h.kind()) {
+                    case Career::Hotspot::kCrib: b.r = 80, b.g = 255, b.b = 120; break;
+                    case Career::Hotspot::kCarLot: b.r = 255, b.g = 220, b.b = 60; break;
+                    case Career::Hotspot::kPerformance: b.r = 255, b.g = 70, b.b = 60; break;
+                    default: b.r = 70, b.g = 190, b.b = 255; break;
+                    }
+                    beacons.push_back(b);
+                }
+            }
+            world.SetBeacons(beacons);
+        }
         if (!flyCamera && !getenv("NFSU2_NOTRAFFIC")) {
             static const int kCount[] = {0, 5, 10, 16};
             int want = kCount[std::clamp(startup.RaceTraffic(), 0, 3)];
@@ -1521,7 +1551,12 @@ int main(int argc, char **argv)
                 enterWorld(region);
                 continue;
             }
+            if (cribPkg && shopFromWorld && startup.PeekCareerMenuSwitchIs("UI_CareerCrib.fng")) {
+                startup.TakeCareerMenuSwitch(); // Back out of a hot-spot shop returns to the street, not the crib
+                pauseAction = FEStartupSequence::kPauseResume;
+            }
             if (cribPkg && pauseAction == FEStartupSequence::kPauseResume) {
+                shopFromWorld = false;
                 engine->UnloadPackage(cribPkg);
                 cribPkg = nullptr;
                 // Explore mode needs the race HUD (the crib session was started without one).
@@ -1530,6 +1565,31 @@ int main(int argc, char **argv)
                     hud = engine->PushPackage("HUD_SingleRace.fng", 0, 0xff);
                 race.Begin(hud, raceConfig); // free roam restarts with no countdown
                 printf("[Career] explore mode (HUD %s)\n", hud ? currentHudName.c_str() : "missing");
+            }
+            if (getenv("NFSU2_HOTSPOT_DEBUG"))
+                printf("[Hotspot] free %d valid %d fly %d pause %d crib %d car %.1f %.1f speed %.1f\n", race.IsFreeRun(), startup.CareerProfile().valid, flyCamera, !!pausePkg, !!cribPkg, car.X(), car.Y(), car.Speed());
+            // Free-roam hot spots (#269): roll into a shop's circle slowly and its screen opens over the street.
+            if (!pausePkg && !cribPkg && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
+                const Career::Hotspot *inside = nullptr;
+                for (const Career::Hotspot &h : Career::HotspotTable::Get().All())
+                    if (std::hypot(car.X() - h.x, car.Y() - h.y) < 9.0f)
+                        inside = &h;
+                if (!inside)
+                    hotArmed = nullptr;
+                else if (inside != hotArmed && std::fabs(car.Speed()) < 9.0f) {
+                    hotArmed = inside;
+                    const char *screen = startup.EnterShop(int(inside->kind()));
+                    if (!screen)
+                        printf("[Hotspot] %s: nothing to open (profile has %zu cars)\n", inside->name.c_str(), startup.CareerProfile().cars.size());
+                    if (screen) {
+                        printf("[Hotspot] entered %s -> %s\n", inside->name.c_str(), screen);
+                        if (hud)
+                            engine->UnloadPackage(hud);
+                        hud = nullptr;
+                        cribPkg = engine->PushPackage(screen, 0, 0xff);
+                        shopFromWorld = cribPkg != nullptr;
+                    }
+                }
             }
             if (!pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished &&
                 (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) { // Esc pauses too

@@ -1503,3 +1503,14 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     if (!m_frame.empty() && SDL_RenderGeometry(renderer, nullptr, m_frame.data(), int(m_frame.size()), nullptr, 0) != 0)
         printf("[World] SDL_RenderGeometry: %s\n", SDL_GetError());
 }
+
+void TrackWorld::SetBeacons(const std::vector<Beacon> &beacons)
+{
+    m_beacons = beacons;
+    for (Beacon &b : m_beacons) {
+        float z = 0;
+        b.z = GroundHeight(b.x, b.y, 1.0e4f, z) ? z : 0.0f;
+        if (getenv("NFSU2_WORLD_DEBUG"))
+            printf("[Beacon] %.1f %.1f ground %.2f\n", b.x, b.y, b.z);
+    }
+}

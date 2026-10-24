@@ -105,6 +105,10 @@ public:
     // The career menu (crib / world map) asked to swap its package (the world map opens from the crib
     // and Back returns to it); main.cpp owns the pushed package, so it performs the swap. Taken once.
     const char *LastMenu() const { return m_lastMenu.c_str(); }
+    // A free-roam hot spot was entered (ISSUES #269): prepares the shop state like the crib's option does and returns
+    // the screen to push (nullptr: nothing to open, e.g. no car to work on).  `kind` is Career::Hotspot::Kind.
+    const char *EnterShop(int kind);
+    bool PeekCareerMenuSwitchIs(const char *name) const { return m_careerMenuSwitch && !strcmp(m_careerMenuSwitch, name); }
     const char *TakeCareerMenuSwitch()
     {
         const char *n = m_careerMenuSwitch;

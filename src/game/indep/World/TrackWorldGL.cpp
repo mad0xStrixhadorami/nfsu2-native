@@ -622,6 +622,34 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDisable(GL_BLEND);
     }
 
+    // Hot-spot beacons: a translucent light column per marker, brighter at the foot, within 700 m.
+    if (!m_beacons.empty()) {
+        GLShader::Use(0);
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        constexpr int kSides = 20;
+        constexpr float kHeight = 38.0f;
+        for (const Beacon &b : m_beacons) {
+            if (std::hypot(b.x - cam.x, b.y - cam.y) > 700.0f)
+                continue;
+            glBegin(GL_QUAD_STRIP);
+            for (int i = 0; i <= kSides; ++i) {
+                const float a = float(i % kSides) * 6.2831853f / kSides;
+                const float px = b.x + std::cos(a) * b.radius, py = b.y + std::sin(a) * b.radius;
+                glColor4ub(b.r, b.g, b.b, 110);
+                glVertex3f(px, py, b.z);
+                glColor4ub(b.r, b.g, b.b, 0);
+                glVertex3f(px, py, b.z + kHeight);
+            }
+            glEnd();
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+
     // Cars: rebuilt every frame from client memory, one draw per texture run. With the car program the paint is lit per
     // pixel (normals and the gloss class travel as vertex attributes); without it the CPU lights the vertices.
     GLBridge::BindArrayBuffer(0);

@@ -1,4 +1,5 @@
 #include "game/indep/Frontend/FEStartup.h"
+#include "game/indep/Career/Hotspots.h"
 #include "game/indep/Frontend/RimCatalog.h"
 
 #include <algorithm>
@@ -4639,6 +4640,34 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
     }
     printf("[Paint] %s %s %u applied for this session\n", kPaintParts[part].debug,
            PaintCatalog::SetName(set), index);
+}
+
+const char *FEStartupSequence::EnterShop(int kind)
+{
+    using Career::Hotspot;
+    switch (kind) {
+    case Hotspot::kCrib:
+        return "UI_CareerCrib.fng";
+    case Hotspot::kCarLot:
+        return "UI_CareerCarLot.fng";
+    case Hotspot::kBodyShop:
+    case Hotspot::kGraphics:
+    case Hotspot::kPerformance:
+    case Hotspot::kSpecialty:
+        // The shops are not told apart yet: each opens the customise category list for the current car, as the
+        // crib's Change Parts does (the per-shop category filter is not decoded).
+        if (m_profile.valid && !m_profile.cars.empty() && ShopCar() == nullptr)
+            m_profile.currentCar = 0;
+        if (Career::OwnedCar *car = ShopCar()) {
+            ApplyOwnedCarPreview(*car);
+            m_cribShop = true;
+            m_backStack.clear();
+            return "UI_ChooseCustomizeCategory.fng";
+        }
+        return nullptr;
+    default:
+        return nullptr;
+    }
 }
 
 bool FEStartupSequence::PopScreen()
