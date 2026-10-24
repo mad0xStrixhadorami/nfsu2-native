@@ -5,3 +5,4 @@ reference/
 *.iso
 __pycache__/
 build64/
+run_window.log
