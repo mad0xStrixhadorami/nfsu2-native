@@ -298,3 +298,43 @@ void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
     }
     (void)t;
 }
+
+void ModernUI::DrawDialog(int w, int h, const std::string &title, const std::vector<std::string> &items, int selected, bool confirm,
+                          const std::string &question, bool confirmYes, float t)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, {2, 6, 16, 150}, {2, 6, 16, 190}); // dim the scene
+    const float pw = 460 * s, ph = (confirm ? 250.0f : 130.0f + 62.0f * float(items.size())) * s;
+    const float px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph * 0.5f;
+    Glow(W * 0.5f, H * 0.5f, pw * 1.1f, {20, 80, 170, 60});
+    Glass(px, py, pw, ph, 28 * s, {8, 14, 28, 225}, {120, 190, 255, 170});
+    Quad({px, py}, {px + pw - 28 * s, py}, {px + pw - 28 * s, py + 3 * s}, {px, py + 3 * s}, kAccent, kWarm, kWarm, kAccent);
+    Text(px + 30 * s, py + 18 * s, 40 * s, title, kWhite, 0);
+    char buf[16];
+    (void)buf;
+    if (!confirm) {
+        for (size_t i = 0; i < items.size(); ++i) {
+            const float ry = py + 84 * s + 62 * s * float(i);
+            const bool on = int(i) == selected;
+            if (on) {
+                const float pulse = 0.75f + 0.25f * std::sin(t * 6.0f);
+                Glass(px + 20 * s, ry, pw - 40 * s, 52 * s, 14 * s, {30, 100, 190, Uint8(150 + 50 * pulse)}, {150, 215, 255, 230});
+                Quad({px + 20 * s, ry + 6 * s}, {px + 26 * s, ry + 6 * s}, {px + 26 * s, ry + 46 * s}, {px + 20 * s, ry + 46 * s}, kWarm, kWarm, kWarm, kWarm);
+            }
+            Text(px + 50 * s, ry + 6 * s, 34 * s, items[i], on ? kWhite : SDL_Color{175, 200, 230, 235}, 0);
+        }
+        Text(px + pw * 0.5f, py + ph - 34 * s, 17 * s, "UP / DOWN select    ENTER confirm    ESC resume", {140, 175, 215, 220}, 1);
+    } else {
+        Text(px + pw * 0.5f, py + 84 * s, 30 * s, question, kWhite, 1);
+        Text(px + pw * 0.5f, py + 122 * s, 20 * s, "Your race progress will be lost.", {170, 200, 235, 230}, 1);
+        for (int i = 0; i < 2; ++i) {
+            const bool on = (i == 0) == confirmYes;
+            const float bx = px + 40 * s + i * (pw * 0.5f - 20 * s), bw = pw * 0.5f - 60 * s, by = py + 160 * s;
+            Glass(bx, by, bw, 54 * s, 14 * s, on ? SDL_Color{30, 100, 190, 220} : SDL_Color{12, 20, 40, 200}, on ? SDL_Color{150, 215, 255, 230} : SDL_Color{80, 120, 170, 120});
+            Text(bx + bw * 0.5f, by + 8 * s, 34 * s, i == 0 ? "YES" : "NO", on ? kWhite : SDL_Color{175, 200, 230, 235}, 1);
+        }
+    }
+}

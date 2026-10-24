@@ -3,6 +3,7 @@
 // backdrop and a redesigned race HUD (arc rev meter, big speed readout, glass info pills) in the Rajdhani typeface
 // (SIL OFL, assets/ui).  Everything draws with the SDL renderer in window pixels (logical size 0).
 #include <string>
+#include <vector>
 
 #include <SDL.h>
 
@@ -25,6 +26,10 @@ public:
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);
+    // The pause dialog: a dimmed scene, a glass panel with a title and a list (selected = highlighted).  When `confirm` is set a
+    // Yes / No question replaces the list (confirmYes = the highlighted answer).
+    void DrawDialog(int w, int h, const std::string &title, const std::vector<std::string> &items, int selected, bool confirm,
+                    const std::string &question, bool confirmYes, float seconds);
     ~ModernUI();
 
 private:

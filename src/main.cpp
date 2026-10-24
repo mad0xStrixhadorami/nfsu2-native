@@ -672,6 +672,9 @@ int main(int argc, char **argv)
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false, sceneMode = false;
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
+    // The modern pause dialog (ISSUES #281): 0 closed, 1 menu, 2 confirm 'back to the main menu', 3 confirm 'quit the game'.
+    int modernPause = 0, modernSel = 0;
+    bool modernYes = false, modernLeave = false;
     // The pause menu's package changes when Options opens and closes (a package switch), so look it up.
     auto pauseScreen = [&engine, &pausePkg]() -> FEPackage * {
         for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
@@ -1492,7 +1495,7 @@ int main(int argc, char **argv)
             engineSound.SetVolumes(master * vol(6), master * vol(5), master * vol(4));
         }
         race.SetMph(startup.SpeedoMph());
-        music.SetPaused(pausePkg != nullptr);
+        music.SetPaused(pausePkg != nullptr || modernPause != 0);
         music.Update();
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
@@ -1542,7 +1545,7 @@ int main(int argc, char **argv)
                     }
                 }
             }
-            const float dt = (pausePkg || cribPkg) ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
+            const float dt = (pausePkg || cribPkg || modernPause) ? 0.0f : std::min(0.1f, (now - last) / 1000.0f);
             u32 pad = fe.GetJoyPadMask(0);
             for (const HeldPress &h : held)
                 if (elapsed >= h.from && elapsed < h.to)
@@ -1601,7 +1604,66 @@ int main(int argc, char **argv)
                     }
                 }
             }
-            if (!pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished &&
+            // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
+            const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
+            if (useModernPause) {
+                const bool restartable = !race.IsFreeRun();
+                std::vector<std::string> items = {"RESUME"};
+                if (restartable)
+                    items.push_back("RESTART RACE");
+                items.insert(items.end(), {"OPTIONS", "MAIN MENU", "QUIT GAME"});
+                if (!modernPause && !pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished && !race.InIntro() &&
+                    (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) {
+                    modernPause = 1, modernSel = 0, modernYes = false;
+                    printf("[Race] paused (dialog)\n");
+                } else if (modernPause) {
+                    const int n = int(items.size());
+                    if (modernPause == 1) {
+                        if (pressed & FENativeInterface::kPadUp)
+                            modernSel = (modernSel + n - 1) % n;
+                        if (pressed & FENativeInterface::kPadDown)
+                            modernSel = (modernSel + 1) % n;
+                        if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart)) {
+                            modernPause = 0;
+                            printf("[Race] resumed\n");
+                        } else if (pressed & FENativeInterface::kPadAccept) {
+                            const std::string &it = items[size_t(modernSel)];
+                            if (it == "RESUME") {
+                                modernPause = 0;
+                            } else if (it == "RESTART RACE") {
+                                modernPause = 0;
+                                if (hud)
+                                    engine->UnloadPackage(hud);
+                                hud = nullptr;
+                                std::string region = currentRegion;
+                                enterWorld(region);
+                                continue;
+                            } else if (it == "OPTIONS") {
+                                modernPause = 0;
+                                pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff); // the original pause screen holds the options
+                            } else if (it == "MAIN MENU") {
+                                modernPause = 2, modernYes = false;
+                            } else {
+                                modernPause = 3, modernYes = false;
+                            }
+                        }
+                    } else { // a confirmation: Left / Right choose, Enter answers, Esc cancels
+                        if (pressed & (FENativeInterface::kPadLeft | FENativeInterface::kPadRight | FENativeInterface::kPadUp | FENativeInterface::kPadDown))
+                            modernYes = !modernYes;
+                        if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart))
+                            modernPause = 1;
+                        else if (pressed & FENativeInterface::kPadAccept) {
+                            if (modernYes && modernPause == 2)
+                                modernLeave = true, modernPause = 0;
+                            else if (modernYes && modernPause == 3)
+                                running = false;
+                            else
+                                modernPause = 1;
+                        }
+                    }
+                }
+            }
+            if (!pausePkg && !cribPkg && !useModernPause && race.GetPhase() != RaceSession::kFinished &&
                 (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) { // Esc pauses too
                 pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff);
                 printf("[Race] paused\n");
@@ -1649,7 +1711,7 @@ int main(int argc, char **argv)
                 startup.Tick(elapsed); // screen ticks for the pause menu / crib icon scroller
             // Quit Race from the pause menu (or Back to Main Menu from the crib) -- or Accept once the
             // race is over.
-            if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) ||
+            if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) || modernLeave ||
                 (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
                 if (pausePkg)
                     engine->UnloadPackage(pauseScreen());
@@ -1664,9 +1726,20 @@ int main(int argc, char **argv)
                     engine->UnloadPackage(hud);
                 hud = nullptr;
                 inWorld = false;
+                if (modernLeave) { // "Main Menu": drop every screen left from the flow that started the race, then show UI_Main
+                    std::vector<FEPackage *> stale;
+                    for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+                        stale.push_back(p);
+                    for (FEPackage *p : stale)
+                        engine->UnloadPackage(p);
+                }
+                modernPause = 0, modernLeave = false;
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
                 engineSound.Set(0, 0, 0, 0, false);
                 startup.ReturnFromRace();
+                startup.IgnoreHeldPad(pad); // the Enter that answered "Yes" must not also press Quick Race on the main menu
+                if (releaseInjectedPadAfterUpdate)
+                    fe.SetSimulatedPadMask(0);
                 continue;
             }
             if (flyCamera) {
@@ -1754,7 +1827,7 @@ int main(int argc, char **argv)
                         aiOut[k] = true;
                 const bool go = race.GetPhase() != RaceSession::kCountdown;
                 engineSound.Set(car.Rpm(), car.GetPerformance().idleRpm, car.GetPerformance().redline,
-                                std::max(throttle, inputThrottle), !pausePkg);
+                                std::max(throttle, inputThrottle), !pausePkg && !modernPause);
                 engineSound.SetMotion(car.Speed(), car.Slip());
                 if (car.Gear() != lastGear) {
                     if (lastGear > 0 && car.Gear() > 0)
@@ -2153,6 +2226,16 @@ int main(int argc, char **argv)
                 mh.lapTime = race.LapTime(), mh.bestLap = race.BestLap();
                 mh.mph = startup.SpeedoMph();
                 modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
+            if (modernPause && modernUi.Ready()) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                std::vector<std::string> items = {"RESUME"};
+                if (!race.IsFreeRun())
+                    items.push_back("RESTART RACE");
+                items.insert(items.end(), {"OPTIONS", "MAIN MENU", "QUIT GAME"});
+                modernUi.DrawDialog(w, h, "PAUSED", items, modernSel, modernPause != 1,
+                                    modernPause == 3 ? "Quit the game?" : "Back to the main menu?", modernYes, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
             static Uint32 fpsStart = now, fpsFrames = 0;
