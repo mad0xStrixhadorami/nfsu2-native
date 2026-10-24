@@ -224,6 +224,7 @@ roadmap (all **planned**, none of it is done yet):
 
 ## Credits and legal
 
+- Original code in this repository is under the [MIT License](LICENSE); `third_party/nfsmw` keeps its own (CC0).
 - Built by reverse-engineering a personally owned copy of the game for **interoperability, preservation and
   education**. All game code and art remain the property of Electronic Arts.
 - **This repository contains no EA code, executables, textures, models, music or other assets.** The
