@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/SignGen.h"
 #include "game/indep/World/TrackWorld.h"
 
 namespace {
@@ -94,6 +96,25 @@ struct PropBuilder {
         out->push_back(t);
     }
     void Quad(V3 a, V3 b, V3 c, V3 d, const uint8_t col[3]) { Tri(a, b, c, col), Tri(a, c, d, col); }
+    // textured quad a(u0,v1) b(u1,v1) c(u1,v0) d(u0,v0) from the texture rows [v0, v1] (a = bottom left, b = bottom right)
+    void TexQuad(V3 a, V3 b, V3 c, V3 d, uint32_t tex, float u0, float u1, float v0, float v1)
+    {
+        if (out->size() + 2 > cap)
+            return;
+        const V3 p[4] = {a, b, c, d};
+        const float uv[4][2] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
+        const int idx[2][3] = {{0, 1, 2}, {0, 2, 3}};
+        for (const auto &tri : idx) {
+            TrackWorld::RTriPublic t;
+            t.tex = tex;
+            for (int i = 0; i < 3; ++i) {
+                auto &v = t.v[i];
+                v.x = p[tri[i]].x, v.y = p[tri[i]].y, v.z = p[tri[i]].z, v.u = uv[tri[i]][0], v.v = uv[tri[i]][1];
+                v.r = v.g = v.b = 255, v.a = 254;
+            }
+            out->push_back(t);
+        }
+    }
     // box from corner o spanned by three vectors
     void Box(V3 o, V3 ax, V3 ay, V3 az, const uint8_t col[3])
     {
@@ -164,6 +185,8 @@ struct PropBuilder {
 };
 
 namespace {
+constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u; // generated sign atlases (512 x 512)
+bool g_signs = false;
 const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3] = {120, 98, 74}, kGrey[3] = {170, 170, 175},
               kLightGrey[3] = {205, 205, 205}, kDarkGrey[3] = {50, 52, 56}, kWhite[3] = {235, 235, 230},
               kPanel[3] = {28, 44, 82}, kTank[3] = {225, 225, 220}, kBlue[3] = {20, 70, 160}, kRed[3] = {190, 30, 30},
@@ -299,6 +322,45 @@ void RoadSign(PropBuilder &b, V3 base, float yaw, int type)
     }
 }
 
+// A street-name sign (blue, Hebrew over Latin) on a pole, readable from both sides.
+void StreetSign(PropBuilder &b, V3 base, float yaw, int variant)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.Prism(base, base + V3{0, 0, 3.1f}, 0.045f, 0.045f, 5, kGrey);
+    b.Solid(base.x, base.y, 0.14f, base.z, 3.1f);
+    const int tex = variant / 4, row = variant % 4;
+    const float v0 = row * 0.25f, v1 = v0 + 0.25f;
+    const V3 c = base + V3{0, 0, 2.95f};
+    b.TexQuad(c - u * 0.55f + v * 0.06f - V3{0, 0, 0.14f}, c + u * 0.55f + v * 0.06f - V3{0, 0, 0.14f}, c + u * 0.55f + v * 0.06f + V3{0, 0, 0.14f},
+              c - u * 0.55f + v * 0.06f + V3{0, 0, 0.14f}, kStreetTex + tex, 0, 1, v0, v1);
+    b.TexQuad(c + u * 0.55f - v * 0.06f - V3{0, 0, 0.14f}, c - u * 0.55f - v * 0.06f - V3{0, 0, 0.14f}, c - u * 0.55f - v * 0.06f + V3{0, 0, 0.14f},
+              c + u * 0.55f - v * 0.06f + V3{0, 0, 0.14f}, kStreetTex + tex, 0, 1, v0, v1);
+}
+
+// The flag of Israel on a tall pole.
+void FlagPole(PropBuilder &b, V3 base, float yaw, float h)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0};
+    b.Prism(base, base + V3{0, 0, h}, 0.05f, 0.035f, 6, kGrey);
+    b.Solid(base.x, base.y, 0.16f, base.z, h);
+    const V3 top = base + V3{0, 0, h - 0.1f};
+    const float fw = 1.65f, fh = fw * 8.0f / 11.0f;
+    b.TexQuad(top + u * 0.05f - V3{0, 0, fh}, top + u * (0.05f + fw) - V3{0, 0, fh}, top + u * (0.05f + fw), top + u * 0.05f, kFlagTex, 0, 1, 0, 1);
+    b.TexQuad(top + u * (0.05f + fw) - V3{0, 0, fh}, top + u * 0.05f - V3{0, 0, fh}, top + u * 0.05f, top + u * (0.05f + fw), kFlagTex, 0, 1, 0, 1);
+}
+
+// A shop sign hung on a facade, double-sided so it reads from the street whichever way the wall faces.
+void ShopSign(PropBuilder &b, V3 c, V3 along, V3 out, int variant, float width)
+{
+    const int tex = variant / 4, row = variant % 4;
+    const float v0 = row * 0.25f, v1 = v0 + 0.25f;
+    const float hw = width * 0.5f, hh = width * 0.125f;
+    for (int side = 0; side < 2; ++side) {
+        const V3 n = out * (side ? -0.10f : 0.10f), a = along * (side ? -1.0f : 1.0f);
+        b.TexQuad(c + n - a * hw - V3{0, 0, hh}, c + n + a * hw - V3{0, 0, hh}, c + n + a * hw + V3{0, 0, hh}, c + n - a * hw + V3{0, 0, hh}, kShopTex + tex, 0, 1, v0, v1);
+    }
+}
+
 void Scooter(PropBuilder &b, V3 base, float yaw, Rng &r)
 {
     const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
@@ -341,6 +403,24 @@ void TrackWorld::AddIsraeliProps()
     const int savedSource = m_groundSource;
     if (!getenv("NFSU2_PROP_SLOWGROUND") && m_collisionFaces)
         m_groundSource = 2; // the collision mesh answers ground queries far faster than the render triangles
+    // Generated Hebrew signage atlases (512 x 512, four 512 x 128 rows each) and the flag, registered as runtime textures.
+    g_signs = !getenv("NFSU2_NO_SIGNS") && SignGen::Init();
+    if (g_signs) {
+        auto atlas = [&](int kind, int count, uint32_t base) {
+            for (int t = 0; t * 4 < count; ++t) {
+                std::vector<uint32_t> tex(512 * 512, 0xff000000u), row;
+                for (int r = 0; r < 4; ++r)
+                    if (SignGen::Make(kind, t * 4 + r, 512, 128, row))
+                        std::copy(row.begin(), row.end(), tex.begin() + size_t(r) * 512 * 128);
+                m_skinPixels[base + t] = std::move(tex);
+            }
+        };
+        atlas(0, 16, kShopTex);
+        atlas(1, 12, kStreetTex);
+        std::vector<uint32_t> flag;
+        if (SignGen::Make(2, 0, 512, 512, flag))
+            m_skinPixels[kFlagTex] = std::move(flag);
+    }
     const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1200000;
 
     // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
@@ -368,6 +448,23 @@ void TrackWorld::AddIsraeliProps()
     const size_t kRoofBudget = 220000, kWallBudget = 120000;
     size_t roofTris = 0, wallTris = 0;
     size_t flatTris = 0, flatGround = 0, flatRoad = 0, flatNear = 0, flatNoGround = 0;
+    size_t nShopSigns = 0, nStreetSigns = 0, nFlags = 0;
+    std::unordered_set<int64_t> streetCells;
+    // Shop signs only go on storefront facades (not freeway walls): by texture name.
+    std::unordered_map<uint32_t, bool> storefront;
+    auto isStorefront = [&](uint32_t hash) {
+        auto it = storefront.find(hash);
+        if (it != storefront.end())
+            return it->second;
+        bool ok = false;
+        auto src = m_textures.find(hash);
+        if (src != m_textures.end()) {
+            const std::string &n = src->second.first->At(src->second.second).name;
+            for (const char *k : {"STORE", "SHOP", "FRONT", "MALL", "CAFE", "MARKET", "DELI", "BAKERY", "BOUTIQUE", "RESTAURANT", "PLAZA"})
+                ok |= n.find(k) != std::string::npos;
+        }
+        return storefront[hash] = ok;
+    };
     size_t nTrees = 0, nRoofs = 0, nWalls = 0, nCurbs = 0, nBike = 0, nBus = 0, nSigns = 0, nScoot = 0, nCafe = 0;
 
     auto GroundHeightT = [&](float x, float y, float zmax, float &z) {
@@ -434,8 +531,10 @@ void TrackWorld::AddIsraeliProps()
                             Condenser(b, q, rng.f() * 6.28f, false, {0, 0, 1}), ++nRoofs;
                         else if (k < 0.88f)
                             Antenna(b, q, rng.f() * 3.14f), ++nRoofs;
-                        else
+                        else if (k < 0.94f || !g_signs)
                             WaterTank(b, q), ++nRoofs;
+                        else
+                            FlagPole(b, q, rng.f() * 6.28f, 3.0f + 1.5f * rng.f()), ++nFlags;
                     }
                     roofTris += props.size() - before;
                 } else if (atRoadLevel && !road4.count(Key(c4x, c4y)) && t.tex) { // pavement / plaza
@@ -469,6 +568,12 @@ void TrackWorld::AddIsraeliProps()
                     if (area > 4.0f && rng.f() < area / 2200.0f && busCells.insert(Key(c4x / 12, c4y / 12)).second) {
                         BusStop(b, inTri(0.5f), yawE), ++nBus;
                     }
+                    if (g_signs && area > 3.0f && rng.f() < area / 1500.0f && streetCells.insert(Key(c4x / 15, c4y / 15)).second) {
+                        StreetSign(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 11.99f)), ++nStreetSigns;
+                    }
+                    if (g_signs && area > 3.0f && rng.f() < area / 2600.0f) {
+                        FlagPole(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), 6.0f + 2.0f * rng.f()), ++nFlags;
+                    }
                     if (rng.f() < area / 800.0f && signCells.insert(Key(c4x / 6, c4y / 6)).second) {
                         RoadSign(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 3.99f)), ++nSigns;
                     }
@@ -492,6 +597,18 @@ void TrackWorld::AddIsraeliProps()
                 if (hl < 1e-4f)
                     continue;
                 hz = hz * (1.0f / hl);
+                if (nearRoad) {
+                    if (g_signs && nShopSigns < 3500 && isStorefront(t.tex) && area > 4.0f && dz > 2.2f && rng.f() < area / 12.0f) { // hung above the entrance at street level
+                        const V3 q = inTri(0.7f);
+                        const float zs = nearIt->second.first + 3.3f;
+                        if (zs > minz + 0.4f && zs < maxz - 0.4f) {
+                            ShopSign(b, V3{q.x, q.y, zs}, V3{-hz.y, hz.x, 0}, hz, int(rng.f() * 15.99f), 2.4f + 1.6f * rng.f());
+                            if (getenv("NFSU2_PROP_DEBUG") && nShopSigns < 40 && nShopSigns % 8 == 0)
+                                printf("[ShopSign] %.1f %.1f %.1f out %.2f %.2f\n", q.x, q.y, zs, hz.x, hz.y);
+                            ++nShopSigns;
+                        }
+                    }
+                }
                 // kerb face: low, long, beside a road
                 if (dz > 0.06f && dz < 0.5f && nearRoad) {
                     const V3 e1 = p1 - p0, e2 = p2 - p1, e3 = p0 - p2;
@@ -541,6 +658,6 @@ void TrackWorld::AddIsraeliProps()
     m_groundSource = savedSource;
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
-           "%zu signs, %zu scooters, %zu cafes\n",
-           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe);
+           "%zu signs, %zu scooters, %zu cafes, %zu Hebrew shop signs, %zu street-name signs, %zu flags\n",
+           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nShopSigns, nStreetSigns, nFlags);
 }

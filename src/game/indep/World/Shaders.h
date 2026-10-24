@@ -30,6 +30,7 @@ uniform vec3 uCam;
 uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
+uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
 uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
 uniform sampler2D uMN0, uMN1, uMN2, uMN3, uMN4;                   // normals: asphalt, pavers, stone, concrete, plaster
 varying vec4 vColor;
@@ -196,6 +197,12 @@ void main() {
         c.rgb = mix(c.rgb, c.rgb * vec3(0.96, 1.01, 1.06) + 0.02, wd.x * uTheme);
         c.rgb = mix(c.rgb, c.rgb * vec3(0.95, 1.05, 0.93), wd.z * 0.6 * uTheme);
     }
+    // daylight: the baked lighting is a dusk city; lift it towards a hard Mediterranean sun, warm and a little bleached
+    {   // a tone curve, not a gain: shadows lift 2.3x, the highlights stay below white (no blown walls)
+        vec3 x = c.rgb * vec3(1.65, 1.58, 1.45);
+        c.rgb = mix(c.rgb, x / (1.0 + x) * 1.28, uDay);
+    }
+    c.rgb = mix(c.rgb, vec3(dot(c.rgb, vec3(0.333))), 0.10 * uDay);
     // grade: a little saturation and a gentle shadow lift so the baked lighting does not crush to black
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
     c.rgb = mix(vec3(l), c.rgb, 1.0 + 0.16 * uGrade);

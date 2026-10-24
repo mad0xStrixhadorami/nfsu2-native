@@ -15,6 +15,7 @@
 #include "game/indep/World/GLBridge.h"
 #include "game/indep/World/GLShader.h"
 #include "game/indep/World/MaterialLibrary.h"
+#include "game/indep/World/SignGen.h"
 #include "game/indep/World/Shaders.h"
 
 namespace {
@@ -122,6 +123,15 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         if (info->alphaUsage != 1 && !blended)
             for (uint32_t &px : decoded.rgba)
                 px |= 0xff000000u;
+        // American signage -> Hebrew / Israeli replacements (ISSUES #277); the original's blend mode is kept.
+        if (!getenv("NFSU2_NO_SIGNS")) {
+            int sw = decoded.width, sh = decoded.height;
+            std::vector<uint32_t> repl;
+            if (SignGen::Replacement(info->name, sw, sh, repl) && sw > 0 && sh > 0) {
+                decoded.rgba = std::move(repl);
+                decoded.width = sw, decoded.height = sh;
+            }
+        }
         glGenTextures(1, &id);
         glBindTexture(GL_TEXTURE_2D, id);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -313,7 +323,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         return false;
 
     constexpr float kDrawDistance = 900.0f, kNear = 0.3f, kFogStart = 200.0f;
-    const float fogColour[4] = {0.55f, 0.62f, 0.72f, 1.0f};
+    // Israeli daylight (ISSUES #277): bright azure sky, pale warm haze; NFSU2_NIGHT=1 keeps the original dusk.
+    const bool day = !getenv("NFSU2_NIGHT");
+    const float fogColour[4] = {day ? 0.82f : 0.55f, day ? 0.87f : 0.62f, day ? 0.93f : 0.72f, 1.0f};
 
     GLBridge::Scope scope(renderer);
     if (!m_shadersTried)
@@ -338,10 +350,16 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glLoadIdentity();
     glShadeModel(GL_SMOOTH);
     glBegin(GL_QUADS);
-    glColor3ub(70, 100, 150);
+    if (day)
+        glColor3ub(52, 128, 214);
+    else
+        glColor3ub(70, 100, 150);
     glVertex2f(-1, 1);
     glVertex2f(1, 1);
-    glColor3ub(140, 158, 184);
+    if (day)
+        glColor3ub(206, 224, 242);
+    else
+        glColor3ub(140, 158, 184);
     glVertex2f(1, -1);
     glVertex2f(-1, -1);
     glEnd();
@@ -406,6 +424,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(GLShader::Uniform(m_progWorld, "uCam"), cam.x, cam.y, cam.z);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uTheme"), getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uDay"), day ? 1.0f : 0.0f);
         {   // photographic materials on units 2..14 (colours 2..9, normals 10..14), ISSUES #274
             const bool mats = MaterialLibrary::Load();
             GLShader::Set1f(GLShader::Uniform(m_progWorld, "uMatOn"), mats ? 1.0f : 0.0f);
@@ -427,7 +446,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 GLShader::ActiveTexture(0);
             }
         }
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : 0.8f));
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (day ? 0.0f : 0.8f)));
     };
 
     // The interior-mapping program for the windowed facades (ISSUES #266).
@@ -442,7 +461,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set3f(GLShader::Uniform(m_progInterior, "uCam"), cam.x, cam.y, cam.z);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uTime"), float(SDL_GetTicks()) * 0.001f);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDebug"), getenv("NFSU2_INTERIOR_DEBUG") ? float(atof(getenv("NFSU2_INTERIOR_DEBUG"))) : 0.0f);
-        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : 0.42f);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : (day ? 0.12f : 0.42f));
     };
 
     // Upload render triangles once: grouped by texture, one draw range per texture.
