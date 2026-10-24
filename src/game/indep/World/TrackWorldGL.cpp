@@ -854,6 +854,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::EnableAttrib(3);
         const GLint blurLoc = GLShader::Uniform(m_progCar, "uBlur");
         const GLint lampLoc = GLShader::Uniform(m_progCar, "uLamp");
+        const GLint glassLoc = GLShader::Uniform(m_progCar, "uGlass");
+        GLShader::Set1f(glassLoc, 0.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uDay"), day ? 1.0f : 0.0f);
         for (const Car &car : m_cars) {
             if (car.render.empty())
                 continue;
@@ -893,6 +896,32 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
                 glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
                 first = last;
+            }
+            // The lamp covers (gloss 8 / 9): translucent, after everything opaque of this car, no depth writes.
+            static std::vector<CarVertex> glassV;
+            glassV.clear();
+            if (lit)
+                for (size_t ti = 0; ti < car.render.size(); ++ti)
+                    if (car.gloss[ti] == 8 || car.gloss[ti] == 9)
+                        glassV.insert(glassV.end(), cv.begin() + ptrdiff_t(ti * 3), cv.begin() + ptrdiff_t(ti * 3 + 3));
+            if (!glassV.empty()) {
+                glVertexPointer(3, GL_FLOAT, sizeof(CarVertex), &glassV[0].x);
+                glTexCoordPointer(2, GL_FLOAT, sizeof(CarVertex), &glassV[0].u);
+                glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(CarVertex), &glassV[0].r);
+                GLShader::AttribPointer(1, 3, GL_FLOAT, false, sizeof(CarVertex), &glassV[0].nx);
+                GLShader::AttribPointer(2, 1, GL_FLOAT, false, sizeof(CarVertex), &glassV[0].gloss);
+                GLShader::AttribPointer(3, 1, GL_FLOAT, false, sizeof(CarVertex), &glassV[0].ao);
+                GLShader::Set1f(glassLoc, 1.0f);
+                glDisable(GL_ALPHA_TEST);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthMask(GL_FALSE);
+                glBindTexture(GL_TEXTURE_2D, GLTexture(0));
+                glDrawArrays(GL_TRIANGLES, 0, GLsizei(glassV.size()));
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+                glEnable(GL_ALPHA_TEST);
+                GLShader::Set1f(glassLoc, 0.0f);
             }
         }
         GLShader::DisableAttrib(1);

@@ -23,8 +23,13 @@ inline bool SlotColour(uint32_t hash, float rgb[3])
         return set(0.10f, 0.12f, 0.16f);
     case NameHash("HEADLIGHT_LEFT"): case NameHash("HEADLIGHT_RIGHT"):
         return set(0.92f, 0.92f, 0.86f);
-    case NameHash("BRAKELIGHT_LEFT"): case NameHash("BRAKELIGHT_RIGHT"):
+    case NameHash("BRAKELIGHT_LEFT"): case NameHash("BRAKELIGHT_RIGHT"): case NameHash("BRAKELIGHT_CENTRE"):
         return set(0.75f, 0.08f, 0.06f);
+    // The clear cover over each lamp cluster (no texture ships for it; the shader draws it translucent, ISSUES #286).
+    case NameHash("HEADLIGHT_GLASS_LEFT"): case NameHash("HEADLIGHT_GLASS_RIGHT"):
+        return set(0.92f, 0.95f, 0.98f);
+    case NameHash("BRAKELIGHT_GLASS_LEFT"): case NameHash("BRAKELIGHT_GLASS_RIGHT"):
+        return set(0.80f, 0.07f, 0.05f);
     case NameHash("WINDOW_TINT1"): return set(0.06f, 0.07f, 0.09f);
     case NameHash("WINDOW_TINT2"): return set(0.03f, 0.035f, 0.045f);
     case NameHash("WINDOW_TINT3"): return set(0.005f, 0.005f, 0.01f);

@@ -472,6 +472,8 @@ uniform float uFogEnd;
 uniform float uTime;
 uniform float uBlur;
 uniform vec3 uLamp; // x headlights, y brake pedal, z reverse (0..1)
+uniform float uGlass; // 1 while the translucent lamp covers are drawn
+uniform float uDay;   // 1 in daylight: the lamps burn less hot against the bright scene
 varying float vAO;
 varying vec4 vColor;
 varying vec2 vUV;
@@ -498,6 +500,40 @@ vec3 environment(vec3 R) {
 void main() {
     vec4 tex = texture2D(uTex, vUV);
     vec4 base = tex * vColor;
+    if (vGloss > 7.5 && vGloss < 9.5) {
+        // ---- lamp covers (ISSUES #286): 8 clear headlight glass, 9 red brake-light glass. Drawn in their own blended pass. ----
+        if (uGlass < 0.5)
+            discard;
+        vec3 Ng = normalize(vNormal);
+        vec3 Vg = normalize(uCam - vPos);
+        float NdVg = max(dot(Ng, Vg), 0.0);
+        float fr = 0.06 + 0.94 * pow(1.0 - NdVg, 4.0);
+        vec3 refl = environment(reflect(-Vg, Ng));
+        vec3 tint = clamp(vColor.rgb, 0.0, 1.0);
+        vec3 colG;
+        float aG;
+        if (vGloss < 8.5) {
+            colG = refl * (0.35 + 0.65 * fr) + tint * 0.10 + vec3(1.0, 0.96, 0.82) * uLamp.x * 0.35;
+            aG = clamp(0.16 + 0.55 * fr + 0.10 * uLamp.x, 0.0, 0.8);
+        } else {
+            colG = tint * (0.30 + 1.1 * uLamp.y) + refl * fr * 0.8;
+            aG = clamp(0.50 + 0.30 * fr, 0.0, 0.9);
+        }
+        float fg = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+        gl_FragColor = vec4(mix(colG, uFogColor, fg * fg * (3.0 - 2.0 * fg)), aG);
+        return;
+    }
+    if (vGloss > 9.5 && vGloss < 10.5) {
+        // the centre brake light: the tail lens treatment
+        vec3 Nc = normalize(vNormal);
+        vec3 Vc = normalize(uCam - vPos);
+        float core = pow(max(dot(Nc, Vc), 0.0), 1.5);
+        vec3 hotc = mix(vec3(0.85, 0.05, 0.03), vec3(1.0, 0.11, 0.06), uLamp.y) * (1.0 + 0.45 * uLamp.y) * (0.65 + 0.55 * core);
+        vec3 colc = mix(clamp(vColor.rgb, 0.0, 1.0) * 0.30, hotc, clamp(0.30 + 0.70 * uLamp.y, 0.0, 1.0));
+        float fc = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+        gl_FragColor = vec4(mix(colc, uFogColor, fc * fc * (3.0 - 2.0 * fc)), 1.0);
+        return;
+    }
     if (vGloss > 5.5) {
         // ---- lamp lenses (ISSUES #284): 6 headlight, 7 tail / brake light. Emissive; the brake pedal drives the tail lamp
         // from a dim red to a hot lens, headlights burn white-warm; a clear-coat glint keeps the glass look. -----------------
@@ -508,7 +544,7 @@ void main() {
         vec3 col;
         if (vGloss < 6.5) {
             float on = uLamp.x;
-            vec3 hot = vec3(1.0, 0.96, 0.80) * (1.9 + 0.5 * NdVl);
+            vec3 hot = vec3(1.0, 0.96, 0.80) * mix(1.9 + 0.5 * NdVl, 0.62 + 0.42 * NdVl, uDay);
             col = mix(lens * (0.35 + 0.35 * NdVl), hot, on);
         } else {
             float on = clamp(0.30 + 0.70 * uLamp.y, 0.0, 1.0); // tail lamps always burn, the brake pedal drives them hard

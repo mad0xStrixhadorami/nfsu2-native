@@ -611,6 +611,20 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         car.halfLen = std::max(1.0f, lx), car.halfWid = std::max(0.6f, ly);
     }
     memcpy(car.xf, m, sizeof(float) * 12);
+    if (getenv("NFSU2_CAR_SLOTS") && car.textures && car.textures->size() == car.model->size()) { // dev aid: how every material slot of a car resolves (once per car)
+        static std::set<const void *> seen;
+        if (seen.insert(car.model).second) {
+            std::map<uint32_t, size_t> count;
+            for (uint32_t h : *car.textures)
+                ++count[h];
+            for (const auto &kv : count) {
+                float tmp[3];
+                const bool fixedColour = CarMaterial::SlotColour(kv.first, tmp);
+                printf("[Slot] %08x x%zu %s\n", kv.first, kv.second,
+                       fixedColour ? "fixed colour" : (kv.first && m_textures.count(kv.first)) ? "texture" : "PAINT (unresolved)");
+            }
+        }
+    }
     car.groundZ = 1e9f;
     car.normals.clear();
     car.albedo.clear();
@@ -713,6 +727,12 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
                 gloss = 6;
             else if (slot == CarMaterial::NameHash("BRAKELIGHT_LEFT") || slot == CarMaterial::NameHash("BRAKELIGHT_RIGHT"))
                 gloss = 7;
+            else if (slot == CarMaterial::NameHash("BRAKELIGHT_CENTRE"))
+                gloss = 10; // the third brake light: a tail lens without a left / right anchor
+            else if (slot == CarMaterial::NameHash("HEADLIGHT_GLASS_LEFT") || slot == CarMaterial::NameHash("HEADLIGHT_GLASS_RIGHT"))
+                gloss = 8;  // clear cover, drawn translucent after the opaque car
+            else if (slot == CarMaterial::NameHash("BRAKELIGHT_GLASS_LEFT") || slot == CarMaterial::NameHash("BRAKELIGHT_GLASS_RIGHT"))
+                gloss = 9;  // red cover
         }
         Tri w;
         for (int k = 0; k < 3; ++k)
