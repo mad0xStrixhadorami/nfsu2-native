@@ -307,6 +307,11 @@ void TrackWorld::PostProcess(int w, int h)
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uBloomStrength"), getenv("NFSU2_BLOOM") ? float(atof(getenv("NFSU2_BLOOM"))) : 0.75f);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uVignette"), 0.34f);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uExposure"), 1.06f);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uMotion"), getenv("NFSU2_NO_SPEEDFX") ? 0.0f : m_fxMotion);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uNitro"), m_fxNitro);
+    GLShader::Set2f(GLShader::Uniform(m_progComposite, "uFxCenter"), m_fxCenter[0], m_fxCenter[1]);
+    GLShader::Set2f(GLShader::Uniform(m_progComposite, "uCarPos"), m_fxCar[0], m_fxCar[1]);
+    GLShader::Set2f(GLShader::Uniform(m_progComposite, "uCarRad"), m_fxCar[2], m_fxCar[3]);
     GLShader::ActiveTexture(1);
     glBindTexture(GL_TEXTURE_2D, m_postBloom[0]);
     GLShader::ActiveTexture(0);

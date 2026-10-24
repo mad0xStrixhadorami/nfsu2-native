@@ -667,6 +667,7 @@ int main(int argc, char **argv)
     float introBars = 0.0f; // letterbox amount of the pre-race camera (#265)
     Minimap minimap; // the HUD's round map (#259)
     bool mapNative = false, mapRotate = true; // the Unbound-style native map is being drawn (#296)
+    Uint32 lastFxTicks = 0;
     float mapWindow = 260.0f;
     std::vector<uint32_t> minimapPixels;
     bool minimapBound = false;
@@ -2470,6 +2471,18 @@ int main(int argc, char **argv)
             Perf::GpuBegin();
             if (getenv("NFSU2_CAM_LOG"))
                 printf("[Cam] %u %.3f %.3f %.3f %.4f %.4f %.2f\n", unsigned(now), camera.x, camera.y, camera.z, camera.yaw, camera.pitch, camera.fov);
+            {
+                // The speed effect (ISSUES #298): from ~30 km/h, full by ~140; nitrous and the intro / menus change it.
+                static float fxSm = 0, nosSm = 0;
+                const bool racing = inWorld && !sceneMode && !race.InIntro() && !flyCamera && !cribPkg;
+                const float want = racing ? std::clamp((std::fabs(car.Speed()) - 8.0f) / 30.0f, 0.0f, 1.0f) : 0.0f;
+                const float wantNos = racing && car.NitrousActive() ? 1.0f : 0.0f;
+                const float k = std::min(1.0f, 4.0f * std::max(0.001f, float(now - lastFxTicks) * 0.001f));
+                lastFxTicks = now;
+                fxSm += (want - fxSm) * k, nosSm += (wantNos - nosSm) * k;
+                const bool rigid = startup.CameraSetting() < 2; // bumper / hood: no car in view
+                world.SetSpeedFx(std::min(1.0f, fxSm * (0.78f + 0.3f * nosSm)), nosSm, 0.5f, 0.34f, rigid ? 0.0f : 0.16f, rigid ? 0.0f : 0.19f);
+            }
             const bool glWorldOk = world.RenderGL(ren, camera, w, h);
             Perf::GpuEnd();
             Perf::Lap(Perf::kWorld);

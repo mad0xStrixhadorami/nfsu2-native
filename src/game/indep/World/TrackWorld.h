@@ -134,6 +134,12 @@ public:
         m_smoke.erase(std::remove_if(m_smoke.begin(), m_smoke.end(), [](const Smoke &s) { return s.age >= s.life; }), m_smoke.end());
     }
     void DrawTyreEffects(const Camera &cam) const;
+    // The speed effect (ISSUES #298): radial blur strength 0..1 (from the speed), a nitrous burst 0..1, and where the car is on screen
+    // (uv, y up) so it can stay sharp; carRx = 0 for the rigid cameras where the car is not visible.
+    void SetSpeedFx(float motion, float nitro, float carX, float carY, float carRx, float carRy)
+    {
+        m_fxMotion = motion, m_fxNitro = nitro, m_fxCar[0] = carX, m_fxCar[1] = carY, m_fxCar[2] = carRx, m_fxCar[3] = carRy;
+    }
     void SetCarLamps(size_t car, bool head, bool brake, bool reverse)
     {
         if (car >= m_cars.size())
@@ -377,6 +383,7 @@ private:
     bool m_shadersTried = false;
     void InitShaders();
     void PostProcess(int w, int h);
+    float m_fxMotion = 0, m_fxNitro = 0, m_fxCar[4] = {0, 0, 0, 0}, m_fxCenter[2] = {0.5f, 0.6f};
     void ReleasePost();
     unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)

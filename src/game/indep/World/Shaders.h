@@ -677,20 +677,56 @@ uniform sampler2D uBloom;
 uniform float uBloomStrength;
 uniform float uVignette;
 uniform float uExposure;
+uniform float uMotion;   // speed effect strength 0..1 (ISSUES #298)
+uniform float uNitro;    // 0..1, nitrous burst: a little more of everything
+uniform vec2 uFxCenter;  // the vanishing point, uv
+uniform vec2 uCarPos;    // the car's ellipse centre in uv
+uniform vec2 uCarRad;    // and radii; x = 0: no car in view
 varying vec2 vUV;
 vec3 filmic(vec3 x) { // ACES fit
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 void main() {
-    vec3 c = texture2D(uScene, vUV).rgb;
+    vec3 c;
+    vec2 d = (vUV - uFxCenter);
+    float amt = 0.0;
+    if (uMotion > 0.002) {
+        // Radial zoom blur streaking outwards from the vanishing point: none at the centre, growing towards the edges and the bottom;
+        // the car stays sharp (NFS Unbound's speed look).
+        float r = length(d * vec2(1.35, d.y < 0.0 ? 1.45 : 1.0)); // the road below the horizon streaks more
+        float edge = smoothstep(0.06, 0.52, r);
+        float carK = 1.0;
+        if (uCarRad.x > 0.001)
+            carK = smoothstep(0.72, 1.35, length((vUV - uCarPos) / uCarRad));
+        amt = uMotion * edge * carK;
+    }
+    if (amt > 0.003) {
+        float k = (0.17 + 0.07 * uNitro) * amt;
+        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        vec3 acc = vec3(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < 16; ++i) {
+            float t = (float(i) + jitter) / 16.0;
+            float wgt = 1.0 - 0.55 * t;
+            acc += texture2D(uScene, vUV - d * (k * t)).rgb * wgt;
+            wsum += wgt;
+        }
+        c = acc / wsum;
+        // colour fringing towards the edges: the red and blue channels sampled a little apart along the radius
+        float ca = 0.0055 * amt;
+        c.r = mix(c.r, texture2D(uScene, vUV - d * ca).r, 0.5);
+        c.b = mix(c.b, texture2D(uScene, vUV + d * ca).b, 0.5);
+    } else {
+        c = texture2D(uScene, vUV).rgb;
+    }
     vec3 b = texture2D(uBloom, vUV).rgb;
     c += b * uBloomStrength;
     c *= uExposure;
     c = mix(c, filmic(c), 0.55);                       // a soft filmic shoulder on top of the display curve
     float l = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(l), c, 1.08);                         // slight saturation
-    vec2 d = vUV - 0.5;
-    c *= 1.0 - uVignette * smoothstep(0.18, 0.62, length(d * vec2(1.0, 0.85)));
+    vec2 dv = vUV - 0.5;
+    c *= 1.0 - (uVignette + 0.16 * uMotion + 0.06 * uNitro) * smoothstep(0.18, 0.62, length(dv * vec2(1.0, 0.85)));
     gl_FragColor = vec4(c, 1.0);
 }
 )";

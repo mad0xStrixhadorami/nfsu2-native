@@ -323,7 +323,10 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     const float frac = std::clamp(hud.rpm / std::max(hud.rpmScale, 1000.0f), 0.0f, 1.0f);
     const float redStart = 0.82f;
     char buf[64];
-    Glow(cx, cy, Rout * 1.7f, {30, 50, 90, 46});
+    // while the nitrous burns the dial turns lime, as in NFS Unbound's boost
+    const bool boost = hud.nitrousActive;
+    const SDL_Color ink = boost ? SDL_Color{196, 255, 72, 255} : SDL_Color{250, 252, 255, 255};
+    Glow(cx, cy, Rout * 1.7f, boost ? SDL_Color{110, 190, 30, 70} : SDL_Color{30, 50, 90, 46});
     // the disc and the scale band (a darker red band at the end)
     Arc(cx, cy, 0.0f, Rdisc, 0.0f, 6.2831853f, {14, 16, 22, 222}, {14, 16, 22, 222});
     Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * redStart, {44, 60, 88, 150}, {44, 60, 88, 150});
@@ -333,8 +336,8 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     // rings with the colour fringe of the original's glass
     Ring(cx + 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {255, 70, 90, 55});
     Ring(cx - 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {70, 220, 255, 55});
-    Ring(cx, cy, Rout - 0.8f * s, Rout + 1.0f * s, {248, 250, 255, 225});
-    Ring(cx, cy, Rdisc - 0.8f * s, Rdisc + 0.8f * s, {248, 250, 255, 210});
+    Ring(cx, cy, Rout - 0.8f * s, Rout + 1.0f * s, {ink.r, ink.g, ink.b, 225});
+    Ring(cx, cy, Rdisc - 0.8f * s, Rdisc + 0.8f * s, {ink.r, ink.g, ink.b, 210});
     // the rpm numerals (thousands)
     const int majors = int(hud.rpmScale / 1000.0f);
     for (int m = 0; m <= majors; ++m) {
@@ -347,7 +350,7 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     }
     // the bright white rev arc outside the scale, growing with the revs
     if (frac > 0.003f)
-        Arc(cx, cy, Rout + 3.5f * s, Rout + 9.5f * s, a0, a0 + sweep * frac, {255, 255, 255, 110}, {255, 255, 255, 255});
+        Arc(cx, cy, Rout + 3.5f * s, Rout + 9.5f * s, a0, a0 + sweep * frac, {ink.r, ink.g, ink.b, 110}, ink);
     // the two small indicator rings under the digits: nitrous burst (cyan) and a drift in progress (amber)
     const bool nos = hud.nitrousActive, drift = hud.drifting;
     Ring(cx - 20.0f * s, cy - 47.0f * s, 9.6f * s, 11.2f * s, {235, 240, 250, 95});
@@ -359,8 +362,8 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     // speed: three padded digits in a heavy face (the same text drawn twice, a hair apart, for weight), the unit and the gear tile
     const float spd = hud.mph ? hud.speedKmh * 0.621371f : hud.speedKmh;
     snprintf(buf, sizeof buf, "%03d", std::min(999, int(std::fabs(spd) + 0.5f)));
-    Text(cx - 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, {250, 252, 255, 255}, 1);
-    Text(cx + 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, {250, 252, 255, 255}, 1);
+    Text(cx - 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, ink, 1);
+    Text(cx + 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, ink, 1);
     Text(cx, cy + 14.0f * s, 15.0f * s, hud.mph ? "mph" : "km/h", {215, 225, 240, 230}, 1);
     const char *g = hud.gear < 0 ? "R" : hud.gear == 0 ? "N" : nullptr;
     if (g)
