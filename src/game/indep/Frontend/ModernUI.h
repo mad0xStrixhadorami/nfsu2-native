@@ -31,6 +31,7 @@ public:
         float mapYaw = 0;      // the car's yaw (rad)
         float mapMetres = 0;   // the window's diameter in metres (the scale label)
         float finishKm = -1;   // < 0: no finish (free roam)
+        const char *eventName = ""; // the label under the map (the event type)
     };
     bool Init(SDL_Renderer *r);
     bool Ready() const { return m_font != nullptr; }
@@ -66,5 +67,9 @@ private:
     void Rect(float x, float y, float w, float h, SDL_Color top, SDL_Color bottom);
     void Glass(float x, float y, float w, float h, float cut, SDL_Color tint, SDL_Color edge); // slanted-corner panel
     void ArcSegment(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c);
+    // A smooth arc band (many segments) with a colour gradient from c0 at a0 to c1 at a1; angles clockwise from +x on the screen.
+    void Arc(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c0, SDL_Color c1);
+    void Ring(float cx, float cy, float r0, float r1, SDL_Color c) { Arc(cx, cy, r0, r1, 0.0f, 6.2831853f, c, c); }
+    void DrawSpeedo(int w, int h, const Hud &hud, float seconds);
     void Glow(float cx, float cy, float radius, SDL_Color c);
 };

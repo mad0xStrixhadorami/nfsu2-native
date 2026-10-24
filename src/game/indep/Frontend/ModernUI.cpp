@@ -167,6 +167,21 @@ void ModernUI::ArcSegment(float cx, float cy, float r0, float r1, float a0, floa
     Quad({cx + c0 * r0, cy + s0 * r0}, {cx + c0 * r1, cy + s0 * r1}, {cx + c1 * r1, cy + s1 * r1}, {cx + c1 * r0, cy + s1 * r0}, c, c, c, c);
 }
 
+void ModernUI::Arc(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c0, SDL_Color c1)
+{
+    const int steps = std::max(2, int(std::ceil(std::fabs(a1 - a0) / 0.06f)));
+    auto mix = [&](float t) {
+        return SDL_Color{Uint8(c0.r + (c1.r - c0.r) * t), Uint8(c0.g + (c1.g - c0.g) * t), Uint8(c0.b + (c1.b - c0.b) * t), Uint8(c0.a + (c1.a - c0.a) * t)};
+    };
+    for (int i = 0; i < steps; ++i) {
+        const float ta = float(i) / steps, tb = float(i + 1) / steps;
+        const float aa = a0 + (a1 - a0) * ta, ab = a0 + (a1 - a0) * tb;
+        const SDL_Color ca = mix(ta), cb = mix(tb);
+        Quad({cx + std::cos(aa) * r0, cy + std::sin(aa) * r0}, {cx + std::cos(aa) * r1, cy + std::sin(aa) * r1},
+             {cx + std::cos(ab) * r1, cy + std::sin(ab) * r1}, {cx + std::cos(ab) * r0, cy + std::sin(ab) * r0}, ca, ca, cb, cb);
+    }
+}
+
 void ModernUI::Glow(float cx, float cy, float radius, SDL_Color c)
 {
     if (!m_glow)
@@ -257,61 +272,137 @@ void ModernUI::DrawMinimap(int w, int h, const Hud &hud, float t)
     if (!m_map)
         return;
     SDL_UpdateTexture(m_map, nullptr, hud.mapPixels, hud.mapSize * 4);
+    // NFS Unbound's map: a frosted glass disc (the scene shows through), a thin white double ring with a colour fringe, a yellow arrow with
+    // green rings, and the event name in a wide face underneath.
     const float s = float(h) / 720.0f;
-    const float R = 104.0f * s, cx = 34.0f * s + R + 16.0f * s, cy = float(h) - 56.0f * s - R;
-    // The glass bezel: a soft blue glow, a dark rim, the map, a thin bright ring and an amber inner rim line.
-    Glow(cx, cy, R * 1.55f, {20, 70, 165, 70});
-    auto ring = [&](float r0, float r1, SDL_Color c) {
-        constexpr int kSeg = 72;
-        for (int i = 0; i < kSeg; ++i)
-            ArcSegment(cx, cy, r0, r1, 6.2831853f * float(i) / kSeg, 6.2831853f * float(i + 1.05f) / kSeg, c);
-    };
-    ring(R - 0.5f * s, R + 8.0f * s, {6, 10, 20, 215});
+    const float R = 92.0f * s, cx = 30.0f * s + R + 18.0f * s, cy = float(h) - 78.0f * s - R;
     const SDL_FRect dst{cx - R, cy - R, R * 2.0f, R * 2.0f};
     SDL_RenderCopyF(m_r, m_map, nullptr, &dst);
-    ring(R + 8.0f * s, R + 9.8f * s, {150, 205, 255, 170});
-    ring(R - 2.0f * s, R, {255, 255, 255, 40});
-    // The compass: ticks every 15 degrees turning with the map, longer at the cardinal points, an amber N at north.
-    const float northA = hud.mapRotate ? hud.mapYaw : 1.5707963f; // north is at pixel offset (-cos a, -sin a) from the centre
-    for (int k = 0; k < 24; ++k) {
-        const float ang = northA + float(k) * (6.2831853f / 24.0f); // k = 0: north; then clockwise on the screen
-        const float dx = -std::cos(ang), dy = -std::sin(ang);
-        const bool major = k % 6 == 0;
-        const float r0 = R + 11.0f * s, r1 = r0 + (major ? 9.0f : 4.5f) * s;
-        const SDL_Color c = k == 0 ? SDL_Color{255, 170, 60, 255} : SDL_Color{190, 215, 245, major ? Uint8(170) : Uint8(80)};
-        // tick as a thin quad
-        const float nx = -dy * 1.1f * s, ny = dx * 1.1f * s;
-        Quad({cx + dx * r0 + nx, cy + dy * r0 + ny}, {cx + dx * r0 - nx, cy + dy * r0 - ny}, {cx + dx * r1 - nx, cy + dy * r1 - ny},
-             {cx + dx * r1 + nx, cy + dy * r1 + ny}, c, c, c, c);
-    }
-    {
-        const float dx = -std::cos(northA), dy = -std::sin(northA), rr = R + 30.0f * s;
-        Glow(cx + dx * rr, cy + dy * rr, 15.0f * s, {255, 150, 40, 90});
-        Text(cx + dx * rr, cy + dy * rr - 9.0f * s, 18.0f * s, "N", {255, 190, 90, 255}, 1);
-    }
-    // The player: a bright arrowhead with a soft halo (up when the map turns with the car).
+    // a soft inner shade towards the rim
+    for (int i = 0; i < 7; ++i)
+        Ring(cx, cy, R - float(i + 1) * 2.4f * s, R - float(i) * 2.4f * s, {0, 0, 0, Uint8(5 + (6 - i) * 1)});
+    Ring(cx + 1.3f * s, cy, R - 0.6f * s, R + 0.9f * s, {255, 70, 90, 60});  // chromatic fringe
+    Ring(cx - 1.3f * s, cy, R - 0.6f * s, R + 0.9f * s, {70, 220, 255, 60});
+    Ring(cx, cy, R - 0.9f * s, R + 1.2f * s, {250, 252, 255, 238});
+    Ring(cx, cy, R + 4.2f * s, R + 5.0f * s, {235, 240, 250, 70});
+    // The player: a yellow arrow with a green outline and two green rings behind it (up when the map turns with the car).
     const float psi = hud.mapRotate ? 0.0f : 1.5707963f - hud.mapYaw; // clockwise from up
-    auto rot = [&](float x, float y) { return SDL_FPoint{cx + (x * std::cos(psi) - y * std::sin(psi)) * s, cy + (x * std::sin(psi) + y * std::cos(psi)) * s}; };
-    Glow(cx, cy, 24.0f * s, {120, 200, 255, 90});
-    const SDL_FPoint tip = rot(0, -14), l = rot(-9.5f, 11), n = rot(0, 5), r = rot(9.5f, 11);
-    Quad(tip, l, n, tip, {255, 255, 255, 255}, {200, 225, 255, 255}, {170, 205, 255, 255}, {255, 255, 255, 255});
-    Quad(tip, n, r, tip, {255, 255, 255, 255}, {170, 205, 255, 255}, {200, 225, 255, 255}, {255, 255, 255, 255});
-    // The readout under the map: distance to the finish, or the map scale in free roam.
+    auto rot = [&](float x, float y, float k) { return SDL_FPoint{cx + (x * std::cos(psi) - y * std::sin(psi)) * s * k, cy + (x * std::sin(psi) + y * std::cos(psi)) * s * k}; };
+    Ring(cx, cy - 5.0f * s, 12.0f * s, 13.6f * s, {90, 255, 80, 215});
+    Ring(cx, cy - 15.0f * s, 10.0f * s, 11.4f * s, {90, 255, 80, 170});
+    auto arrow = [&](float k, SDL_Color c) {
+        const SDL_FPoint tip = rot(0, -13, k), l = rot(-9.5f, 10, k), n = rot(0, 4.5f, k), r = rot(9.5f, 10, k);
+        Quad(tip, l, n, tip, c, c, c, c);
+        Quad(tip, n, r, tip, c, c, c, c);
+    };
+    arrow(1.28f, {70, 235, 60, 255});
+    arrow(1.0f, {255, 226, 58, 255});
+    // The label: the event type with the same colour fringe as the ring, and the distance (or the map scale) under it.
+    const float ly = cy + R + 14.0f * s;
+    const char *name = hud.eventName && hud.eventName[0] ? hud.eventName : "FREE ROAM";
+    Text(cx - 1.5f * s, ly, 24.0f * s, name, {70, 220, 255, 120}, 1);
+    Text(cx + 1.5f * s, ly, 24.0f * s, name, {255, 70, 110, 120}, 1);
+    Text(cx, ly, 24.0f * s, name, {250, 252, 255, 250}, 1);
     char buf[48];
     if (hud.finishKm >= 0.0f)
-        snprintf(buf, sizeof buf, "%.1f KM", hud.finishKm);
+        snprintf(buf, sizeof buf, "%.1f KM TO GO", hud.finishKm);
     else
         snprintf(buf, sizeof buf, "%d M", int(hud.mapMetres + 0.5f));
-    const float pw = 112.0f * s, py = cy + R + 24.0f * s;
-    Glass(cx - pw * 0.5f, py, pw, 30.0f * s, 10.0f * s, {8, 14, 28, 170}, {120, 190, 255, 120});
-    Text(cx + 7.0f * s, py + 3.0f * s, 22.0f * s, buf, hud.finishKm >= 0 ? SDL_Color{255, 214, 80, 255} : SDL_Color{200, 225, 250, 235}, 1);
-    if (hud.finishKm >= 0.0f) { // a tiny chequered flag glyph
-        const float fx = cx - pw * 0.5f + 14.0f * s, fy = py + 8.0f * s, q = 4.2f * s;
-        for (int a = 0; a < 3; ++a)
-            for (int b = 0; b < 3; ++b) {
-                const SDL_Color c = (a + b) % 2 ? SDL_Color{255, 255, 255, 240} : SDL_Color{20, 24, 34, 240};
-                Quad({fx + a * q, fy + b * q}, {fx + (a + 1) * q, fy + b * q}, {fx + (a + 1) * q, fy + (b + 1) * q}, {fx + a * q, fy + (b + 1) * q}, c, c, c, c);
-            }
+    Text(cx, ly + 26.0f * s, 15.0f * s, buf, hud.finishKm >= 0 ? SDL_Color{255, 226, 90, 235} : SDL_Color{205, 225, 245, 210}, 1);
+    (void)t;
+}
+
+// NFS Unbound's dial: a dark glass disc with the speed in padded digits, "mph" and a gear tile; around it an rpm scale in thousands (a
+// red zone at the end), a bright white arc outside showing the revs, and to the left a quarter-circle gauge with a needle for the nitrous.
+void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
+{
+    const float s = float(h) / 720.0f;
+    const float Rout = 100.0f * s, Rdisc = 77.0f * s, cx = float(w) - 152.0f * s, cy = float(h) - 138.0f * s;
+    constexpr float kPi = 3.14159265f;
+    const float a0 = 145.0f * kPi / 180.0f, sweep = 240.0f * kPi / 180.0f; // 0 at the lower left, clockwise over the top to the lower right
+    const float frac = std::clamp(hud.rpm / std::max(hud.rpmScale, 1000.0f), 0.0f, 1.0f);
+    const float redStart = 0.82f;
+    char buf[64];
+    Glow(cx, cy, Rout * 1.7f, {30, 50, 90, 46});
+    // the disc and the scale band (a darker red band at the end)
+    Arc(cx, cy, 0.0f, Rdisc, 0.0f, 6.2831853f, {14, 16, 22, 222}, {14, 16, 22, 222});
+    Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * redStart, {44, 60, 88, 150}, {44, 60, 88, 150});
+    Arc(cx, cy, Rdisc, Rout, a0 + sweep * redStart, a0 + sweep, {150, 26, 32, 215}, {150, 26, 32, 215});
+    if (frac > 0.0f) // the part of the band the revs have reached is a little brighter
+        Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * std::min(frac, redStart), {70, 96, 138, 120}, {88, 118, 170, 150});
+    // rings with the colour fringe of the original's glass
+    Ring(cx + 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {255, 70, 90, 55});
+    Ring(cx - 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {70, 220, 255, 55});
+    Ring(cx, cy, Rout - 0.8f * s, Rout + 1.0f * s, {248, 250, 255, 225});
+    Ring(cx, cy, Rdisc - 0.8f * s, Rdisc + 0.8f * s, {248, 250, 255, 210});
+    // the rpm numerals (thousands)
+    const int majors = int(hud.rpmScale / 1000.0f);
+    for (int m = 0; m <= majors; ++m) {
+        const float u = float(m * 1000) / hud.rpmScale;
+        if (u > 1.0f)
+            break;
+        const float a = a0 + sweep * u, r = (Rdisc + Rout) * 0.5f;
+        snprintf(buf, sizeof buf, "%d", m);
+        Text(cx + std::cos(a) * r, cy + std::sin(a) * r - 8.0f * s, 15.0f * s, buf, u > redStart ? SDL_Color{255, 215, 215, 235} : SDL_Color{225, 235, 248, 215}, 1);
+    }
+    // the bright white rev arc outside the scale, growing with the revs
+    if (frac > 0.003f)
+        Arc(cx, cy, Rout + 3.5f * s, Rout + 9.5f * s, a0, a0 + sweep * frac, {255, 255, 255, 110}, {255, 255, 255, 255});
+    // the two small indicator rings under the digits: nitrous burst (cyan) and a drift in progress (amber)
+    const bool nos = hud.nitrousActive, drift = hud.drifting;
+    Ring(cx - 20.0f * s, cy - 47.0f * s, 9.6f * s, 11.2f * s, {235, 240, 250, 95});
+    Ring(cx + 15.0f * s, cy - 54.0f * s, 10.6f * s, 12.2f * s, {235, 240, 250, 95});
+    if (nos)
+        Arc(cx - 20.0f * s, cy - 47.0f * s, 0.0f, 9.0f * s, 0.0f, 6.2831853f, {110, 235, 255, 150}, {110, 235, 255, 150});
+    if (drift)
+        Arc(cx + 15.0f * s, cy - 54.0f * s, 0.0f, 10.0f * s, 0.0f, 6.2831853f, {255, 180, 60, 150}, {255, 180, 60, 150});
+    // speed: three padded digits in a heavy face (the same text drawn twice, a hair apart, for weight), the unit and the gear tile
+    const float spd = hud.mph ? hud.speedKmh * 0.621371f : hud.speedKmh;
+    snprintf(buf, sizeof buf, "%03d", std::min(999, int(std::fabs(spd) + 0.5f)));
+    Text(cx - 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, {250, 252, 255, 255}, 1);
+    Text(cx + 0.8f * s, cy - 40.0f * s, 60.0f * s, buf, {250, 252, 255, 255}, 1);
+    Text(cx, cy + 14.0f * s, 15.0f * s, hud.mph ? "mph" : "km/h", {215, 225, 240, 230}, 1);
+    const char *g = hud.gear < 0 ? "R" : hud.gear == 0 ? "N" : nullptr;
+    if (g)
+        snprintf(buf, sizeof buf, "%s", g);
+    else
+        snprintf(buf, sizeof buf, "%d", hud.gear);
+    const float tile = 31.0f * s;
+    Glass(cx - tile * 0.5f, cy + 31.0f * s, tile, tile, 8.0f * s, {205, 208, 214, 235}, {240, 243, 248, 235});
+    Text(cx, cy + 31.0f * s + 1.0f * s, 27.0f * s, buf, frac > 0.92f ? SDL_Color{190, 40, 40, 255} : SDL_Color{34, 38, 48, 255}, 1);
+
+    // ---- the nitrous gauge: a quarter circle left of the dial, a needle on its pivot ----
+    const float px = cx - 113.0f * s, py = cy + 66.0f * s, ro = 90.0f * s, ri = 70.0f * s;
+    const float na0 = kPi, naSweep = 0.5f * kPi; // from the left, clockwise to straight up
+    const float fill = hud.hasNitrous ? std::clamp(hud.nitrous, 0.0f, 1.0f) : 0.0f;
+    const SDL_Color blue = hud.nitrousActive ? SDL_Color{130, 255, 255, 255} : SDL_Color{58, 150, 255, 245};
+    Arc(px, py, ro, ro + 2.4f * s, na0, na0 + naSweep, blue, blue);
+    const float gap = 0.05f, seg = (naSweep - 2 * gap) / 3.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float sa = na0 + gap + float(i) * (seg + gap), sb = sa + seg;
+        const float lit = std::clamp(fill * 3.0f - float(i), 0.0f, 1.0f); // how much of this segment is filled
+        Arc(px, py, ri, ro - 1.0f * s, sa, sb, {92, 98, 110, 150}, {92, 98, 110, 150});
+        if (lit > 0.0f)
+            Arc(px, py, ri, ro - 1.0f * s, sa, sa + (sb - sa) * lit, {blue.r, blue.g, blue.b, 230}, {blue.r, blue.g, blue.b, 230});
+    }
+    const float needle = na0 + naSweep * fill;
+    {
+        const float dx = std::cos(needle), dy = std::sin(needle), nx = -dy * 3.6f * s, ny = dx * 3.6f * s, len = 62.0f * s;
+        Quad({px + dx * 9.0f * s + nx, py + dy * 9.0f * s + ny}, {px + dx * 9.0f * s - nx, py + dy * 9.0f * s - ny},
+             {px + dx * len, py + dy * len}, {px + dx * len, py + dy * len}, {255, 255, 255, 235}, {255, 255, 255, 235}, {255, 255, 255, 0}, {255, 255, 255, 0});
+    }
+    Ring(px + 1.0f * s, py, 7.4f * s, 9.4f * s, {255, 70, 90, 60});
+    Ring(px - 1.0f * s, py, 7.4f * s, 9.4f * s, {70, 220, 255, 60});
+    Ring(px, py, 7.6f * s, 9.2f * s, {250, 252, 255, 240});
+    // the battery with a bolt
+    {
+        const float bx = px - 36.0f * s, by = py - 52.0f * s, bw = 15.0f * s, bh = 23.0f * s;
+        const SDL_Color bc = fill > 0.0f || hud.nitrousActive ? SDL_Color{60, 150, 255, 255} : SDL_Color{110, 125, 150, 200};
+        Rect(bx + bw * 0.3f, by - 3.0f * s, bw * 0.4f, 3.0f * s, bc, bc);
+        Rect(bx, by, bw, bh, bc, {bc.r, bc.g, Uint8(std::min(255, bc.b + 0)), bc.a});
+        const SDL_Color wc{235, 245, 255, 255};
+        Quad({bx + bw * 0.62f, by + 3.0f * s}, {bx + bw * 0.28f, by + bh * 0.55f}, {bx + bw * 0.52f, by + bh * 0.55f}, {bx + bw * 0.72f, by + 3.0f * s}, wc, wc, wc, wc);
+        Quad({bx + bw * 0.38f, by + bh - 3.0f * s}, {bx + bw * 0.72f, by + bh * 0.45f}, {bx + bw * 0.48f, by + bh * 0.45f}, {bx + bw * 0.28f, by + bh - 3.0f * s}, wc, wc, wc, wc);
     }
     (void)t;
 }
@@ -325,52 +416,7 @@ void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
     const SDL_Color glass{8, 14, 28, 150}, edge{120, 190, 255, 120};
     char buf[64];
 
-    // ---- speed cluster, bottom right ----
-    const float R = 98 * s, cx = float(w) - 150 * s, cy = float(h) - 140 * s;
-    Glow(cx, cy, R * 1.9f, {20, 80, 170, 60});
-    Glass(cx - R * 1.35f, cy - R * 1.25f, R * 2.7f, R * 2.5f, 26 * s, glass, edge);
-    const float a0 = 0.75f * kPi, sweep = 1.5f * kPi; // 135 deg .. 405 deg: open at the bottom
-    const int N = 44;
-    const float frac = std::clamp(hud.rpm / std::max(hud.rpmScale, 1000.0f), 0.0f, 1.0f);
-    for (int i = 0; i < N; ++i) {
-        const float u0 = float(i) / N, u1 = float(i + 0.82f) / N;
-        const bool lit = u0 < frac;
-        const bool red = u0 > 0.82f;
-        SDL_Color c = lit ? (red ? Mix(kWarm, kRed, (u0 - 0.82f) / 0.18f) : Mix(kAccent, {255, 255, 255, 255}, u0 * 0.5f)) : SDL_Color{120, 150, 190, 38};
-        const float shorten = (i % 4 == 0) ? 0.0f : 6 * s; // every fourth tick is longer
-        ArcSegment(cx, cy, R - 16 * s + shorten, R, a0 + sweep * u0, a0 + sweep * u1, c);
-    }
-    // numerals at the major ticks (thousands of rpm)
-    const int majors = int(hud.rpmScale / 1000.0f);
-    for (int m = 0; m <= majors; ++m) {
-        const float u = float(m * 1000) / hud.rpmScale;
-        if (u > 1.0f)
-            break;
-        const float a = a0 + sweep * u;
-        snprintf(buf, sizeof(buf), "%d", m);
-        Text(cx + std::cos(a) * (R + 14 * s), cy + std::sin(a) * (R + 14 * s) - 8 * s, 16 * s, buf, {200, 220, 245, 170}, 1);
-    }
-    const float spd = hud.mph ? hud.speedKmh * 0.621371f : hud.speedKmh;
-    snprintf(buf, sizeof(buf), "%d", int(std::fabs(spd) + 0.5f));
-    Text(cx, cy - 56 * s, 96 * s, buf, kWhite, 1);
-    Text(cx, cy + 40 * s, 22 * s, hud.mph ? "MPH" : "KM/H", {160, 205, 255, 230}, 1);
-    // gear
-    const char *g = hud.gear < 0 ? "R" : hud.gear == 0 ? "N" : nullptr;
-    if (g)
-        snprintf(buf, sizeof(buf), "%s", g);
-    else
-        snprintf(buf, sizeof(buf), "%d", hud.gear);
-    Glass(cx - 24 * s, cy + 66 * s, 48 * s, 40 * s, 10 * s, {20, 60, 110, 190}, {120, 200, 255, 200});
-    Text(cx, cy + 66 * s, 40 * s, buf, frac > 0.9f ? kWarm : kWhite, 1);
-    // nitrous bar under the cluster
-    if (hud.hasNitrous) {
-        const float bw = R * 2.3f, bx = cx - bw * 0.5f, by = cy + R * 1.0f + 12 * s;
-        Rect(bx, by, bw, 8 * s, {255, 255, 255, 30}, {255, 255, 255, 30});
-        const float f = std::clamp(hud.nitrous, 0.0f, 1.0f);
-        const SDL_Color nc = hud.nitrousActive ? SDL_Color{120, 255, 255, 255} : SDL_Color{60, 160, 255, 255};
-        Quad({bx, by}, {bx + bw * f, by}, {bx + bw * f, by + 8 * s}, {bx, by + 8 * s}, nc, Mix(nc, kWhite, 0.5f), Mix(nc, kWhite, 0.5f), nc);
-        Text(bx, by - 18 * s, 14 * s, "NOS", {160, 215, 255, 220}, 0);
-    }
+    DrawSpeedo(w, h, hud, t);
 
     // ---- drift, lower centre (ISSUES #291): the running chain with its multiplier and the slide angle; the banked points pop up ----
     if (hud.drifting || hud.driftChain > 0.5f || hud.driftBanner > 0.0f) {

@@ -223,7 +223,8 @@ void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rot
         const float dr = float(px2 & 255), dg = float((px2 >> 8) & 255), db = float((px2 >> 16) & 255);
         const uint32_t nr = uint32_t(std::clamp(dr + (r - dr) * a, 0.0f, 255.0f)), ng = uint32_t(std::clamp(dg + (g - dg) * a, 0.0f, 255.0f)),
                        nb = uint32_t(std::clamp(db + (b - db) * a, 0.0f, 255.0f));
-        px2 = (px2 & 0xff000000u) | nb << 16 | ng << 8 | nr;
+        const uint32_t oa = px2 >> 24, na = uint32_t(std::min(255.0f, float(oa) + 255.0f * a)); // drawn marks raise the plate's opacity
+        px2 = na << 24 | nb << 16 | ng << 8 | nr;
     };
     for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i) {
@@ -245,16 +246,18 @@ void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rot
                 glow += roadAt(bx + std::cos(a) * 4.5f, by + std::sin(a) * 4.5f);
             }
             glow = (glow * 0.125f) * (1.0f - c0);
-            const float grad = 0.5f + 0.5f * v / R;                       // lighter towards the top: a gentle sky-to-ground feel
-            const float vig = 1.0f - 0.38f * rr * rr;
-            float r = (10.0f + 8.0f * grad) * vig, g = (17.0f + 14.0f * grad) * vig, b = (32.0f + 22.0f * grad) * vig;
-            const float fill = c0 * 0.55f;
-            r += fill * 52.0f * vig, g += fill * 74.0f * vig, b += fill * 112.0f * vig;
-            r += glow * 40.0f, g += glow * 110.0f, b += glow * 230.0f;
-            r += edge * 150.0f, g += edge * 178.0f, b += edge * 215.0f;
+            // Frosted glass (NFS Unbound): a pale desaturated ground that lets the scene show through, darker towards the rim, with the roads
+            // as thin pale lines over a faint fill.
+            const float vig = 1.0f - 0.55f * rr * rr * rr;
+            float r = 74.0f * vig + 6.0f, g = 82.0f * vig + 8.0f, b = 94.0f * vig + 10.0f;
+            const float fill = c0 * 0.30f;
+            r += fill * 70.0f, g += fill * 78.0f, b += fill * 90.0f;
+            r += glow * 36.0f, g += glow * 40.0f, b += glow * 48.0f;
+            r += edge * 150.0f, g += edge * 152.0f, b += edge * 158.0f;
             const float aa = std::clamp((1.0f - rr) * float(n) * 0.5f, 0.0f, 1.0f); // a 1-2 pixel anti-aliased rim
-            out[size_t(j) * n + i] = uint32_t(aa * 255.0f) << 24 | uint32_t(std::clamp(b, 0.0f, 255.0f)) << 16 | uint32_t(std::clamp(g, 0.0f, 255.0f)) << 8 |
-                                     uint32_t(std::clamp(r, 0.0f, 255.0f));
+            const float alpha = (150.0f + 70.0f * rr * rr) * aa + (c0 > 0.1f ? 18.0f * aa : 0.0f);
+            out[size_t(j) * n + i] = uint32_t(std::clamp(alpha, 0.0f, 255.0f)) << 24 | uint32_t(std::clamp(b, 0.0f, 255.0f)) << 16 |
+                                     uint32_t(std::clamp(g, 0.0f, 255.0f)) << 8 | uint32_t(std::clamp(r, 0.0f, 255.0f));
         }
     auto disc = [&](float sx, float sv, float rad, float r, float g, float b, float a) {
         const int ir = int(std::ceil(rad)) + 1;
@@ -266,30 +269,23 @@ void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rot
             }
     };
     if (route && route->Valid()) {
+        // The route: a thin line from yellow near the car to green far ahead (the gradient follows the distance from the centre).
         const float len = route->Length();
-        const float rad = std::max(2.4f, n / 56.0f);
-        for (int pass = 0; pass < 3; ++pass)
+        const float rad = std::max(1.8f, n / 90.0f);
+        for (int pass = 0; pass < 2; ++pass)
             for (float s = 0; s < len; s += 2.0f) {
                 float x, y, dx, dy, sx, sv;
                 route->Sample(s, x, y, dx, dy);
                 if (std::fabs(x - px) > R * 1.25f || std::fabs(y - py) > R * 1.25f)
                     continue;
                 toPixel(x, y, sx, sv);
+                const float t = std::clamp(std::hypot(sx - n * 0.5f, sv - n * 0.5f) / (n * 0.5f), 0.0f, 1.0f);
+                const float cr = 255.0f + (110.0f - 255.0f) * t, cg = 226.0f + (255.0f - 226.0f) * t, cb = 60.0f + (90.0f - 60.0f) * t;
                 if (pass == 0)
-                    disc(sx, sv, rad + 2.6f, 255, 130, 20, 0.16f); // the glow
-                else if (pass == 1)
-                    disc(sx, sv, rad + 0.9f, 215, 105, 12, 0.95f); // the outline
+                    disc(sx, sv, rad + 1.8f, cr, cg, cb, 0.22f); // the glow
                 else
-                    disc(sx, sv, rad - 0.4f, 255, 212, 66, 1.0f);  // the line
+                    disc(sx, sv, rad, cr, cg, cb, 1.0f);
             }
-        for (float s = 6.0f; s < len; s += 14.0f) { // direction dots
-            float x, y, dx, dy, sx, sv;
-            route->Sample(s, x, y, dx, dy);
-            if (std::fabs(x - px) > R * 1.1f || std::fabs(y - py) > R * 1.1f)
-                continue;
-            toPixel(x, y, sx, sv);
-            disc(sx, sv, std::max(0.9f, rad * 0.28f), 255, 252, 235, 0.9f);
-        }
         float fx, fy, fdx, fdy, sx, sv; // the finish: a ringed flag dot at the end of the route
         route->Sample(len, fx, fy, fdx, fdy);
         toPixel(fx, fy, sx, sv);

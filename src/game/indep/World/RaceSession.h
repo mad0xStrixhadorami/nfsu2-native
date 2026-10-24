@@ -80,6 +80,7 @@ public:
     // points accrue while "drifting", a chain multiplier grows with sustained drift, and the chain
     // is banked into the total after a short grace period without drifting.
     bool IsDrift() const { return m_config.type == 3; }
+    int RaceType() const { return m_config.type; }
     void DriftUpdate(float speed, float yaw, float dt);
     float DriftPoints() const { return m_driftChain * m_driftMult; } // current chain value
     float DriftTotal() const { return m_driftTotal; }

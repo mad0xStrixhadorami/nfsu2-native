@@ -2521,6 +2521,9 @@ int main(int argc, char **argv)
                 mh.driftMult = car.DriftMultiplier(), mh.driftBanner = car.DriftBanner(), mh.driftBank = car.DriftLastBank();
                 mh.driftTotal = car.DriftTotal();
                 if (mapNative) {
+                    static const char *const kEventNames[] = {"CIRCUIT", "SPRINT", "DRAG", "DRIFT", "U.R.L.", "RACE", "RACE", "RACE", "RACE", "FREE ROAM", "STREET X"};
+                    const int rt = race.RaceType();
+                    mh.eventName = race.IsFreeRun() ? "FREE ROAM" : (rt >= 0 && rt <= 10 ? kEventNames[rt] : "RACE");
                     mh.mapPixels = minimapPixels.data(), mh.mapSize = 256, mh.mapRotate = mapRotate, mh.mapYaw = car.Yaw(), mh.mapMetres = mapWindow;
                     mh.finishKm = (race.IsFreeRun() || race.RaceLength() < 50.0f || !route.Valid()) ? -1.0f : std::max(0.0f, (race.RaceLength() - race.PlayerDistance()) * 0.001f);
                 }
