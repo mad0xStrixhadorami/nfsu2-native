@@ -910,7 +910,7 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
                        float power)
 {
     m_steerIn = steer; // the visible road-wheel angle follows it (AdvanceWheels)
-    m_lampBrake = brake > 0.05f || m_hold;
+    m_lampBrake = brake > 0.05f || m_hold || m_handbrake;
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
 
@@ -919,7 +919,7 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
         in.throttle = std::clamp(throttle * power, 0.0f, 1.0f);
         in.brake = std::clamp(brake, 0.0f, 1.0f);
         in.steer = std::clamp(steer, -1.0f, 1.0f);
-        in.handbrake = m_hold ? 1.0f : 0.0f;
+        in.handbrake = (m_hold || m_handbrake) ? 1.0f : 0.0f;
         in.nitrous = m_nitrousButton;
         m_ug2.Update(world, in, dt);
         const UG2Physics::Vec3 o = m_ug2.Origin();

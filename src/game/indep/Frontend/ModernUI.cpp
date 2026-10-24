@@ -216,6 +216,30 @@ void ModernUI::DrawBackdrop(int w, int h, float t)
     Quad({0, 0}, {W, 0}, {W, 3}, {0, 3}, kAccent, kWarm, kWarm, kAccent);
 }
 
+void ModernUI::DrawWind(int w, int h, float strength, float nitro, float t)
+{
+    if (strength <= 0.02f && nitro <= 0.02f)
+        return;
+    const float cx = float(w) * 0.5f, cy = float(h) * 0.5f, diag = std::hypot(cx, cy);
+    const int lines = 34 + int(strength * 34.0f + nitro * 30.0f);
+    for (int i = 0; i < lines; ++i) {
+        // a deterministic hash per streak: angle, phase, speed, thickness
+        uint32_t k = uint32_t(i) * 2654435761u + 12345u;
+        auto rnd = [&k]() { k ^= k << 13; k ^= k >> 17; k ^= k << 5; return float(k & 0xffff) / 65535.0f; };
+        const float ang = rnd() * 6.2831853f, ph = rnd(), sp = 0.55f + rnd() * 0.9f, th = 1.2f + rnd() * 2.2f;
+        const float u = std::fmod(ph + t * sp * (0.8f + 1.4f * strength), 1.0f); // 0 (inner) .. 1 (off the edge)
+        const float r0 = diag * (0.52f + 0.52f * u * u), len = diag * (0.05f + 0.16f * strength + 0.10f * nitro) * (0.4f + u);
+        const float r1 = r0 + len;
+        const float edge = std::clamp((u - 0.05f) * 3.0f, 0.0f, 1.0f) * std::clamp((1.0f - u) * 4.0f, 0.0f, 1.0f);
+        const float alpha = (0.10f + 0.22f * strength + 0.16f * nitro) * edge;
+        const SDL_Color c = nitro > 0.3f ? Mix({210, 235, 255, 255}, {110, 190, 255, 255}, nitro) : SDL_Color{225, 238, 250, 255};
+        const float ca = std::cos(ang), sa = std::sin(ang), nx = -sa * th * 0.5f, ny = ca * th * 0.5f;
+        Quad({cx + ca * r0 + nx, cy + sa * r0 + ny}, {cx + ca * r0 - nx, cy + sa * r0 - ny},
+             {cx + ca * r1 - nx * 0.2f, cy + sa * r1 - ny * 0.2f}, {cx + ca * r1 + nx * 0.2f, cy + sa * r1 + ny * 0.2f},
+             Alpha(c, 0.0f), Alpha(c, 0.0f), Alpha(c, alpha), Alpha(c, alpha));
+    }
+}
+
 void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
 {
     if (!m_font)
@@ -269,6 +293,28 @@ void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
         const SDL_Color nc = hud.nitrousActive ? SDL_Color{120, 255, 255, 255} : SDL_Color{60, 160, 255, 255};
         Quad({bx, by}, {bx + bw * f, by}, {bx + bw * f, by + 8 * s}, {bx, by + 8 * s}, nc, Mix(nc, kWhite, 0.5f), Mix(nc, kWhite, 0.5f), nc);
         Text(bx, by - 18 * s, 14 * s, "NOS", {160, 215, 255, 220}, 0);
+    }
+
+    // ---- drift, lower centre (ISSUES #291): the running chain with its multiplier and the slide angle; the banked points pop up ----
+    if (hud.drifting || hud.driftChain > 0.5f || hud.driftBanner > 0.0f) {
+        const float dx = float(w) * 0.5f, dy = float(h) * 0.70f;
+        if (hud.driftChain > 0.5f) {
+            const float pw = 250 * s;
+            Glow(dx, dy + 30 * s, pw * 0.7f, {255, 140, 40, 40});
+            Glass(dx - pw * 0.5f, dy, pw, 66 * s, 16 * s, {26, 16, 8, 170}, {255, 170, 80, 170});
+            Text(dx - pw * 0.5f + 16 * s, dy + 4 * s, 20 * s, "DRIFT", {255, 190, 110, 240}, 0);
+            snprintf(buf, sizeof(buf), "%d", int(hud.driftChain * float(hud.driftMult)));
+            Text(dx - 4 * s, dy + 12 * s, 48 * s, buf, kWhite, 1);
+            snprintf(buf, sizeof(buf), "x%d", hud.driftMult);
+            Text(dx + pw * 0.5f - 14 * s, dy + 12 * s, 40 * s, buf, hud.driftMult >= 4 ? SDL_Color{255, 214, 80, 255} : kWarm, 2);
+            const float f = std::clamp(std::fabs(hud.driftAngle) / 60.0f, 0.0f, 1.0f);
+            Rect(dx - pw * 0.5f + 14 * s, dy + 58 * s, (pw - 28 * s) * f, 4 * s, kWarm, kRed);
+        }
+        if (hud.driftBanner > 0.0f) {
+            const float a = std::min(1.0f, hud.driftBanner / 0.8f), rise = (2.5f - hud.driftBanner) * 18 * s;
+            snprintf(buf, sizeof(buf), "+%d", int(hud.driftBank));
+            Text(dx, dy - 150 * s - rise, 52 * s, buf, {255, 214, 80, Uint8(255 * a)}, 1);
+        }
     }
 
     if (!hud.race)

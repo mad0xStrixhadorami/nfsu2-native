@@ -299,6 +299,121 @@ void Vehicle::UpdateNitrous(float dt)
     }
 }
 
+// Drift layer (ISSUES #291). The faithful tyre curves already slide; this decides when the tail is released, keeps the slide
+// controllable and scores it. All parameters are arcade constants, not recovered from the game.
+void Vehicle::UpdateDrift(float dt)
+{
+    Drift &d = m_drift;
+    static const bool off = getenv("NFSU2_NO_DRIFT") != nullptr; // dev aid: the faithful tyre model alone
+    if (off)
+        return;
+    const Vec3 fwd = m_body.rot.r[0], left = m_body.rot.r[1];
+    const float vx = Dot(m_body.vel, fwd), vy = Dot(m_body.vel, left);
+    const float spd = std::hypot(vx, vy);
+    d.beta = (vx > 1.0f && spd > 2.5f) ? std::atan2(vy, vx) : 0.0f;
+    const float ab = std::fabs(d.beta), steer = m_in.steer, throttle = m_in.throttle, hb = m_in.handbrake;
+    // Enter / leave the drift with hysteresis.
+    if (!d.active) {
+        if (spd > 9.0f && ab > 0.15f && vx > 0 && (throttle > 0.2f || hb > 0.1f) && m_grounded)
+            d.active = true;
+    } else if (spd < 6.0f || ab < 0.075f || vx < 1.0f || (throttle < 0.05f && hb < 0.1f && ab < 0.2f) || !m_grounded) {
+        d.active = false;
+    }
+    d.amount += ((d.active ? 1.0f : 0.0f) - d.amount) * std::min(1.0f, dt * 6.0f);
+
+    // Handbrake turn: the moment the brake is pulled with lock on, kick the nose round (a Scandinavian flick); without steering
+    // the car just scrubs speed.
+    if (hb > 0.5f && m_driftHbWas == false && spd > 9.0f && std::fabs(steer) > 0.15f && m_grounded) {
+        const float kick = (steer > 0 ? 1.0f : -1.0f) * std::clamp(spd / 24.0f, 0.3f, 1.0f) * 1.1f; // rad/s of extra yaw rate
+        m_body.angMomentum = m_body.angMomentum + m_body.rot.r[2] * (m_body.inertia.z * kick);
+    }
+    m_driftHbWas = hb > 0.5f;
+    // A deliberate drift is latched by the handbrake (pulled at speed); only then do the strong effects (grip hold, counter-steer,
+    // speed push, yaw damper) apply. An ordinary cornering slide is left to the faithful tyre model.
+    if (hb > 0.3f && spd > 9.0f && m_grounded)
+        d.deliberate = true;
+    if (!d.active && d.amount < 0.05f && hb < 0.1f)
+        d.deliberate = false;
+    if (spd < 5.0f)
+        d.deliberate = false;
+    // Rear grip target: the handbrake kicks the tail out, a power-over (throttle + lock at speed) lets it step out, and while the
+    // slide runs the grip hovers just under the limit so it holds; countering the slide with the wheel gives grip back.
+    const float speedK = std::clamp((spd - 6.0f) / 8.0f, 0.0f, 1.0f);
+    static const bool noPower = getenv("NFSU2_NO_POWEROVER") != nullptr;
+    const float powerOver = noPower ? 0.0f : std::clamp((throttle - 0.55f) * 2.2f, 0.0f, 1.0f) * std::clamp((std::fabs(steer) - 0.35f) * 2.0f, 0.0f, 1.0f) *
+                            std::clamp((spd - 11.0f) / 10.0f, 0.0f, 1.0f);
+    float rear = std::max(0.42f, 1.0f - 0.50f * hb * speedK - 0.22f * powerOver * (d.deliberate ? 1.0f : 0.0f)); // throttle + lock keeps a deliberate drift stepped out; ordinary driving is untouched
+    if (d.active && d.deliberate) {
+        const float counter = std::clamp(steer * (d.beta > 0 ? 1.0f : -1.0f) * 2.0f, 0.0f, 1.0f); // steering into the slide
+        float hold = 0.62f + 0.30f * counter;
+        hold += std::max(0.0f, ab - 0.35f) * 2.6f; // self-limiting: the further round it is, the more the tail bites back
+        if (throttle < 0.2f && hb < 0.1f)
+            hold += 0.25f; // lifting off lets the tail hook up
+        rear = std::min(rear, std::min(hold, 0.95f));
+    }
+    const float rate = rear < d.rearMul ? 12.0f : 3.2f; // lets go fast, hooks up gradually
+    d.rearMul += (rear - d.rearMul) * std::min(1.0f, dt * rate);
+    d.frontMul += ((1.0f + 0.18f * d.amount) - d.frontMul) * std::min(1.0f, dt * 6.0f);
+
+    // Counter-steer assist: turn the front wheels towards the direction of travel, less the more the player steers.
+    float assist = (d.active && d.deliberate) ? std::clamp(d.beta * 0.9f, -0.45f, 0.45f) * d.amount * (1.0f - 0.6f * std::min(1.0f, std::fabs(steer))) : 0.0f;
+    d.assist += (assist - d.assist) * std::min(1.0f, dt * 10.0f);
+
+    // Yaw damper: a drift is a controlled slide, not a spin. Past ~86 deg/s of yaw rate the yaw momentum is bled off, which stops
+    // the nose pendulum-ing from one side of the slide to the other.
+    if (d.active && d.deliberate) {
+        const float yawRate = Dot(m_body.omega, m_body.rot.r[2]);
+        const float over = std::fabs(yawRate) - 1.5f;
+        if (over > 0.0f)
+            m_body.angMomentum = m_body.angMomentum - m_body.rot.r[2] * (m_body.inertia.z * yawRate * std::min(1.0f, dt * 2.5f) * std::min(1.0f, over));
+    }
+    // Spin-out guard: far past the point of no return, bleed the yaw momentum.
+    if (d.deliberate && ab > 0.7f && spd > 5.0f) {
+        const float k = 1.0f - std::min(1.0f, dt * (ab - 0.55f) * 8.0f);
+        m_body.angMomentum = m_body.angMomentum * k;
+    }
+
+    // Score: points scale with speed and angle, the multiplier grows every 1.5 s of an unbroken drift, the chain is banked after
+    // a short grace period.
+    if (d.active && d.amount > 0.5f) {
+        d.chain += 40.0f * (spd / 20.0f) * (ab / 0.35f) * dt;
+        d.time += dt, d.idle = 0.0f;
+        d.mult = std::min(10, 1 + int(d.time / 1.5f));
+        if (m_nos.capacity > 0.0f && d.deliberate) // a deliberate drift tops the nitrous tank up
+            m_nos.fill = std::min(m_nos.capacity * 2.0f, m_nos.fill + m_nos.capacity * 0.03f * dt);
+    } else if (d.chain > 0.0f) {
+        d.idle += dt;
+        if (d.idle > 0.8f) {
+            const float pts = d.chain * float(d.mult);
+            if (d.time > 0.6f)
+                d.total += pts, d.lastBank = pts, d.bankedShow = 2.5f;
+            d.chain = 0, d.time = 0, d.mult = 1, d.idle = 0;
+        }
+    }
+    if (d.bankedShow > 0)
+        d.bankedShow = std::max(0.0f, d.bankedShow - dt);
+    static const bool debug = getenv("NFSU2_DRIFT_DEBUG") != nullptr;
+    static float clock = 0;
+    clock += dt;
+    if (debug && clock > 0.25f) {
+        clock = 0;
+        printf("[Drift] v %.1f beta %.1f deg active %d amt %.2f rearMul %.2f assist %.2f chain %.0f x%d total %.0f\n", spd, d.beta * 57.2958f,
+               d.active, d.amount, d.rearMul, d.assist, d.chain, d.mult, d.total);
+    }
+}
+
+// A forward push while sliding under power: the slide scrubs speed, which would make a drift feel like braking.
+void Vehicle::DriftForces(float h)
+{
+    const Drift &d = m_drift;
+    if (!d.deliberate || d.amount < 0.05f || m_in.throttle < 0.2f || !m_grounded)
+        return;
+    const float spd = Len(m_body.vel);
+    const float accel = 7.0f * d.amount * m_in.throttle * (1.0f - std::min(1.0f, spd / 55.0f)); // m/s^2
+    ApplyForce(m_body.rot.r[0] * (m_body.mass * accel), m_body.pos);
+    (void)h;
+}
+
 void Vehicle::Update(const TrackWorld &world, const Controls &in, float dt)
 {
     if (!m_valid)
@@ -319,6 +434,8 @@ void Vehicle::Update(const TrackWorld &world, const Controls &in, float dt)
     m_wheel[0].steerAngle = sign * (in.steer >= 0 ? a : outer);
     m_wheel[1].steerAngle = sign * (in.steer >= 0 ? outer : a);
     m_wheel[2].steerAngle = m_wheel[3].steerAngle = 0;
+    UpdateDrift(dt);
+    m_wheel[0].steerAngle += m_drift.assist, m_wheel[1].steerAngle += m_drift.assist; // counter-steer help (#291)
 
     AutoGearbox();
     CollideWorld(world, dt);
@@ -394,6 +511,7 @@ void Vehicle::Substep(const TrackWorld &world, float h)
     SuspensionAndContact(world, h);
     DriveTorque(h);
     TyreForces(h);
+    DriftForces(h);
 
     // Clutch state machine (0x0030d308 / 0x0030d6c8).
     Drivetrain &d = m_drive;
@@ -601,7 +719,7 @@ void Vehicle::DriveTorque(float h)
     for (Wheel &w : m_wheel) {
         const float brakeIn = d.gear == 0 ? m_in.throttle : m_in.brake;
         w.brakeInput = brakeIn * w.brakeBias;
-        w.handbrakeInput = m_in.handbrake * w.handbrakeBias;
+        w.handbrakeInput = m_in.handbrake * w.handbrakeBias * (1.0f - 0.7f * m_drift.amount); // #291: the kick, then it lets go
         float bt = 4 * w.brakeInput * m_brakeTorque + 10 * w.handbrakeInput * m_handbrakeTorque;
         // Cannot reverse the wheel within one step.
         const float stopT = std::fabs(w.spin) * 0.01f / h + std::fabs(w.torque);
@@ -656,7 +774,7 @@ void Vehicle::TyreForces(float h)
         } else {
             latMag = Curve(kLateral[6], 6, 0, 10, x);
         }
-        latMag *= w.latScale * 2.5f;
+        latMag *= w.latScale * 2.5f * (i < 2 ? m_drift.frontMul : m_drift.rearMul); // drift layer, #291
         const float ft = vy > 0 ? -latMag : latMag;
         // Longitudinal: the force that would pin the wheel to the ground speed within this step
         // (stand-in for the wheel/body consistency solve of 0x003183a0). If it exceeds the friction

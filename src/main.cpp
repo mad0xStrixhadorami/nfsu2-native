@@ -622,7 +622,8 @@ int main(int argc, char **argv)
             if (sscanf(p, "%u-%u:%15[a-z]%n", &a, &b, name, &used) != 3)
                 break;
             u32 m = !strcmp(name, "up") ? FENativeInterface::kPadUp : !strcmp(name, "down") ? FENativeInterface::kPadDown
-                  : !strcmp(name, "left") ? FENativeInterface::kPadLeft : !strcmp(name, "right") ? FENativeInterface::kPadRight : 0;
+                  : !strcmp(name, "left") ? FENativeInterface::kPadLeft : !strcmp(name, "right") ? FENativeInterface::kPadRight
+                  : !strcmp(name, "hand") ? FENativeInterface::kPadButton0 : 0; // hand = the handbrake (X / Left Shift)
             if (m)
                 held.push_back({a, b, m});
             p += used;
@@ -1878,6 +1879,7 @@ int main(int argc, char **argv)
                 engineSound.Set(car.Rpm(), car.GetPerformance().idleRpm, car.GetPerformance().redline,
                                 std::max(throttle, inputThrottle), !pausePkg && !modernPause);
                 engineSound.SetMotion(car.Speed(), car.Slip());
+                engineSound.SetWindBoost(car.NitrousActive() ? 1.0f : 0.0f);
                 if (car.Gear() != lastGear) {
                     if (lastGear > 0 && car.Gear() > 0)
                         engineSound.Shift(car.Gear() - lastGear);
@@ -1915,6 +1917,8 @@ int main(int argc, char **argv)
                         engineSound.NitrousBurst(true);
                     nosWasActive = car.NitrousActive();
                     car.SetNitrousButton(held && race.GetPhase() == RaceSession::kRacing);
+                    // Handbrake (ISSUES #291): X / Left Shift (pad square); the tail steps out, see Vehicle::UpdateDrift.
+                    car.SetHandbrake((pad & FENativeInterface::kPadButton0) || SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_LSHIFT]);
                     // The refill of 0x0036a9e8 -> 0x003054a8, once a second: the race progress gained
                     // (percent of a lap, +0x918 * 100) x 0.01 x 0.5 of the tank; drift races use the
                     // drift score gained x 0.000667; drag races (the 0.0 factor modes) get none.
@@ -2297,6 +2301,16 @@ int main(int argc, char **argv)
                 mh.position = race.Position(), mh.racers = race.Racers(), mh.lap = race.Lap(), mh.laps = race.Laps();
                 mh.lapTime = race.LapTime(), mh.bestLap = race.BestLap();
                 mh.mph = startup.SpeedoMph();
+                mh.drifting = car.Drifting(), mh.driftAngle = car.DriftAngleDeg(), mh.driftChain = car.DriftChain();
+                mh.driftMult = car.DriftMultiplier(), mh.driftBanner = car.DriftBanner(), mh.driftBank = car.DriftLastBank();
+                mh.driftTotal = car.DriftTotal();
+                // Wind (ISSUES #292): streaks from ~90 km/h, full by ~200; nitrous adds a blue tunnel.
+                static float windSm = 0, nitroSm = 0;
+                const float frameDt = 1.0f / 60.0f;
+                windSm += (std::clamp((std::fabs(car.Speed()) - 25.0f) / 30.0f, 0.0f, 1.0f) - windSm) * std::min(1.0f, frameDt * 4.0f);
+                nitroSm += ((car.NitrousActive() ? 1.0f : 0.0f) - nitroSm) * std::min(1.0f, frameDt * 5.0f);
+                if (!getenv("NFSU2_NO_WIND"))
+                    modernUi.DrawWind(w, h, windSm, nitroSm, float(now) * 0.001f);
                 modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }

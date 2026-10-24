@@ -20,6 +20,10 @@ public:
         int position = 1, racers = 1, lap = 1, laps = 1;
         float lapTime = 0, totalTime = 0, bestLap = 0;
         bool mph = false;
+        // Drifting (ISSUES #291)
+        bool drifting = false;
+        float driftAngle = 0, driftChain = 0, driftBanner = 0, driftBank = 0, driftTotal = 0;
+        int driftMult = 1;
     };
     bool Init(SDL_Renderer *r);
     bool Ready() const { return m_font != nullptr; }
@@ -27,6 +31,9 @@ public:
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);
+    // Speed wind (ISSUES #292): streaks racing outward from the screen centre at the edges, strength 0..1 (speed), nitrous adds a blue
+    // tunnel of lines. Drawn under the HUD.
+    void DrawWind(int w, int h, float strength, float nitro, float seconds);
     // The pause dialog: a dimmed scene, a glass panel with a title and a list (selected = highlighted).  When `confirm` is set a
     // Yes / No question replaces the list (confirmYes = the highlighted answer).
     void DrawDialog(int w, int h, std::string_view title, const char *const *items, int itemCount, int selected, bool confirm,

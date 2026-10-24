@@ -304,6 +304,27 @@ void EngineSound::Mix(float *out, int frames)
     if (!m_road.pcm.empty())
         MixLoop(m_road, running ? 0.12f * m_volTire * std::min(1.0f, speed / 50.0f) : 0.0f,
                 m_road.rate / m_rate * (0.8f + std::min(speed, 70.0f) / 120.0f), out, frames);
+    // Wind (ISSUES #292): two one-pole low-passes over white noise; the cut-off opens and the level rises with speed, a slow gust
+    // wobbles it, nitrous adds a brighter roar. Quiet below ~45 km/h.
+    {
+        const float sp = std::clamp((speed - 12.0f) / 50.0f, 0.0f, 1.2f);
+        const float dtw = float(frames) / float(m_rate);
+        m_windBoostSm += (m_windBoost.load() - m_windBoostSm) * std::min(1.0f, dtw * 3.0f);
+        const float target = running ? (0.16f * sp * sp + 0.10f * m_windBoostSm) * m_volFx : 0.0f;
+        const float a = 0.025f + 0.20f * sp + 0.10f * m_windBoostSm; // low-pass coefficient: brighter with speed
+        for (int f = 0; f < frames; ++f) {
+            m_windSeed = m_windSeed * 1664525u + 1013904223u;
+            const float noise = float(int32_t(m_windSeed)) * (1.0f / 2147483648.0f);
+            m_windLp1 += (noise - m_windLp1) * a;
+            m_windLp2 += (m_windLp1 - m_windLp2) * a;
+            m_windGain += (target - m_windGain) * 0.0008f;
+            m_windPhase += 0.00011f + 0.00005f * sp;
+            const float gust = 0.78f + 0.22f * std::sin(m_windPhase * 6.2831853f * 9.0f) * std::sin(m_windPhase * 6.2831853f * 3.7f);
+            const float smp = m_windLp2 * m_windGain * gust * 5.0f;
+            out[f * 2] += smp;
+            out[f * 2 + 1] += smp;
+        }
+    }
     // Turbo (ISSUES #230): spool loops 0 and 4 swell with load and rpm, blow-off one-shots 1-3 play when the
     // throttle is lifted off a spooled turbo.  Which bank sound is which is inferred from their lengths.
     if (m_turbo.size() >= 5) {

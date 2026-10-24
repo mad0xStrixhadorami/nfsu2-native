@@ -75,6 +75,18 @@ public:
     Vec3 ForwardAxis() const { return m_body.rot.r[0]; }
     Vec3 LeftAxis() const { return m_body.rot.r[1]; }
 
+    // Drifting (ISSUES #291): an arcade layer over the faithful tyre model. The handbrake and a power-over (full throttle with
+    // lock on) release the tail, the car keeps its speed and gets counter-steer and spin-out help while it slides, and the
+    // slide scores points and tops up the nitrous.
+    float BodySlipAngle() const { return m_drift.beta; }   // rad, + = the car travels to the left of its nose
+    float DriftAmount() const { return m_drift.amount; }   // 0..1, how deep into a drift (smoothed)
+    bool Drifting() const { return m_drift.active; }
+    float DriftChain() const { return m_drift.chain; }     // points of the running drift before the multiplier
+    int DriftMultiplier() const { return m_drift.mult; }
+    float DriftTotal() const { return m_drift.total; }     // banked points
+    float DriftBanner() const { return m_drift.bankedShow; } // seconds the last banked chain stays on the HUD
+    float DriftLastBank() const { return m_drift.lastBank; }
+
     // Nitrous (ISSUES #217).  The tank holds `capacity` seconds (record +0x3b8, 4000 ticks per
     // second in the original) and drains in real time while a burst runs; its fraction (0.305400)
     // can be filled past 1 (up to 2 by 0x003054a8), and the burst level 1..3 comes from the fraction
@@ -181,6 +193,21 @@ private:
         bool active = false;
     };
     Nitrous m_nos;
+    struct Drift {
+        float beta = 0;                     // body slip angle (rad)
+        float amount = 0;                   // 0..1 smoothed depth of the drift
+        bool active = false;
+        bool deliberate = false;            // latched by the handbrake: the strong drift assists only apply then
+        float rearMul = 1, frontMul = 1;    // lateral grip multipliers on the tyre curves
+        float assist = 0;                   // extra road-wheel angle from the counter-steer assist (rad)
+        float time = 0, idle = 0;           // seconds in this chain, since the last scoring
+        float chain = 0, total = 0, lastBank = 0, bankedShow = 0;
+        int mult = 1;
+    };
+    Drift m_drift;
+    bool m_driftHbWas = false; // handbrake state last update (edge for the flick)
+    void UpdateDrift(float dt);
+    void DriftForces(float h);
     float m_wallImpact = 0.0f;
     void UpdateNitrous(float dt);
     Controls m_in;

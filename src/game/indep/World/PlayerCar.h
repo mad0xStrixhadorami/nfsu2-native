@@ -46,6 +46,17 @@ public:
     bool UsingUG2Physics() const { return m_ug2.Valid(); }
     // Holds the car with the handbrake (race countdown: stops it rolling on slopes).
     void SetHold(bool hold) { m_hold = hold; }
+    // The player's handbrake (X / Left Shift): releases the rear tyres' grip and starts a drift (ISSUES #291).
+    void SetHandbrake(bool on) { m_handbrake = on; }
+    // Drift state from the UG2 vehicle model (all zero for the arcade model).
+    bool Drifting() const { return m_ug2.Valid() && m_ug2.Drifting(); }
+    float DriftAmount() const { return m_ug2.Valid() ? m_ug2.DriftAmount() : 0.0f; }
+    float DriftAngleDeg() const { return m_ug2.Valid() ? m_ug2.BodySlipAngle() * 57.2958f : 0.0f; }
+    float DriftChain() const { return m_ug2.Valid() ? m_ug2.DriftChain() : 0.0f; }
+    int DriftMultiplier() const { return m_ug2.Valid() ? m_ug2.DriftMultiplier() : 1; }
+    float DriftTotal() const { return m_ug2.Valid() ? m_ug2.DriftTotal() : 0.0f; }
+    float DriftBanner() const { return m_ug2.Valid() ? m_ug2.DriftBanner() : 0.0f; }
+    float DriftLastBank() const { return m_ug2.Valid() ? m_ug2.DriftLastBank() : 0.0f; }
     // Nitrous (UG2 physics only, ISSUES #217): the button state for the next Update, the tank
     // (fraction of capacity, 0..2) and whether a burst is running.
     void SetManual(bool manual) { if (m_ug2.Valid()) m_ug2.SetManual(manual); }
@@ -246,6 +257,7 @@ private:
     UG2Physics::Vehicle m_ug2;
     bool m_nitrousButton = false;
     bool m_hold = false;
+    bool m_handbrake = false;
     bool m_lampBrake = false;
     float m_wheelRadius = 0.32f;
 };

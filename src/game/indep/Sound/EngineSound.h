@@ -36,6 +36,9 @@ public:
     // Options volumes (0..1): engine loops, tyre layers (squeal + road noise), other effects.
     void SetVolumes(float engine, float tire, float effects) { m_volEngine = engine, m_volTire = tire, m_volFx = effects; }
     void SetMotion(float speed, float slip) { m_speed = speed, m_slip = slip; }
+    // Wind rush (ISSUES #292): procedural filtered noise whose level and brightness follow the speed; `boost` (0..1, nitrous) adds a
+    // roar. No sample ships for it, so the mixer synthesises it.
+    void SetWindBoost(float boost) { m_windBoost = boost; }
 
     struct Loop {
         std::vector<float> pcm;
@@ -69,4 +72,7 @@ private:
     std::atomic<bool> m_running{false};
     std::atomic<float> m_volEngine{1.0f}, m_volTire{1.0f}, m_volFx{1.0f};
     float m_load = 0; // smoothed on/off throttle blend
+    std::atomic<float> m_windBoost{0};
+    float m_windLp1 = 0, m_windLp2 = 0, m_windGain = 0, m_windPhase = 0, m_windBoostSm = 0;
+    uint32_t m_windSeed = 0x9e3779b9u;
 };
