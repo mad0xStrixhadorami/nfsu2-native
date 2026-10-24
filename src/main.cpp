@@ -1040,6 +1040,7 @@ int main(int argc, char **argv)
             const uint8_t *rec = tunedRecord.empty() ? fe.CarRecordData(fe.PreviewCarName()) : tunedRecord.data();
             printf("[Physics] UG2 vehicle model: %s\n", rec && car.UseUG2Physics(rec) ? "on" : "unavailable");
         }
+        const SDL_Color stockPaint = fe.StockPaintColor(fe.PreviewCarName(), 0, SDL_Color{40, 90, 200, 255}); // #288
         // The Body Shop preview selection (#188), falling back to the dev environment.
         PlayerCar::InstalledParts installedParts = fe.InstalledPartsForPreview();
         if (!flyCamera && car.LoadModel(ReadCarGeometry(*fs, fe.PreviewCarName()),
@@ -1048,7 +1049,7 @@ int main(int argc, char **argv)
             // The career/QR paint (OwnedCar::paintSet/paint) selects a GLOBALB color (#167/#168).
             const size_t playerCarIndex = world.AddCar(&car.Model(), &car.TriangleTextures(),
                          fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                          SDL_Color{40, 90, 200, 255}),
+                                          stockPaint),
                          &car.TriangleRims(),
                          fe.ColorForPaint(fe.PreviewRimSet(), fe.PreviewRimPaint(),
                                           SDL_Color{38, 38, 38, 255}),
@@ -1058,15 +1059,15 @@ int main(int argc, char **argv)
                          &car.TriangleMirrors(),
                          fe.ColorForPaint(fe.PreviewMirrorSet(), fe.PreviewMirrorPaint(),
                                           fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                                           SDL_Color{40, 90, 200, 255})),
+                                                           stockPaint)),
                          &car.TriangleSpoilers(),
                          fe.ColorForPaint(fe.PreviewSpoilerSet(), fe.PreviewSpoilerPaint(),
                                           fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                                           SDL_Color{40, 90, 200, 255})),
+                                                           stockPaint)),
                          &car.TriangleRoofScoops(),
                          fe.ColorForPaint(fe.PreviewRoofSet(), fe.PreviewRoofPaint(),
                                           fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(),
-                                                           SDL_Color{40, 90, 200, 255})),
+                                                           stockPaint)),
                          &car.TriangleEngines(),
                          fe.ColorForPaint(fe.PreviewEngineSet(), fe.PreviewEnginePaint(),
                                           SDL_Color{128, 64, 48, 255}),
@@ -1122,7 +1123,12 @@ int main(int argc, char **argv)
                 float ground = slot.z;
                 world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
-                const size_t oppWorldIndex = world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), kPaints[i % 5],
+                // Rivals wear their own model's stock colours (#288): the default paint, or the second default when it
+                // would match the player's car.
+                SDL_Color rivalPaint = fe.StockPaintColor(name, 0, kPaints[i % 5]);
+                if (rivalPaint.r == stockPaint.r && rivalPaint.g == stockPaint.g && rivalPaint.b == stockPaint.b)
+                    rivalPaint = fe.StockPaintColor(name, 1, kPaints[i % 5]);
+                const size_t oppWorldIndex = world.AddCar(&opponentCars[i].Model(), &opponentCars[i].TriangleTextures(), rivalPaint,
                              nullptr, SDL_Color{38, 38, 38, 255}, &opponentCars[i].TriangleCalipers(),
                              SDL_Color{128, 128, 128, 255});
                 // Opponent vinyls: two of every three rivals carry one design from a few body-style groups
@@ -1150,7 +1156,7 @@ int main(int argc, char **argv)
                                     layer.color[k][0] = pc.r, layer.color[k][1] = pc.g, layer.color[k][2] = pc.b;
                                 }
                             std::vector<uint32_t> skin;
-                            const SDL_Color bc = kPaints[i % 5];
+                            const SDL_Color bc = rivalPaint;
                             if (vin.Compose(bc.r, bc.g, bc.b, {layer}, skin)) {
                                 world.SetCarSkin(oppWorldIndex,
                                                  CarSkin::DetectBodySlot(opponentCars[i].Model(), opponentCars[i].TriangleTextures(), name),
@@ -1310,7 +1316,7 @@ int main(int argc, char **argv)
                             continue;
                         }
                         const SDL_Color paint = fe.ColorForPaint(oc.paintSet ? oc.paintSet : PaintCatalog::kGloss, oc.paint,
-                                                                 SDL_Color{40, 90, 200, 255});
+                                                                 fe.StockPaintColor(oc.model, 0, SDL_Color{40, 90, 200, 255}));
                         const size_t idx = world.AddCar(&g.Model(), &g.TriangleTextures(), paint, &g.TriangleRims());
                         world.AddTexturePack(ReadGameFile(*fs, ("CARS\\" + oc.model + "\\TEXTURES.BIN").c_str()));
                         const float *slot = kDisc[garageCars.size() - 1];
@@ -1534,7 +1540,7 @@ int main(int argc, char **argv)
             // (the crib's Graphics Shop previews live on the world car).
             if (playerSkinIndex >= 0) {
                 const std::vector<CarSkin::Layer> layers = fe.PreviewVinyls().empty() ? fe.TestVinyls() : fe.PreviewVinyls();
-                const SDL_Color body = fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(), SDL_Color{40, 90, 200, 255});
+                const SDL_Color body = fe.ColorForPaint(fe.PreviewPaintSet(), fe.PreviewPaint(), fe.StockPaintColor(fe.PreviewCarName(), 0, SDL_Color{40, 90, 200, 255}));
                 std::string key = std::to_string(body.r) + "," + std::to_string(body.g) + "," + std::to_string(body.b);
                 for (const CarSkin::Layer &l : layers) {
                     key += "|" + l.design;

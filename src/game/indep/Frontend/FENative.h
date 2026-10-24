@@ -286,6 +286,9 @@ public:
         auto it = m_carTable.find(folder);
         return it != m_carTable.end() && it->second.stock.size() == 0x890 ? it->second.stock.data() : nullptr;
     }
+    // The car's stock paint (ISSUES #288): car record +0x854 is the bStringHash of its default base paint colour
+    // (e.g. GLOSS_L1_COLOR03 for the Skyline), +0x858 a second default. which = 0 / 1; `fallback` if unknown.
+    SDL_Color StockPaintColor(const std::string &folder, int which, SDL_Color fallback) const;
     // Database record index of a car folder = UG2's car type (-1 if unknown).
     int CarTypeIndex(const std::string &folder) const
     {

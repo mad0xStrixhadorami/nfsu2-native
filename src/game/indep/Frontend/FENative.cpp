@@ -259,7 +259,7 @@ void FENativeInterface::RenderCarPreviewOverlay()
     const float areaTop = bodyShop ? 120.0f : 180.0f;
     const float areaRight = bodyShop ? 480.0f : 490.0f;
     const float areaBottom = bodyShop ? 255.0f : 395.0f;
-    const SDL_Color body = ColorForPaint(m_previewPaint, SDL_Color{60, 110, 210, 255});
+    const SDL_Color body = ColorForPaint(m_previewPaint, StockPaintColor(m_previewCarName, 0, SDL_Color{60, 110, 210, 255}));
     const SDL_Color rim = ColorForPaint(m_previewRimSet, m_previewRim, SDL_Color{38, 38, 38, 255});
     const SDL_Color caliper = ColorForPaint(m_previewCaliperSet, m_previewCaliper, SDL_Color{128, 128, 128, 255});
     const SDL_Color mirror = ColorForPaint(m_previewMirrorSet, m_previewMirror, body);
@@ -1241,6 +1241,10 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
         } else if (c->id == 0x80034602) { // repacked car part database: paint + shop parts
             m_paint.Parse(c->Data(), c->size);
             m_parts.Parse(c->Data(), c->size);
+            if (getenv("NFSU2_PAINT_DUMP")) // dev aid: every colour of the finish sets (name hash, name, rgb)
+                for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl})
+                    for (const PaintColor &pc : m_paint.Colors(set))
+                        printf("[PaintDump] %08x %s %u %u %u\n", bStringHash(pc.name.c_str()), pc.name.c_str(), pc.r, pc.g, pc.b);
             for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl,
                                  PaintCatalog::kHoses, PaintCatalog::kMufflers, PaintCatalog::kRims,
                                  PaintCatalog::kBrakes}) {
@@ -2154,4 +2158,18 @@ bool FENativeInterface::PackageWillUnload(FEPackage *pkg)
     for (auto it = m_movieNames.begin(); it != m_movieNames.end();)
         it = pkg->FindObjectByGUID(it->first->GUID) == it->first ? m_movieNames.erase(it) : std::next(it);
     return true;
+}
+
+SDL_Color FENativeInterface::StockPaintColor(const std::string &folder, int which, SDL_Color fallback) const
+{
+    const uint8_t *rec = CarRecordData(folder);
+    if (!rec)
+        return fallback;
+    uint32_t hash;
+    memcpy(&hash, rec + 0x854 + (which ? 4 : 0), 4);
+    for (uint32_t set : {PaintCatalog::kGloss, PaintCatalog::kMetal, PaintCatalog::kPearl})
+        for (const PaintColor &pc : m_paint.Colors(set))
+            if (uint32_t(bStringHash(pc.name.c_str())) == hash)
+                return SDL_Color{pc.r, pc.g, pc.b, 255};
+    return fallback; // traffic / service vehicles carry a marker instead of a paint (0x253570af)
 }
