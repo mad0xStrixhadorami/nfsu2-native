@@ -404,6 +404,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogEnd"), fogEnd);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(GLShader::Uniform(m_progWorld, "uCam"), cam.x, cam.y, cam.z);
+        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uTheme"), getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : 0.8f));
     };
 

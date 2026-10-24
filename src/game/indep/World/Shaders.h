@@ -25,6 +25,7 @@ uniform float uFogEnd;
 uniform float uGrade;
 uniform vec3 uCam;
 uniform float uWet;
+uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
@@ -58,6 +59,54 @@ void main() {
         float streak = exp(-across * across * 220.0) * exp(-pow(max(along + 0.15, 0.0), 2.0) * 7.0) * step(0.55, h12(cell + 9.0));
         vec3 lamp = mix(vec3(1.0, 0.62, 0.25), vec3(0.35, 0.6, 1.0), step(0.7, h12(cell + 2.0)));
         c.rgb += wetMask * (sky * fres * 1.2 + lamp * streak * (0.35 + 0.65 * fres) * 0.9);
+    }
+
+    if (uTheme > 0.0) {
+        // ---- Israeli district theme: four cities blended by distance from their centres in the map ----
+        // x = Tel Aviv (Coastal Commons), y = Jerusalem (Upper City), z = Haifa (Skyline Heights), w = Be'er Sheva (Industrial).
+        vec4 wd = vec4(exp(-dot(vWorld.xy - vec2(-300.0, -420.0), vWorld.xy - vec2(-300.0, -420.0)) / 640000.0),
+                       exp(-dot(vWorld.xy - vec2(-1050.0, 580.0), vWorld.xy - vec2(-1050.0, 580.0)) / 490000.0),
+                       exp(-dot(vWorld.xy - vec2(-1850.0, 1120.0), vWorld.xy - vec2(-1850.0, 1120.0)) / 490000.0),
+                       exp(-dot(vWorld.xy - vec2(-250.0, -1650.0), vWorld.xy - vec2(-250.0, -1650.0)) / 640000.0));
+        wd /= max(dot(wd, vec4(1.0)), 1e-4);
+        vec3 Nt = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        float lumT = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        float satT = (max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))) / max(max(c.r, max(c.g, c.b)), 0.01);
+        float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a;
+        float flatUp = smoothstep(0.85, 0.97, Nt.z) * t.a;
+        // facade courses along the wall (u runs horizontally along it)
+        float along = dot(vWorld.xy, normalize(vec2(-Nt.y, Nt.x) + 1e-5));
+        float keep = smoothstep(0.07, 0.16, lumT) * (1.0 - smoothstep(0.35, 0.7, satT)); // windows / signs stay as they were
+        // Jerusalem stone: pale limestone ashlar, rows 0.55 m high, blocks 1.1 m wide, brick-bonded
+        float row = vWorld.z / 0.55, rowI = floor(row);
+        vec2 bu = vec2(along / 1.1 + 0.5 * mod(rowI, 2.0), row);
+        vec2 bf = fract(bu);
+        float mortar = 1.0 - smoothstep(0.0, 0.05, min(min(bf.x, 1.0 - bf.x) * 0.5, min(bf.y, 1.0 - bf.y) * 0.3));
+        float grain = 0.88 + 0.22 * vnoise(vec2(along * 3.0, vWorld.z * 3.0) + floor(bu) * 7.0);
+        vec3 stone = vec3(0.86, 0.79, 0.64) * grain * (1.0 - 0.22 * mortar) * (0.55 + 0.7 * lumT);
+        // Tel Aviv: white Bauhaus plaster with a faint horizontal band
+        vec3 plaster = vec3(0.93, 0.92, 0.88) * (0.62 + 0.55 * lumT) * (1.0 - 0.06 * step(0.92, fract(vWorld.z / 3.0)));
+        // Be'er Sheva: board-marked brutalist concrete, sun bleached
+        float board = 0.93 + 0.07 * vnoise(vec2(along * 0.6, vWorld.z * 7.0));
+        vec3 concrete = vec3(0.64, 0.62, 0.58) * board * (0.6 + 0.6 * lumT) * (1.0 - 0.12 * step(0.96, fract(vWorld.z / 3.2)));
+        // Haifa: terraced houses in warm stucco on the slopes
+        vec3 stucco = vec3(0.90, 0.80, 0.66) * (0.6 + 0.6 * lumT) * (0.94 + 0.06 * vnoise(vWorld.xy * 0.4));
+        vec3 skin = stone * wd.y + plaster * wd.x + concrete * wd.w + stucco * wd.z;
+        c.rgb = mix(c.rgb, skin * vColor.rgb * 1.15, wall * keep * uTheme * 0.92);
+        // gray interlocking paving stones on bright flat ground (pavements, plazas), 0.22 x 0.11 m pavers in herringbone-ish rows
+        float pave = flatUp * smoothstep(0.42, 0.55, lumT) * (1.0 - smoothstep(0.2, 0.4, satT));
+        vec2 pp = vWorld.xy / vec2(0.22, 0.11);
+        float prow = floor(pp.y);
+        vec2 pf = fract(vec2(pp.x + 0.5 * mod(prow, 2.0), pp.y));
+        float joint = 1.0 - smoothstep(0.0, 0.08, min(min(pf.x, 1.0 - pf.x), min(pf.y, 1.0 - pf.y)) * 2.0);
+        float tile = 0.92 + 0.12 * h12(vec2(floor(pp.x + 0.5 * mod(prow, 2.0)), prow));
+        c.rgb = mix(c.rgb, c.rgb * tile * (1.0 - 0.28 * joint), pave * uTheme * (1.0 - smoothstep(25.0, 60.0, vDist)));
+        // sun-bleached desert light in Be'er Sheva, cooler marine air in Tel Aviv, green haze on the Haifa slopes
+        float lT = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        c.rgb = mix(c.rgb, vec3(lT), 0.18 * wd.w * uTheme);
+        c.rgb = mix(c.rgb, c.rgb * vec3(1.12, 1.04, 0.86) + 0.05, wd.w * uTheme);
+        c.rgb = mix(c.rgb, c.rgb * vec3(0.96, 1.01, 1.06) + 0.02, wd.x * uTheme);
+        c.rgb = mix(c.rgb, c.rgb * vec3(0.95, 1.05, 0.93), wd.z * 0.6 * uTheme);
     }
     // grade: a little saturation and a gentle shadow lift so the baked lighting does not crush to black
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
