@@ -451,6 +451,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // LOD suffix _A.._D; names are cut to 27 characters, and the A level comes first.
         if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
             continue;
+        if (getenv("NFSU2_SOLID_NAMES")) // dev aid: every solid of a car with its bounds
+            printf("[Solid] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", n.c_str(), s.tris.size(), s.bboxMin[0], s.bboxMin[1],
+                   s.bboxMin[2], s.bboxMax[0], s.bboxMax[1], s.bboxMax[2]);
         if (const char *want = getenv("NFSU2_SLOT_SOLIDS")) { // dev aid: which solids use a material slot hash (hex)
             const uint32_t w = uint32_t(strtoul(want, nullptr, 16));
             size_t n3 = 0;
@@ -465,13 +468,15 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             for (uint32_t h : s.textures) printf(" %08x", h);
             printf("\n");
         }
-        if (Contains(n, "FRONT_WHEEL") || Contains(n, "TIRE_FRONT")) { frontWheel = &s; continue; }
-        if (Contains(n, "REAR_WHEEL") || Contains(n, "TIRE_REAR")) { rearWheel = &s; continue; }
+        // Names are cut to 27 characters on disc, so on long car names "..._FRONT_WHEEL_A" arrives as "..._FRONT_WHEE" and
+        // "..._FRONT_BRAKE_A" as "..._FRONT_BRAK" (LANCEREVO8, IMPREZAWRX had no wheels at all, ISSUES #289): match the stems.
+        if (Contains(n, "FRONT_WHEE") || Contains(n, "TIRE_FRONT")) { frontWheel = &s; continue; }
+        if (Contains(n, "REAR_WHEE") || Contains(n, "TIRE_REAR")) { rearWheel = &s; continue; }
         // Parts modelled around their own origin, or hidden inside the body.
-        if (Contains(n, "BRAKE_")) {
-            if (Contains(n, "FRONT_BRAKE"))
+        if (Contains(n, "FRONT_BRAK") || Contains(n, "REAR_BRAK")) {
+            if (Contains(n, "FRONT_BRAK"))
                 frontBrake = &s;
-            else if (Contains(n, "REAR_BRAKE"))
+            else
                 rearBrake = &s;
             continue;
         }

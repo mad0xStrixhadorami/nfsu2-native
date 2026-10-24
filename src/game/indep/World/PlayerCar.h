@@ -149,15 +149,24 @@ public:
     const std::vector<int8_t> &TriangleBrakes() const { return m_triBrake; }
     const float *WheelHubs() const { return m_hub.data(); }
     float WheelAngle() const { return m_wheelAngle; }
+    float WheelRate() const { return m_wheelRate; } // true rolling speed, rad/s (the shown angle is capped, see AdvanceWheels)
     float WheelSteer() const { return m_steerAngle; }
     void AdvanceWheels(float dt)
     {
-        m_wheelAngle = std::fmod(m_wheelAngle + m_speed / std::max(0.1f, m_wheelRadius) * dt, 6.2831853f);
+        // The true roll rate is speed / radius; the SHOWN rate is soft-capped. A wheel turning half a spoke spacing per frame
+        // (about 30 km/h at 60 fps) strobes: the spokes jitter and seem to turn backwards, a wagon-wheel effect the original
+        // hides with its blur. Above ~14 rad/s the spokes keep turning forward only slowly while the shader's spoke blur
+        // (driven by the true rate) takes over (ISSUES #289).
+        m_wheelRate = m_speed / std::max(0.1f, m_wheelRadius);
+        const float mag = std::fabs(m_wheelRate), shown = mag <= 14.0f ? mag : 14.0f + std::min(10.0f, (mag - 14.0f) * 0.12f);
+        m_wheelAngle = std::fmod(m_wheelAngle + (m_wheelRate < 0 ? -shown : shown) * dt, 6.2831853f);
         // The road wheels follow the steering input with the same lock rule as the arcade model (less lock at speed),
         // eased so a keyboard tap does not snap the wheels.
         const float lock = 0.55f / (1.0f + std::fabs(m_speed) * 0.05f);
         const float target = std::clamp(m_steerIn, -1.0f, 1.0f) * lock;
         m_steerAngle += (target - m_steerAngle) * std::min(1.0f, std::max(dt, 0.0f) * 14.0f);
+        if (const char *a = getenv("NFSU2_WHEEL_ANGLE")) // dev aid: hold the rolling angle (radians) to inspect the wheel
+            m_wheelAngle = float(atof(a));
         if (const char *t = getenv("NFSU2_STEER_TEST")) // dev aid: a fixed road-wheel angle in radians
             m_steerAngle = float(atof(t));
     }
@@ -230,7 +239,7 @@ private:
     size_t m_wheelStart = 0;
     std::vector<int8_t> m_triWheel, m_triBrake;
     std::array<float, 12> m_hub{};
-    float m_wheelAngle = 0, m_steerAngle = 0, m_steerIn = 0;
+    float m_wheelAngle = 0, m_wheelRate = 0, m_steerAngle = 0, m_steerIn = 0;
     Performance m_perf;
     int m_gear = 1;
     float m_rpm = 0;

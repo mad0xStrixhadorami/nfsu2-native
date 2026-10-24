@@ -114,7 +114,7 @@ public:
     // vectors must outlive the car), the four hubs' car-space (x, y, z) as 12 floats, the rolling angle and the front
     // wheels' steering angle, applied by the next SetCarTransform.
     void SetCarWheels(size_t car, const std::vector<int8_t> *wheelOf, const std::vector<int8_t> *brakeOf, const float *hubs,
-                      float spin, float steer)
+                      float spin, float steer, float trueRate = 1.0e9f)
     {
         if (car < m_cars.size() && hubs) {
             Car &c = m_cars[car];
@@ -127,7 +127,7 @@ public:
                 if (d > 3.1415927f) d -= 6.2831853f;
                 if (d < -3.1415927f) d += 6.2831853f;
                 const float rate = d / (float(now - c.prevTicks) * 0.001f);
-                c.spinRate += (rate - c.spinRate) * 0.25f;
+                c.spinRate += ((trueRate < 1.0e8f ? trueRate : rate) - c.spinRate) * 0.25f; // the shown angle may be capped
             }
             c.prevSpin = spin, c.prevTicks = now;
             c.spin = spin, c.steer = steer;

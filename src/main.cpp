@@ -1452,6 +1452,38 @@ int main(int argc, char **argv)
         }
         inWorld = true;
     };
+    if (getenv("NFSU2_WHEEL_AUDIT")) { // dev aid: does every car get four wheels, and where is each hub (ISSUES #289)?
+        std::vector<std::string> all = fe.RaceableCars();
+        for (const std::string &n : fe.TrafficCars())
+            all.push_back(n);
+        for (const std::string &name : all) {
+            PlayerCar probe;
+            PlayerCar::Wheel w[4];
+            const bool haveDb = fe.CarWheels(name, w);
+            const bool ok = probe.LoadModel(ReadCarGeometry(*fs, name), haveDb ? w : nullptr);
+            int count[4] = {};
+            for (int8_t k : probe.TriangleWheels())
+                if (k >= 0 && k < 4)
+                    ++count[k];
+            const float *hub = probe.WheelHubs();
+            // Where is the axle really? The centroid of the rim-face vertices of wheel 0 against the pivot the wheel spins about.
+            float ax = 0, az = 0, nAx = 0, tx = 0, tz = 0, nT = 0;
+            for (size_t t = 0; t < probe.Model().size(); ++t)
+                if (probe.TriangleWheels()[t] == 0) {
+                    for (const SolidMesh::Point &pt : probe.Model()[t].v) {
+                        if (probe.TriangleRims()[t])
+                            ax += pt.x, az += pt.z, nAx += 1;
+                        tx += pt.x, tz += pt.z, nT += 1;
+                    }
+                }
+            if (nAx > 0 && hub)
+                printf("[WheelAxle] %-12s rim-face centre (%.3f, %.3f) spin pivot (%.3f, %.3f) -> off by %.3f m; all-vertex centroid (%.3f, %.3f)\n", name.c_str(),
+                       ax / nAx, az / nAx, hub[0], hub[2], std::hypot(ax / nAx - hub[0], az / nAx - hub[2]), tx / nT, tz / nT);
+            printf("[WheelAudit] %-12s load %s db %s wheel tris %d %d %d %d  hubs x %.2f %.2f %.2f %.2f y %.2f z %.2f\n", name.c_str(),
+                   ok ? "ok " : "FAIL", haveDb ? "yes" : "NO ", count[0], count[1], count[2], count[3], hub[0], hub[3], hub[6], hub[9],
+                   hub[1], hub[2]);
+        }
+    }
     if (getenv("NFSU2_CAR_TEST")) // dev aid: drivetrain figures of every Quick Race car
         for (const std::string &name : fe.RaceableCars()) {
             PlayerCar::Performance p;
@@ -2030,7 +2062,7 @@ int main(int argc, char **argv)
                     cars[i]->Transform(m);
                     cars[i]->AdvanceWheels(dt); // the wheels roll with the speed (#257)
                     world.SetCarWheels(i, &cars[i]->TriangleWheels(), &cars[i]->TriangleBrakes(), cars[i]->WheelHubs(), cars[i]->WheelAngle(),
-                                      cars[i]->WheelSteer());
+                                      cars[i]->WheelSteer(), cars[i]->WheelRate());
                     world.SetCarLamps(i, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
                     if (sceneMode && i > 0)
                         m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
