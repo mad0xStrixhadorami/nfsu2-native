@@ -278,8 +278,50 @@ void TrackWorld::LoadBarrierGroups(const std::vector<uint8_t> &bundle)
 // Segment a->b against the wall faces of the collision mesh (flags & 0x02, group 0). A wall face is
 // a vertical polygon; flag 0x04 makes it unbounded in Z (the decoder 0x00335098 sets its Z to
 // -2048 / +2048). Returns the face normal facing the segment start.
+bool TrackWorld::PropWall(const float *a, const float *b, float *normal) const
+{
+    if (m_propGrid.empty())
+        return false;
+    const float dx = b[0] - a[0], dy = b[1] - a[1];
+    const float zlo = std::min(a[2], b[2]) - 0.3f, zhi = std::max(a[2], b[2]) + 0.3f;
+    const int gx0 = int(std::floor((std::min(a[0], b[0]) - 1.0f) / 16.0f)), gx1 = int(std::floor((std::max(a[0], b[0]) + 1.0f) / 16.0f));
+    const int gy0 = int(std::floor((std::min(a[1], b[1]) - 1.0f) / 16.0f)), gy1 = int(std::floor((std::max(a[1], b[1]) + 1.0f) / 16.0f));
+    const float len2 = dx * dx + dy * dy;
+    for (int gx = gx0; gx <= gx1; ++gx)
+        for (int gy = gy0; gy <= gy1; ++gy) {
+            const auto it = m_propGrid.find(CellKey(gx, gy));
+            if (it == m_propGrid.end())
+                continue;
+            for (uint32_t i : it->second) {
+                const PropSolid &p = m_propSolids[i];
+                if (zhi < p.z0 || zlo > p.z1)
+                    continue;
+                float t = len2 > 1e-8f ? ((p.x - a[0]) * dx + (p.y - a[1]) * dy) / len2 : 0.0f;
+                t = std::clamp(t, 0.0f, 1.0f);
+                const float cx = a[0] + dx * t - p.x, cy = a[1] + dy * t - p.y;
+                if (cx * cx + cy * cy > p.r * p.r)
+                    continue;
+                if (normal) { // from the post towards where the move started
+                    float nx = a[0] - p.x, ny = a[1] - p.y;
+                    const float l = std::sqrt(nx * nx + ny * ny);
+                    if (l < 1e-4f)
+                        nx = -dx, ny = -dy;
+                    normal[0] = nx / std::max(l, 1e-4f), normal[1] = ny / std::max(l, 1e-4f), normal[2] = 0.0f;
+                    if (l < 1e-4f) {
+                        const float m = std::max(std::sqrt(nx * nx + ny * ny), 1e-4f);
+                        normal[0] = nx / m, normal[1] = ny / m;
+                    }
+                }
+                return true;
+            }
+        }
+    return false;
+}
+
 bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, int onlyGroup) const
 {
+    if (onlyGroup < 0 && PropWall(a, b, normal))
+        return true;
     const float lo[2] = {std::min(a[0], b[0]) - 0.5f, std::min(a[1], b[1]) - 0.5f};
     const float hi[2] = {std::max(a[0], b[0]) + 0.5f, std::max(a[1], b[1]) + 0.5f};
     const float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
@@ -880,6 +922,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     m_borrowedSolids = 0;
     m_scene = false;
     m_roadTris.clear();
+    m_roadTriZ.clear();
 
     // Solids by name hash (UG2 solid loader 0x001bf3b8 keeps the same per-solid chunk layout).
     struct SolidRef {
@@ -1179,7 +1222,10 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 if (!Shade(w, br, bg, bb))
                     continue; // degenerate
                 if (kind == kRoad) // top-down road map for the HUD minimap
+                {
                     m_roadTris.insert(m_roadTris.end(), {w.v[0], w.v[1], w.v[3], w.v[4], w.v[6], w.v[7]});
+                    m_roadTriZ.push_back((w.v[2] + w.v[5] + w.v[8]) / 3.0f);
+                }
                 RTri rt;
                 rt.tex = t.tex >= 0 && size_t(t.tex) < s.textures.size() && m_textures.count(s.textures[t.tex])
                              ? s.textures[t.tex]

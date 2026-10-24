@@ -66,6 +66,12 @@ District DistrictAt(float x, float y)
 struct PropBuilder {
     std::vector<TrackWorld::RTriPublic> *out;
     size_t cap;
+    std::vector<TrackWorld::PropSolid> *solids = nullptr;
+    void Solid(float x, float y, float r, float z, float h)
+    {
+        if (solids)
+            solids->push_back({x, y, r, z, z + h});
+    }
 
     void Tri(V3 a, V3 b, V3 c, const uint8_t col[3])
     {
@@ -169,6 +175,7 @@ void Palm(PropBuilder &b, V3 base, Rng &r)
     const float lean = (r.f() - 0.5f) * 0.9f, la = r.f() * 6.28f;
     const V3 top = base + V3{lean * std::cos(la), lean * std::sin(la), h};
     b.Prism(base, top, 0.2f, 0.13f, 6, kTrunk);
+    b.Solid(base.x, base.y, 0.32f, base.z, 3.0f);
     const int fronds = 9;
     for (int i = 0; i < fronds; ++i) {
         const float a = 6.2831853f * (i + 0.3f * r.f()) / fronds;
@@ -183,6 +190,7 @@ void Pine(PropBuilder &b, V3 base, Rng &r) // Aleppo / stone pine: bare trunk, l
 {
     const float h = 4.5f + 3.0f * r.f();
     b.Prism(base, base + V3{0, 0, h}, 0.22f, 0.12f, 6, kTrunk);
+    b.Solid(base.x, base.y, 0.34f, base.z, 3.0f);
     const float rad = 1.9f + r.f() * 0.8f;
     for (int i = 0; i < 3; ++i)
         b.Cone(base + V3{0, 0, h * 0.55f + i * h * 0.17f}, rad * (1.0f - 0.27f * i), h * 0.34f, 8, i == 1 ? kGreen : kDarkGreen);
@@ -192,6 +200,7 @@ void Cypress(PropBuilder &b, V3 base, Rng &r)
 {
     const float h = 5.0f + 3.0f * r.f();
     b.Prism(base, base + V3{0, 0, 0.8f}, 0.1f, 0.1f, 5, kTrunk);
+    b.Solid(base.x, base.y, 0.55f, base.z, 3.0f);
     b.Cone(base + V3{0, 0, 0.5f}, 0.75f, h, 7, kDarkGreen);
 }
 
@@ -199,6 +208,7 @@ void Olive(PropBuilder &b, V3 base, Rng &r) // olive / ficus: short trunk, wide 
 {
     const float h = 2.0f + r.f();
     b.Prism(base, base + V3{0, 0, h}, 0.2f, 0.14f, 6, kTrunk);
+    b.Solid(base.x, base.y, 0.32f, base.z, 3.0f);
     b.Ellipsoid(base + V3{0, 0, h + 1.2f}, 2.0f + r.f() * 0.6f, 1.5f, 8, r.f() > 0.5f ? kOlive : kGreen);
 }
 
@@ -249,6 +259,8 @@ void BusStop(PropBuilder &b, V3 base, float yaw)
         b.Prism(base + u * (i ? 1.65f : -1.65f) - v * 0.65f, base + u * (i ? 1.65f : -1.65f) - v * 0.65f + V3{0, 0, 2.4f}, 0.05f, 0.05f, 5, kGrey);
     b.Box(base - u * 1.65f - v * 0.68f + V3{0, 0, 0.3f}, u * 3.3f, v * 0.04f, {0, 0, 1.9f}, glass); // back glass
     b.Box(base - u * 1.1f - v * 0.45f + V3{0, 0, 0.45f}, u * 2.2f, v * 0.38f, {0, 0, 0.07f}, kStone); // bench
+    for (int i = -1; i <= 1; ++i)
+        b.Solid(base.x + u.x * 1.2f * i - v.x * 0.55f, base.y + u.y * 1.2f * i - v.y * 0.55f, 0.55f, base.z, 2.4f);
     // the blue-and-white stop pole with its sign
     const V3 pole = base + u * 2.2f + v * 0.3f;
     b.Prism(pole, pole + V3{0, 0, 3.0f}, 0.04f, 0.04f, 5, kGrey);
@@ -260,6 +272,7 @@ void RoadSign(PropBuilder &b, V3 base, float yaw, int type)
 {
     const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
     b.Prism(base, base + V3{0, 0, 3.0f}, 0.04f, 0.04f, 5, kGrey);
+    b.Solid(base.x, base.y, 0.14f, base.z, 3.0f);
     const V3 c = base + V3{0, 0, 2.7f} + v * 0.06f;
     const V3 n = v;
     switch (type) {
@@ -305,6 +318,7 @@ void CafeSet(PropBuilder &b, V3 base, float yaw, Rng &r)
 {
     const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
     static const uint8_t umb[4][3] = {{236, 232, 220}, {196, 96, 62}, {40, 100, 160}, {70, 140, 90}};
+    b.Solid(base.x, base.y, 0.95f, base.z, 1.0f);
     b.Prism(base + V3{0, 0, 0.74f}, base + V3{0, 0, 0.78f}, 0.38f, 0.38f, 10, kStone);
     b.Prism(base, base + V3{0, 0, 0.74f}, 0.04f, 0.04f, 5, kGrey);
     for (int i = 0; i < 4; ++i) {
@@ -322,29 +336,46 @@ void TrackWorld::AddIsraeliProps()
 {
     if (getenv("NFSU2_NO_PROPS") || m_scene)
         return;
+    const unsigned t0 = SDL_GetTicks();
+    unsigned gTicks = 0, gCalls = 0;
+    const int savedSource = m_groundSource;
+    if (!getenv("NFSU2_PROP_SLOWGROUND") && m_collisionFaces)
+        m_groundSource = 2; // the collision mesh answers ground queries far faster than the render triangles
     const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1200000;
 
     // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
-    std::unordered_set<int64_t> road4, near8;
+    std::unordered_set<int64_t> road4;
+    std::unordered_map<int64_t, std::pair<float, float>> near8; // 8 m cell (and its ring) -> lowest / highest road height
     for (size_t i = 0; i + 5 < m_roadTris.size(); i += 6) {
         const float cx = (m_roadTris[i] + m_roadTris[i + 2] + m_roadTris[i + 4]) / 3.0f;
         const float cy = (m_roadTris[i + 1] + m_roadTris[i + 3] + m_roadTris[i + 5]) / 3.0f;
         road4.insert(Key(int(std::floor(cx / 4.0f)), int(std::floor(cy / 4.0f))));
         const int gx = int(std::floor(cx / 8.0f)), gy = int(std::floor(cy / 8.0f));
+        const float rz = i / 6 < m_roadTriZ.size() ? m_roadTriZ[i / 6] : 0.0f;
         for (int dx = -1; dx <= 1; ++dx)
-            for (int dy = -1; dy <= 1; ++dy)
-                near8.insert(Key(gx + dx, gy + dy));
+            for (int dy = -1; dy <= 1; ++dy) {
+                auto ins = near8.insert({Key(gx + dx, gy + dy), {rz, rz}});
+                if (!ins.second)
+                    ins.first->second = {std::min(ins.first->second.first, rz), std::max(ins.first->second.second, rz)};
+            }
     }
 
     std::vector<RTri> props;
     props.reserve(200000);
-    PropBuilder b{&props, propCap};
+    std::vector<PropSolid> solids;
+    PropBuilder b{&props, propCap, &solids};
     std::unordered_set<int64_t> busCells, signCells;
     const size_t kRoofBudget = 220000, kWallBudget = 120000;
     size_t roofTris = 0, wallTris = 0;
     size_t flatTris = 0, flatGround = 0, flatRoad = 0, flatNear = 0, flatNoGround = 0;
     size_t nTrees = 0, nRoofs = 0, nWalls = 0, nCurbs = 0, nBike = 0, nBus = 0, nSigns = 0, nScoot = 0, nCafe = 0;
 
+    auto GroundHeightT = [&](float x, float y, float zmax, float &z) {
+        const unsigned a0 = SDL_GetTicks();
+        const bool r = GroundHeight(x, y, zmax, z);
+        gTicks += SDL_GetTicks() - a0, ++gCalls;
+        return r;
+    };
     for (auto &entry : m_cells) {
         for (RTri &t : entry.second.render) {
             if (props.size() >= propCap)
@@ -368,16 +399,23 @@ void TrackWorld::AddIsraeliProps()
                 const V3 q = p0 + (p1 - p0) * a + (p2 - p0) * bb;
                 return c + (q - c) * shrink;
             };
-            const bool nearRoad = near8.count(Key(int(std::floor(c.x / 8.0f)), int(std::floor(c.y / 8.0f)))) != 0;
+            const auto nearIt = near8.find(Key(int(std::floor(c.x / 8.0f)), int(std::floor(c.y / 8.0f))));
+            const bool nearRoad = nearIt != near8.end();
+            // at road height (kerb-high pavements, plazas): within 0.6 m below / 1.2 m above the nearby road surface
+            const bool atRoadLevel = nearRoad && c.z > nearIt->second.first - 0.6f && c.z < nearIt->second.second + 1.2f;
 
             if (nz > 0.9f) {
                 if (area < 1.5f)
                     continue;
+                // Cheap rejects before the (slow) ground query: road triangles are neither roofs nor pavements, and only
+                // big triangles can be roofs while only triangles near a road can be pavements.
+                if ((area < 8.0f && road4.count(Key(c4x, c4y))) || (!nearRoad && area < 8.0f))
+                    continue;
                 float g;
                 // the surface itself (within 0.7 m below) = ground level; otherwise the ground under a roof
-                if (GroundHeight(c.x, c.y, c.z + 0.3f, g) && std::fabs(c.z - g) >= 0.7f && !GroundHeight(c.x, c.y, c.z - 2.0f, g))
+                if (GroundHeightT(c.x, c.y, c.z + 0.3f, g) && std::fabs(c.z - g) >= 0.7f && !GroundHeightT(c.x, c.y, c.z - 2.0f, g))
                     g = c.z - 100.0f;
-                else if (!GroundHeight(c.x, c.y, c.z + 0.3f, g))
+                else if (!GroundHeightT(c.x, c.y, c.z + 0.3f, g))
                     g = c.z - 100.0f;
                 const float h = c.z - g;
                 ++flatTris;
@@ -400,7 +438,7 @@ void TrackWorld::AddIsraeliProps()
                             WaterTank(b, q), ++nRoofs;
                     }
                     roofTris += props.size() - before;
-                } else if (std::fabs(h) < 0.7f && !road4.count(Key(c4x, c4y)) && nearRoad && t.tex) { // pavement / plaza
+                } else if (atRoadLevel && !road4.count(Key(c4x, c4y)) && t.tex) { // pavement / plaza
                     const District d = DistrictAt(c.x, c.y);
                     const V3 e1 = p1 - p0, e2 = p2 - p1, e3 = p0 - p2;
                     V3 ed = e1;
@@ -459,8 +497,7 @@ void TrackWorld::AddIsraeliProps()
                     const V3 e1 = p1 - p0, e2 = p2 - p1, e3 = p0 - p2;
                     const float l1 = std::hypot(e1.x, e1.y), l2 = std::hypot(e2.x, e2.y), l3 = std::hypot(e3.x, e3.y);
                     if (std::max({l1, l2, l3}) > 1.0f) {
-                        float g;
-                        if (GroundHeight(c.x, c.y, maxz + 0.2f, g) && minz - g < 0.45f) {
+                        if (minz > nearIt->second.first - 0.7f && minz < nearIt->second.second + 0.7f) {
                             for (RVertex &v : t.v)
                                 v.a = 253;
                             ++nCurbs;
@@ -469,7 +506,7 @@ void TrackWorld::AddIsraeliProps()
                 } else if (dz > 3.0f && area > 12.0f && nearRoad && wallTris < kWallBudget) { // facade air conditioners
                     const size_t before = props.size();
                     float g;
-                    if (!GroundHeight(c.x, c.y, minz + 1.0f, g))
+                    if (!GroundHeightT(c.x, c.y, minz + 1.0f, g))
                         g = minz;
                     const float dens = area / 34.0f;
                     int n = int(dens + rng.f());
@@ -487,12 +524,22 @@ void TrackWorld::AddIsraeliProps()
         }
     }
 
+    // Solid props join the wall query (ISSUES #275).
+    m_propSolids = std::move(solids);
+    m_propGrid.clear();
+    for (uint32_t i = 0; i < m_propSolids.size(); ++i)
+        m_propGrid[CellKey(int(std::floor(m_propSolids[i].x / 16.0f)), int(std::floor(m_propSolids[i].y / 16.0f)))].push_back(i);
+    if (getenv("NFSU2_PROP_DEBUG"))
+        for (size_t i = 0; i < m_propSolids.size(); i += std::max<size_t>(1, m_propSolids.size() / 8))
+            printf("[PropSolid] %.1f %.1f r %.2f z %.1f..%.1f\n", m_propSolids[i].x, m_propSolids[i].y, m_propSolids[i].r, m_propSolids[i].z0, m_propSolids[i].z1);
     // Distribute the props into their 64 m cells.
     for (const RTri &p : props) {
         const float cx = (p.v[0].x + p.v[1].x + p.v[2].x) / 3.0f, cy = (p.v[0].y + p.v[1].y + p.v[2].y) / 3.0f;
         m_cells[CellKey(int(std::floor(cx / kCellSize)), int(std::floor(cy / kCellSize)))].render.push_back(p);
     }
     printf("[Props] flat %zu, ground-level %zu (road %zu, near-road non-road %zu)\n", flatTris, flatGround, flatRoad, flatNear);
+    m_groundSource = savedSource;
+    printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
            "%zu signs, %zu scooters, %zu cafes\n",
            props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe);

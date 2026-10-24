@@ -175,7 +175,14 @@ private:
     };
 public:
     using RTriPublic = RTri; // IsraelProps.cpp's mesh builder
+    // A solid vertical cylinder (a tree trunk, a pole, a bus shelter post): the wall query treats it as a wall (ISSUES #275).
+    struct PropSolid {
+        float x, y, r, z0, z1;
+    };
 private:
+    std::vector<PropSolid> m_propSolids;
+    std::unordered_map<int64_t, std::vector<uint32_t>> m_propGrid; // 16 m cell -> indices into m_propSolids
+    bool PropWall(const float *a, const float *b, float *normal) const;
     void AddIsraeliProps(); // ISSUES #273 (IsraelProps.cpp)
     struct Cell {
         std::vector<Tri> tris;    // positions for physics and the software renderer
@@ -218,6 +225,7 @@ private:
     size_t m_triangleCount = 0;
     std::vector<std::vector<uint8_t>> m_extraPacks;
     std::vector<float> m_roadTris;
+    std::vector<float> m_roadTriZ; // one centroid height per road triangle (IsraelProps pavement test)
     bool m_scene = false; // LoadScene: one cell, always drawn
     size_t m_instances = 0;
     size_t m_borrowedSolids = 0;
