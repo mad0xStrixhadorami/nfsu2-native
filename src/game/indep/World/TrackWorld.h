@@ -60,6 +60,7 @@ public:
         bool mirror;
     };
     bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height, const Inset *inset = nullptr);
+    void DrawCarLights(const Camera &cam, bool day) const;
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
@@ -99,6 +100,16 @@ public:
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
     void SetCarTransform(size_t car, const float m[12]);
+    // Lamp state (ISSUES #284): headlights on, brake pedal down, reverse gear. The lamps fade towards the target a little
+    // every call (once per frame), so a tap on the brake does not flicker.
+    void SetCarLamps(size_t car, bool head, bool brake, bool reverse)
+    {
+        if (car >= m_cars.size())
+            return;
+        Car &c = m_cars[car];
+        auto fade = [](float &v, bool on) { v += ((on ? 1.0f : 0.0f) - v) * 0.4f; };
+        fade(c.lampHead, head), fade(c.lampBrake, brake), fade(c.lampReverse, reverse);
+    }
     // Wheel spin and steering (ISSUES #257 / #258): the per-triangle wheel and brake index of the car's model (-1 none; the
     // vectors must outlive the car), the four hubs' car-space (x, y, z) as 12 floats, the rolling angle and the front
     // wheels' steering angle, applied by the next SetCarTransform.
@@ -276,6 +287,11 @@ private:
         float shadowZ = 1e9f;               // low-passed ground height under the car (shadow fallback, no flicker)
         float groundZ = 0.0f;              // lowest point of the car in the world (the shadow's height)
         std::vector<uint8_t> gloss;
+        // Lamps (#284): fade state (0..1) and the world-space centres of the lens triangles (gloss 6 head, 7 tail), left
+        // (car +y) and right, rebuilt by SetCarTransform with the forward axis for the glows and beams.
+        float lampHead = 0, lampBrake = 0, lampReverse = 0;
+        float headPos[2][3] = {}, tailPos[2][3] = {}, fwd[3] = {1, 0, 0};
+        bool haveHead[2] = {}, haveTail[2] = {};
     };
     // Car material slot -> texture (0 = untextured) and base colour.
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;

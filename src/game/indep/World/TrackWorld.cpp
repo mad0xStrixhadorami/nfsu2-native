@@ -616,6 +616,7 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     car.albedo.clear();
     car.gloss.clear();
     car.ao.clear();
+    float headSum[2][4] = {}, tailSum[2][4] = {};
     const bool textured = car.textures && car.textures->size() == car.model->size();
     const bool rimmed = car.rims && car.rims->size() == car.model->size();
     const bool calipered = car.calipers && car.calipers->size() == car.model->size();
@@ -705,6 +706,14 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             gloss = (rimmed && (*car.rims)[i]) ? 3 : 4;
         else if (brake >= 0 && !(calipered && (*car.calipers)[i]))
             gloss = 5;
+        // Lamp lenses (#284): the head and brake light slots are emissive in the car shader.
+        if (textured && wheel < 0 && brake < 0) {
+            const uint32_t slot = (*car.textures)[i];
+            if (slot == CarMaterial::NameHash("HEADLIGHT_LEFT") || slot == CarMaterial::NameHash("HEADLIGHT_RIGHT"))
+                gloss = 6;
+            else if (slot == CarMaterial::NameHash("BRAKELIGHT_LEFT") || slot == CarMaterial::NameHash("BRAKELIGHT_RIGHT"))
+                gloss = 7;
+        }
         Tri w;
         for (int k = 0; k < 3; ++k)
             for (int a = 0; a < 3; ++a)
@@ -722,6 +731,15 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         }
         for (int k = 0; k < 3; ++k)
             car.groundZ = std::min(car.groundZ, w.v[k * 3 + 2]);
+        if (gloss == 6 || gloss == 7) {
+            float cx = 0, cy = 0, cz = 0;
+            for (int k = 0; k < 3; ++k)
+                cx += w.v[k * 3], cy += w.v[k * 3 + 1], cz += w.v[k * 3 + 2];
+            const float my = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f;
+            const int side = my > 0.0f ? 0 : 1;
+            float *sum = gloss == 6 ? headSum[side] : tailSum[side];
+            sum[0] += cx / 3.0f, sum[1] += cy / 3.0f, sum[2] += cz / 3.0f, sum[3] += 1.0f;
+        }
         car.tris.push_back(w);
         car.render.push_back(r);
         // World-space smooth normals (rotation of m) and the unlit colour, for RenderGL's per-vertex lighting.
@@ -745,6 +763,14 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         car.albedo.push_back(rgb[2]);
         car.gloss.push_back(gloss);
     }
+    for (int side = 0; side < 2; ++side) {
+        car.haveHead[side] = headSum[side][3] > 0.0f, car.haveTail[side] = tailSum[side][3] > 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            car.headPos[side][a] = car.haveHead[side] ? headSum[side][a] / headSum[side][3] : 0.0f;
+            car.tailPos[side][a] = car.haveTail[side] ? tailSum[side][a] / tailSum[side][3] : 0.0f;
+        }
+    }
+    car.fwd[0] = m[0], car.fwd[1] = m[1], car.fwd[2] = m[2];
 }
 
 // Markers of one race in TrackPosMarkersAll.bin (see TrackWorld.h), grouped by name hash.

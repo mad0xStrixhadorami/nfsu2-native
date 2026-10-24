@@ -451,6 +451,12 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         // LOD suffix _A.._D; names are cut to 27 characters, and the A level comes first.
         if (EndsWith(n, "_B") || EndsWith(n, "_C") || EndsWith(n, "_D") || !seen.insert(n).second)
             continue;
+        if (getenv("NFSU2_LIGHT_DEBUG") && (Contains(n, "LIGHT") || Contains(n, "LAMP") || Contains(n, "SIGNAL"))) {
+            printf("[Light] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f) slots:", n.c_str(), s.tris.size(), s.bboxMin[0], s.bboxMin[1],
+                   s.bboxMin[2], s.bboxMax[0], s.bboxMax[1], s.bboxMax[2]);
+            for (uint32_t h : s.textures) printf(" %08x", h);
+            printf("\n");
+        }
         if (Contains(n, "FRONT_WHEEL") || Contains(n, "TIRE_FRONT")) { frontWheel = &s; continue; }
         if (Contains(n, "REAR_WHEEL") || Contains(n, "TIRE_REAR")) { rearWheel = &s; continue; }
         // Parts modelled around their own origin, or hidden inside the body.
@@ -686,6 +692,17 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             const float outboard = std::fabs(w.y) + w.width * 0.5f;
             const float wheelY = left ? outboard + wheelSolid->bboxMin[1] : -outboard - wheelSolid->bboxMin[1];
             const float brakeY = left ? wheelY - 0.055f : wheelY + 0.055f;
+            if (i == 0 && getenv("NFSU2_WHEEL_DEBUG")) {
+                printf("[Brake] %s: %zu tris bbox (%.2f %.2f %.2f)-(%.2f %.2f %.2f)\n", brake->name.c_str(), brake->tris.size(),
+                       brake->bboxMin[0], brake->bboxMin[1], brake->bboxMin[2], brake->bboxMax[0], brake->bboxMax[1], brake->bboxMax[2]);
+                for (const SolidMesh::Triangle &t : brake->tris) {
+                    printf("[Brake] tex %d", int(t.tex));
+                    for (int k = 0; k < 3; ++k)
+                        printf(" (%.3f %.3f %.3f uv %.2f %.2f)", t.v[k].x, t.v[k].y, t.v[k].z, t.v[k].u, t.v[k].v);
+                    printf("\n");
+                }
+                for (uint32_t h : brake->textures) printf("[Brake] texture %08x\n", h);
+            }
             brakeRange[i][0] = m_model.size();
             AddBrake(*brake, w.x, brakeY, w.z, left, m_model, m_triTex, m_triRim, m_triCaliper);
             brakeRange[i][1] = m_model.size();
@@ -880,6 +897,7 @@ void PlayerCar::Update(const TrackWorld &world, float throttle, float brake, flo
                        float power)
 {
     m_steerIn = steer; // the visible road-wheel angle follows it (AdvanceWheels)
+    m_lampBrake = brake > 0.05f || m_hold;
     constexpr float kAccel = 9.0f, kBrake = 18.0f, kReverseMax = -12.0f, kTopSpeed = 62.0f;
     constexpr float kDrag = 0.0009f, kRolling = 0.6f, kWheelbase = 2.6f, kGravity = 19.6f;
 

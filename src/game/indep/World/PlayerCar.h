@@ -61,6 +61,10 @@ public:
     UG2Physics::Vehicle *Body() { return m_ug2.Valid() ? &m_ug2 : nullptr; }
     const Performance &GetPerformance() const { return m_perf; }
     int Gear() const { return m_gear; }  // 1.. forward, -1 reverse, 0 neutral
+    // Lamp state for the renderer (ISSUES #284): the brake lights burn while the brake pedal or handbrake is held, the
+    // reverse lamps while the car is in reverse gear.
+    bool BrakeLamp() const { return m_lampBrake; }
+    bool ReverseLamp() const { return m_gear == -1; }
     float Rpm() const { return m_rpm; }
     // Engine torque (kN*m) at rpm from the curve.
     static float Torque(const Performance &p, float rpm);
@@ -233,5 +237,6 @@ private:
     UG2Physics::Vehicle m_ug2;
     bool m_nitrousButton = false;
     bool m_hold = false;
+    bool m_lampBrake = false;
     float m_wheelRadius = 0.32f;
 };

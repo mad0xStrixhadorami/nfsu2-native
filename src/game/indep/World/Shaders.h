@@ -471,6 +471,7 @@ uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uTime;
 uniform float uBlur;
+uniform vec3 uLamp; // x headlights, y brake pedal, z reverse (0..1)
 varying float vAO;
 varying vec4 vColor;
 varying vec2 vUV;
@@ -497,6 +498,30 @@ vec3 environment(vec3 R) {
 void main() {
     vec4 tex = texture2D(uTex, vUV);
     vec4 base = tex * vColor;
+    if (vGloss > 5.5) {
+        // ---- lamp lenses (ISSUES #284): 6 headlight, 7 tail / brake light. Emissive; the brake pedal drives the tail lamp
+        // from a dim red to a hot lens, headlights burn white-warm; a clear-coat glint keeps the glass look. -----------------
+        vec3 Nl = normalize(vNormal);
+        vec3 Vl = normalize(uCam - vPos);
+        float NdVl = max(dot(Nl, Vl), 0.0);
+        vec3 lens = clamp(vColor.rgb, 0.0, 1.0);
+        vec3 col;
+        if (vGloss < 6.5) {
+            float on = uLamp.x;
+            vec3 hot = vec3(1.0, 0.96, 0.80) * (1.9 + 0.5 * NdVl);
+            col = mix(lens * (0.35 + 0.35 * NdVl), hot, on);
+        } else {
+            float on = clamp(0.30 + 0.70 * uLamp.y, 0.0, 1.0); // tail lamps always burn, the brake pedal drives them hard
+            float core = pow(NdVl, 1.5);
+            vec3 hot = mix(vec3(0.85, 0.05, 0.03), vec3(1.0, 0.11, 0.06), uLamp.y) * (1.0 + 0.45 * uLamp.y) * (0.65 + 0.55 * core);
+            hot += vec3(0.0, 0.10, 0.04) * uLamp.y * pow(core, 3.0); // a hotter centre
+            col = mix(lens * 0.30, hot, on);
+        }
+        col += vec3(pow(1.0 - NdVl, 4.0) * 0.12) + environment(reflect(-Vl, Nl)) * 0.10; // glassy rim light
+        float fl = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+        gl_FragColor = vec4(mix(col, uFogColor, fl * fl * (3.0 - 2.0 * fl)), 1.0);
+        return;
+    }
     if (vGloss < 0.5) {
         // tyres, lights, badges: the CPU-lit vertex colour
         float f0 = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
@@ -543,7 +568,7 @@ void main() {
             col *= 0.55 + 0.45 * vAO;
         }
         float fw = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(col, uFogColor, fw * fw * (3.0 - 2.0 * fw)), (vGloss < 3.5 || vGloss > 4.5) ? 1.0 : tex.a); // the tyre keeps its alpha-tested corners
+        gl_FragColor = vec4(mix(col, uFogColor, fw * fw * (3.0 - 2.0 * fw)), (vGloss < 3.5) ? 1.0 : tex.a); // the tyre and the brake disc keep their alpha-tested (round) outline
         return;
     }
     float NdV = max(dot(N, V), 0.0);

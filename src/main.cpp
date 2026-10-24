@@ -2021,6 +2021,7 @@ int main(int argc, char **argv)
                     cars[i]->AdvanceWheels(dt); // the wheels roll with the speed (#257)
                     world.SetCarWheels(i, &cars[i]->TriangleWheels(), &cars[i]->TriangleBrakes(), cars[i]->WheelHubs(), cars[i]->WheelAngle(),
                                       cars[i]->WheelSteer());
+                    world.SetCarLamps(i, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
                     if (sceneMode && i > 0)
                         m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
                     world.SetCarTransform(i, m);

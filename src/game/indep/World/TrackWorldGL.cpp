@@ -853,6 +853,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::EnableAttrib(2);
         GLShader::EnableAttrib(3);
         const GLint blurLoc = GLShader::Uniform(m_progCar, "uBlur");
+        const GLint lampLoc = GLShader::Uniform(m_progCar, "uLamp");
         for (const Car &car : m_cars) {
             if (car.render.empty())
                 continue;
@@ -860,6 +861,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             const bool lit = car.gloss.size() == car.render.size() && car.normals.size() == car.render.size() * 9 && !getenv("NFSU2_CAR_FLAT");
             // Spoke blur: the faster the wheels turn the more the rim fades into a disc (full at ~12 turns per second).
             GLShader::Set1f(blurLoc, std::clamp((std::fabs(car.spinRate) - 25.0f) / 55.0f, 0.0f, 1.0f));
+            if (lampLoc >= 0)
+                GLShader::Set3f(lampLoc, car.lampHead, car.lampBrake, car.lampReverse);
             for (size_t ti = 0; ti < car.render.size(); ++ti) {
                 const RTri &t = car.render[ti];
                 const uint8_t g = lit ? car.gloss[ti] : 0;
@@ -896,6 +899,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::DisableAttrib(2);
         GLShader::DisableAttrib(3);
         GLShader::Use(0);
+        DrawCarLights(cam, day);
     } else {
         for (const Car &car : m_cars) {
             if (car.render.empty())
@@ -962,4 +966,118 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     if (inset)
         glDisable(GL_SCISSOR_TEST);
     return true;
+}
+
+// Glows and light on the road for the car lamps (ISSUES #284): a soft additive halo around each lit lens (facing the
+// viewer, so a tail lamp does not glow through the car), and at night warm headlight pools and a red wash behind a braking
+// car. The lens triangles themselves are emissive in the car shader.
+void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
+{
+    if (getenv("NFSU2_NO_LAMP_GLOW"))
+        return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_FOG);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    const float dayK = day ? 0.55f : 1.0f;
+    auto halo = [&](const float p[3], float r, float g, float b, float radius, float alpha) {
+        if (alpha <= 0.01f)
+            return;
+        float dx = p[0] - cam.x, dy = p[1] - cam.y, dz = p[2] - cam.z;
+        const float dl = std::max(1e-4f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        dx /= dl, dy /= dl, dz /= dl;
+        float rx = dy, ry = -dx; // right = d x up(0,0,1)
+        const float rl = std::max(1e-4f, std::sqrt(rx * rx + ry * ry));
+        rx /= rl, ry /= rl;
+        const float ux = ry * dz, uy = -rx * dz, uz = rx * dy - ry * dx; // up = right x d
+        const float k = std::min(1.0f, dl / 4.0f); // far lamps keep a visible minimum size
+        const float R = radius * (0.6f + 0.4f * k) + dl * 0.004f;
+        const float cx = p[0] - dx * 0.18f, cy = p[1] - dy * 0.18f, cz = p[2] - dz * 0.18f; // toward the viewer, off the lens
+        // Soft falloff: four rings (radius, alpha) from the centre out.
+        constexpr float kRing[4][2] = {{0.0f, 1.0f}, {0.28f, 0.42f}, {0.6f, 0.10f}, {1.0f, 0.0f}};
+        for (int ring = 0; ring < 3; ++ring) {
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= 16; ++i) {
+                const float a = float(i) * 6.2831853f / 16.0f, ca = std::cos(a), sa = std::sin(a);
+                for (int e = 0; e < 2; ++e) {
+                    const float rr = kRing[ring + e][0] * R;
+                    glColor4f(r, g, b, kRing[ring + e][1] * alpha);
+                    glVertex3f(cx + (rx * ca + ux * sa) * rr, cy + (ry * ca + uy * sa) * rr, cz + uz * sa * rr);
+                }
+            }
+            glEnd();
+        }
+    };
+    for (const Car &car : m_cars) {
+        if (car.render.empty())
+            continue;
+        const float fl = std::max(1e-4f, std::sqrt(car.fwd[0] * car.fwd[0] + car.fwd[1] * car.fwd[1]));
+        const float fx = car.fwd[0] / fl, fy = car.fwd[1] / fl;
+        for (int side = 0; side < 2; ++side) {
+            if (car.haveHead[side]) {
+                const float *p = car.headPos[side];
+                const float vx = cam.x - p[0], vy = cam.y - p[1];
+                const float facing = (fx * vx + fy * vy) / std::max(1e-4f, std::sqrt(vx * vx + vy * vy));
+                const float seen = 0.12f + 0.88f * std::clamp(facing * 1.6f, 0.0f, 1.0f);
+                halo(p, 1.0f, 0.95f, 0.78f, 0.42f, 0.55f * car.lampHead * seen * dayK);
+            }
+            if (car.haveTail[side]) {
+                const float *p = car.tailPos[side];
+                const float vx = cam.x - p[0], vy = cam.y - p[1];
+                const float facing = -(fx * vx + fy * vy) / std::max(1e-4f, std::sqrt(vx * vx + vy * vy));
+                const float seen = 0.12f + 0.88f * std::clamp(facing * 1.6f, 0.0f, 1.0f);
+                const float b = car.lampBrake;
+                halo(p, 1.0f, 0.06f + 0.08f * b, 0.03f + 0.04f * b, 0.14f + 0.30f * b, (0.16f + 0.40f * b) * seen * dayK);
+            }
+        }
+        if (day)
+            continue;
+        // Night: headlight pools ahead of the car and the red wash behind a braking one, flat on the road.
+        const float carZ = car.xf[11];
+        // The road under a point of the pool (the car may be pitched or on a kerb, so its lowest point is no guide).
+        auto roadZ = [&](float x, float y) {
+            float z = carZ;
+            return (GroundHeight(x, y, carZ + 1.5f, z) ? z : carZ - 0.3f) + 0.05f;
+        };
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-2.0f, -2.0f);
+        auto pool = [&](const float p[3], float dirx, float diry, float len, float w0, float w1, float r, float g, float b, float a0) {
+            const float nx = -diry, ny = dirx;
+            constexpr int kSlices = 8;
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= kSlices; ++i) {
+                const float u = float(i) / kSlices, d = u * len, w = w0 + (w1 - w0) * u;
+                const float a = a0 * std::pow(1.0f - u, 1.4f);
+                const float cx = p[0] + dirx * d, cy = p[1] + diry * d;
+                glColor4f(r, g, b, 0.0f);
+                glVertex3f(cx + nx * w, cy + ny * w, roadZ(cx + nx * w, cy + ny * w));
+                glColor4f(r, g, b, a);
+                glVertex3f(cx, cy, roadZ(cx, cy));
+            }
+            glEnd();
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= kSlices; ++i) {
+                const float u = float(i) / kSlices, d = u * len, w = w0 + (w1 - w0) * u;
+                const float a = a0 * std::pow(1.0f - u, 1.4f);
+                const float cx = p[0] + dirx * d, cy = p[1] + diry * d;
+                glColor4f(r, g, b, a);
+                glVertex3f(cx, cy, roadZ(cx, cy));
+                glColor4f(r, g, b, 0.0f);
+                glVertex3f(cx - nx * w, cy - ny * w, roadZ(cx - nx * w, cy - ny * w));
+            }
+            glEnd();
+        };
+        for (int side = 0; side < 2; ++side) {
+            if (car.haveHead[side] && car.lampHead > 0.02f)
+                pool(car.headPos[side], fx, fy, 26.0f, 0.5f, 4.2f, 1.0f, 0.93f, 0.72f, 0.34f * car.lampHead);
+            if (car.haveTail[side] && car.lampBrake > 0.02f)
+                pool(car.tailPos[side], -fx, -fy, 4.5f, 0.4f, 1.8f, 1.0f, 0.08f, 0.04f, 0.30f * car.lampBrake);
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+    glPopAttrib();
 }
