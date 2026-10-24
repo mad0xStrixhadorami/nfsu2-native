@@ -173,6 +173,10 @@ private:
         RVertex v[3];
         uint32_t tex;
     };
+public:
+    using RTriPublic = RTri; // IsraelProps.cpp's mesh builder
+private:
+    void AddIsraeliProps(); // ISSUES #273 (IsraelProps.cpp)
     struct Cell {
         std::vector<Tri> tris;    // positions for physics and the software renderer
         std::vector<RTri> render; // consumed by the GL upload

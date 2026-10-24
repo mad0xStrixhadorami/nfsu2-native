@@ -1,0 +1,499 @@
+// Israeli street dressing placed over the whole loaded region (ISSUES #272/#273): trees, rooftop solar water heaters
+// ("dud shemesh"), AC condensers, antennas, bus stops, road signs, e-scooters, cafe tables, and the triangle flags the
+// world shader reads (vertex alpha 253 = kerb face -> red/white or blue/white paint, 252 = pavement strip -> green bike
+// lane).  Everything is visual only: the triangles go to the render lists, not to the physics cells.
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <unordered_map>
+#include <unordered_set>
+
+#include "game/indep/World/TrackWorld.h"
+
+namespace {
+
+struct V3 {
+    float x, y, z;
+};
+V3 operator+(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+V3 operator-(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+V3 operator*(V3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+V3 Cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
+float Dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+float Len(V3 a) { return std::sqrt(Dot(a, a)); }
+V3 Norm(V3 a)
+{
+    const float l = Len(a);
+    return l > 1e-6f ? a * (1.0f / l) : V3{0, 0, 1};
+}
+
+struct Rng {
+    uint32_t s;
+    explicit Rng(uint32_t seed) : s(seed * 2654435761u + 0x9e3779b9u) { f(), f(); }
+    float f()
+    {
+        s ^= s << 13, s ^= s >> 17, s ^= s << 5;
+        return float(s & 0xffffff) / float(0x1000000);
+    }
+};
+
+uint32_t HashXY(int x, int y, uint32_t salt)
+{
+    uint32_t h = uint32_t(x) * 73856093u ^ uint32_t(y) * 19349663u ^ salt * 83492791u;
+    h ^= h >> 15, h *= 0x2c1b3c6du, h ^= h >> 12;
+    return h;
+}
+
+int64_t Key(int x, int y) { return (int64_t(x) << 32) ^ uint32_t(y); }
+
+// The four districts of the theme (same centres as the world shader).
+struct District {
+    float tlv, jer, hai, bsh;
+};
+District DistrictAt(float x, float y)
+{
+    auto g = [&](float cx, float cy, float s2) { return std::exp(-((x - cx) * (x - cx) + (y - cy) * (y - cy)) / s2); };
+    District d{g(-300, -420, 640000), g(-1050, 580, 490000), g(-1850, 1120, 490000), g(-250, -1650, 640000)};
+    const float sum = std::max(d.tlv + d.jer + d.hai + d.bsh, 1e-4f);
+    d.tlv /= sum, d.jer /= sum, d.hai /= sum, d.bsh /= sum;
+    return d;
+}
+
+} // namespace
+
+// Mesh builder over a render triangle list (flat shaded, alpha 254 = "prop").
+struct PropBuilder {
+    std::vector<TrackWorld::RTriPublic> *out;
+    size_t cap;
+
+    void Tri(V3 a, V3 b, V3 c, const uint8_t col[3])
+    {
+        if (out->size() >= cap)
+            return;
+        const V3 n = Norm(Cross(b - a, c - a));
+        // two-sided flat light from the sun direction plus a sky term
+        const float l = std::fabs(Dot(n, Norm({0.35f, 0.2f, 0.9f})));
+        const float k = 0.52f + 0.55f * l;
+        TrackWorld::RTriPublic t;
+        t.tex = 0;
+        const V3 p[3] = {a, b, c};
+        for (int i = 0; i < 3; ++i) {
+            t.v[i].x = p[i].x, t.v[i].y = p[i].y, t.v[i].z = p[i].z, t.v[i].u = 0, t.v[i].v = 0;
+            t.v[i].r = uint8_t(std::min(255.0f, col[0] * k));
+            t.v[i].g = uint8_t(std::min(255.0f, col[1] * k));
+            t.v[i].b = uint8_t(std::min(255.0f, col[2] * k));
+            t.v[i].a = 254;
+        }
+        out->push_back(t);
+    }
+    void Quad(V3 a, V3 b, V3 c, V3 d, const uint8_t col[3]) { Tri(a, b, c, col), Tri(a, c, d, col); }
+    // box from corner o spanned by three vectors
+    void Box(V3 o, V3 ax, V3 ay, V3 az, const uint8_t col[3])
+    {
+        const V3 p000 = o, p100 = o + ax, p010 = o + ay, p110 = o + ax + ay;
+        const V3 p001 = o + az, p101 = o + ax + az, p011 = o + ay + az, p111 = o + ax + ay + az;
+        Quad(p000, p100, p110, p010, col), Quad(p001, p101, p111, p011, col);
+        Quad(p000, p100, p101, p001, col), Quad(p010, p110, p111, p011, col);
+        Quad(p000, p010, p011, p001, col), Quad(p100, p110, p111, p101, col);
+    }
+    // upright box centred on (cx, cy), bottom at z, rotated by yaw
+    void UBox(float cx, float cy, float z, float sx, float sy, float sz, float yaw, const uint8_t col[3])
+    {
+        const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+        Box(V3{cx, cy, z} - u * (sx * 0.5f) - v * (sy * 0.5f), u * sx, v * sy, {0, 0, sz}, col);
+    }
+    // tapered prism between two points
+    void Prism(V3 p0, V3 p1, float r0, float r1, int sides, const uint8_t col[3])
+    {
+        const V3 ax = Norm(p1 - p0);
+        V3 s = Cross(ax, std::fabs(ax.z) > 0.9f ? V3{1, 0, 0} : V3{0, 0, 1});
+        s = Norm(s);
+        const V3 t = Cross(ax, s);
+        for (int i = 0; i < sides; ++i) {
+            const float a0 = 6.2831853f * i / sides, a1 = 6.2831853f * (i + 1) / sides;
+            const V3 d0 = s * std::cos(a0) + t * std::sin(a0), d1 = s * std::cos(a1) + t * std::sin(a1);
+            Quad(p0 + d0 * r0, p0 + d1 * r0, p1 + d1 * r1, p1 + d0 * r1, col);
+        }
+        // caps
+        for (int i = 0; i < sides; ++i) {
+            const float a0 = 6.2831853f * i / sides, a1 = 6.2831853f * (i + 1) / sides;
+            const V3 d0 = s * std::cos(a0) + t * std::sin(a0), d1 = s * std::cos(a1) + t * std::sin(a1);
+            Tri(p1, p1 + d0 * r1, p1 + d1 * r1, col);
+        }
+    }
+    void Cone(V3 base, float r, float h, int sides, const uint8_t col[3])
+    {
+        for (int i = 0; i < sides; ++i) {
+            const float a0 = 6.2831853f * i / sides, a1 = 6.2831853f * (i + 1) / sides;
+            Tri(base + V3{r * std::cos(a0), r * std::sin(a0), 0}, base + V3{r * std::cos(a1), r * std::sin(a1), 0},
+                base + V3{0, 0, h}, col);
+        }
+    }
+    // flat n-gon facing `normal`
+    void Disc(V3 c, V3 normal, float r, int sides, const uint8_t col[3])
+    {
+        const V3 n = Norm(normal);
+        const V3 s = Norm(Cross(n, std::fabs(n.z) > 0.9f ? V3{1, 0, 0} : V3{0, 0, 1}));
+        const V3 t = Cross(n, s);
+        for (int i = 0; i < sides; ++i) {
+            const float a0 = 6.2831853f * i / sides, a1 = 6.2831853f * (i + 1) / sides;
+            Tri(c, c + (s * std::cos(a0) + t * std::sin(a0)) * r, c + (s * std::cos(a1) + t * std::sin(a1)) * r, col);
+        }
+    }
+    void Ellipsoid(V3 c, float rx, float rz, int segs, const uint8_t col[3])
+    {
+        const int rings = 4;
+        for (int j = 0; j < rings; ++j) {
+            const float p0 = 3.14159265f * (float(j) / rings - 0.5f), p1 = 3.14159265f * (float(j + 1) / rings - 0.5f);
+            for (int i = 0; i < segs; ++i) {
+                const float a0 = 6.2831853f * i / segs, a1 = 6.2831853f * (i + 1) / segs;
+                auto P = [&](float a, float p) {
+                    return c + V3{rx * std::cos(p) * std::cos(a), rx * std::cos(p) * std::sin(a), rz * std::sin(p)};
+                };
+                Quad(P(a0, p0), P(a1, p0), P(a1, p1), P(a0, p1), col);
+            }
+        }
+    }
+};
+
+namespace {
+const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3] = {120, 98, 74}, kGrey[3] = {170, 170, 175},
+              kLightGrey[3] = {205, 205, 205}, kDarkGrey[3] = {50, 52, 56}, kWhite[3] = {235, 235, 230},
+              kPanel[3] = {28, 44, 82}, kTank[3] = {225, 225, 220}, kBlue[3] = {20, 70, 160}, kRed[3] = {190, 30, 30},
+              kYellow[3] = {220, 190, 40}, kStone[3] = {222, 205, 170}, kOlive[3] = {104, 120, 78};
+
+void Palm(PropBuilder &b, V3 base, Rng &r)
+{
+    const float h = 5.5f + 4.0f * r.f();
+    const float lean = (r.f() - 0.5f) * 0.9f, la = r.f() * 6.28f;
+    const V3 top = base + V3{lean * std::cos(la), lean * std::sin(la), h};
+    b.Prism(base, top, 0.2f, 0.13f, 6, kTrunk);
+    const int fronds = 9;
+    for (int i = 0; i < fronds; ++i) {
+        const float a = 6.2831853f * (i + 0.3f * r.f()) / fronds;
+        const V3 d{std::cos(a), std::sin(a), 0}, side{-std::sin(a), std::cos(a), 0};
+        const V3 mid = top + d * 1.5f + V3{0, 0, 0.55f}, tip = top + d * 3.0f + V3{0, 0, -0.55f};
+        b.Tri(top, mid + side * 0.32f, mid - side * 0.32f, kGreen);
+        b.Tri(mid + side * 0.32f, tip, mid - side * 0.32f, kDarkGreen);
+    }
+}
+
+void Pine(PropBuilder &b, V3 base, Rng &r) // Aleppo / stone pine: bare trunk, layered dark crown
+{
+    const float h = 4.5f + 3.0f * r.f();
+    b.Prism(base, base + V3{0, 0, h}, 0.22f, 0.12f, 6, kTrunk);
+    const float rad = 1.9f + r.f() * 0.8f;
+    for (int i = 0; i < 3; ++i)
+        b.Cone(base + V3{0, 0, h * 0.55f + i * h * 0.17f}, rad * (1.0f - 0.27f * i), h * 0.34f, 8, i == 1 ? kGreen : kDarkGreen);
+}
+
+void Cypress(PropBuilder &b, V3 base, Rng &r)
+{
+    const float h = 5.0f + 3.0f * r.f();
+    b.Prism(base, base + V3{0, 0, 0.8f}, 0.1f, 0.1f, 5, kTrunk);
+    b.Cone(base + V3{0, 0, 0.5f}, 0.75f, h, 7, kDarkGreen);
+}
+
+void Olive(PropBuilder &b, V3 base, Rng &r) // olive / ficus: short trunk, wide grey-green crown
+{
+    const float h = 2.0f + r.f();
+    b.Prism(base, base + V3{0, 0, h}, 0.2f, 0.14f, 6, kTrunk);
+    b.Ellipsoid(base + V3{0, 0, h + 1.2f}, 2.0f + r.f() * 0.6f, 1.5f, 8, r.f() > 0.5f ? kOlive : kGreen);
+}
+
+void SolarHeater(PropBuilder &b, V3 o, float yaw) // dud shemesh: tilted panel with the tank on its high edge
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    const float tilt = 0.52f;
+    const V3 panelUp = v * (1.9f * std::cos(tilt)) + V3{0, 0, 1.9f * std::sin(tilt)};
+    const V3 pc = o + V3{0, 0, 0.25f};
+    b.Box(pc - u * 0.6f, u * 1.2f, panelUp, Cross(u, Norm(panelUp)) * -0.07f, kPanel);
+    b.Box(o - u * 0.55f, u * 0.08f, v * 0.9f, {0, 0, 0.3f}, kGrey); // stand
+    b.Box(o + u * 0.47f, u * 0.08f, v * 0.9f, {0, 0, 0.3f}, kGrey);
+    const V3 tankC = pc + panelUp + V3{0, 0, 0.32f} + v * 0.1f;
+    b.Prism(tankC - u * 0.62f, tankC + u * 0.62f, 0.3f, 0.3f, 8, kTank);
+}
+
+void Condenser(PropBuilder &b, V3 base, float yaw, bool onWall, V3 wallN)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.Box(base - u * 0.42f - v * 0.17f, u * 0.84f, v * 0.34f, {0, 0, 0.62f}, kLightGrey);
+    // fan grille on the front face
+    const V3 front = (onWall ? Norm(wallN) : v);
+    b.Disc(base + V3{0, 0, 0.32f} + v * 0.175f + (onWall ? V3{0, 0, 0} : V3{0, 0, 0}), front, 0.2f, 8, kDarkGrey);
+}
+
+void Antenna(PropBuilder &b, V3 base, float yaw)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0};
+    b.Prism(base, base + V3{0, 0, 3.0f}, 0.025f, 0.02f, 4, kGrey);
+    for (int i = 0; i < 3; ++i)
+        b.Prism(base + V3{0, 0, 1.8f + i * 0.45f} - u * (0.55f - i * 0.12f), base + V3{0, 0, 1.8f + i * 0.45f} + u * (0.55f - i * 0.12f),
+                0.012f, 0.012f, 4, kGrey);
+}
+
+void WaterTank(PropBuilder &b, V3 base)
+{
+    for (int i = 0; i < 4; ++i)
+        b.Prism(base + V3{(i & 1) ? 0.4f : -0.4f, (i & 2) ? 0.4f : -0.4f, 0}, base + V3{(i & 1) ? 0.4f : -0.4f, (i & 2) ? 0.4f : -0.4f, 0.8f}, 0.04f, 0.04f, 4, kGrey);
+    b.Prism(base + V3{0, 0, 0.8f}, base + V3{0, 0, 1.9f}, 0.62f, 0.62f, 10, kTank);
+}
+
+void BusStop(PropBuilder &b, V3 base, float yaw)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    const uint8_t glass[3] = {150, 190, 205};
+    b.Box(base - u * 1.7f - v * 0.7f + V3{0, 0, 2.4f}, u * 3.4f, v * 1.4f, {0, 0, 0.12f}, kStone); // roof slab
+    for (int i = 0; i < 2; ++i)                                                                        // posts
+        b.Prism(base + u * (i ? 1.65f : -1.65f) - v * 0.65f, base + u * (i ? 1.65f : -1.65f) - v * 0.65f + V3{0, 0, 2.4f}, 0.05f, 0.05f, 5, kGrey);
+    b.Box(base - u * 1.65f - v * 0.68f + V3{0, 0, 0.3f}, u * 3.3f, v * 0.04f, {0, 0, 1.9f}, glass); // back glass
+    b.Box(base - u * 1.1f - v * 0.45f + V3{0, 0, 0.45f}, u * 2.2f, v * 0.38f, {0, 0, 0.07f}, kStone); // bench
+    // the blue-and-white stop pole with its sign
+    const V3 pole = base + u * 2.2f + v * 0.3f;
+    b.Prism(pole, pole + V3{0, 0, 3.0f}, 0.04f, 0.04f, 5, kGrey);
+    b.Box(pole + V3{0, 0, 2.5f} - u * 0.3f - v * 0.02f, u * 0.6f, v * 0.03f, {0, 0, 0.5f}, kBlue);
+    b.Box(pole + V3{0, 0, 2.58f} - u * 0.22f - v * 0.035f, u * 0.44f, v * 0.012f, {0, 0, 0.34f}, kWhite);
+}
+
+void RoadSign(PropBuilder &b, V3 base, float yaw, int type)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.Prism(base, base + V3{0, 0, 3.0f}, 0.04f, 0.04f, 5, kGrey);
+    const V3 c = base + V3{0, 0, 2.7f} + v * 0.06f;
+    const V3 n = v;
+    switch (type) {
+    case 0: // speed limit / prohibition: red ring on white
+        b.Disc(c, n, 0.32f, 14, kRed);
+        b.Disc(c + n * 0.012f, n, 0.23f, 14, kWhite);
+        b.Box(c + n * 0.02f - u * 0.1f + V3{0, 0, -0.05f}, u * 0.2f, n * 0.004f, {0, 0, 0.1f}, kDarkGrey);
+        break;
+    case 1: // blue info / parking
+        b.Box(c - u * 0.3f + V3{0, 0, -0.3f}, u * 0.6f, n * 0.03f, {0, 0, 0.6f}, kBlue);
+        b.Box(c + n * 0.03f - u * 0.1f + V3{0, 0, -0.15f}, u * 0.2f, n * 0.004f, {0, 0, 0.3f}, kWhite);
+        break;
+    case 2: { // warning triangle: red border, white inside, point up
+        const V3 a = c - u * 0.45f + V3{0, 0, -0.3f}, bb = c + u * 0.45f + V3{0, 0, -0.3f}, t = c + V3{0, 0, 0.5f};
+        b.Tri(a, bb, t, kRed);
+        const V3 ctr = (a + bb + t) * (1.0f / 3.0f);
+        b.Tri(ctr + (a - ctr) * 0.62f + n * 0.012f, ctr + (bb - ctr) * 0.62f + n * 0.012f, ctr + (t - ctr) * 0.62f + n * 0.012f, kWhite);
+        break;
+    }
+    default: // stop
+        b.Disc(c, n, 0.36f, 8, kRed);
+        b.Box(c + n * 0.014f - u * 0.22f + V3{0, 0, -0.04f}, u * 0.44f, n * 0.004f, {0, 0, 0.08f}, kWhite);
+        break;
+    }
+}
+
+void Scooter(PropBuilder &b, V3 base, float yaw, Rng &r)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    static const uint8_t cols[3][3] = {{235, 235, 235}, {40, 40, 44}, {40, 190, 110}};
+    const uint8_t *c = cols[int(r.f() * 2.99f)];
+    b.Box(base - u * 0.28f - v * 0.07f + V3{0, 0, 0.1f}, u * 0.56f, v * 0.14f, {0, 0, 0.05f}, c);
+    for (int i = 0; i < 2; ++i) {
+        const V3 w = base + u * (i ? 0.3f : -0.3f) + V3{0, 0, 0.11f};
+        b.Prism(w - v * 0.02f, w + v * 0.02f, 0.11f, 0.11f, 8, kDarkGrey);
+    }
+    const V3 top = base + u * 0.3f + V3{0, 0, 1.0f} - u * 0.12f;
+    b.Prism(base + u * 0.3f + V3{0, 0, 0.1f}, top, 0.022f, 0.022f, 5, c);
+    b.Prism(top - v * 0.23f, top + v * 0.23f, 0.018f, 0.018f, 5, kDarkGrey);
+}
+
+void CafeSet(PropBuilder &b, V3 base, float yaw, Rng &r)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    static const uint8_t umb[4][3] = {{236, 232, 220}, {196, 96, 62}, {40, 100, 160}, {70, 140, 90}};
+    b.Prism(base + V3{0, 0, 0.74f}, base + V3{0, 0, 0.78f}, 0.38f, 0.38f, 10, kStone);
+    b.Prism(base, base + V3{0, 0, 0.74f}, 0.04f, 0.04f, 5, kGrey);
+    for (int i = 0; i < 4; ++i) {
+        const float a = 1.5708f * i + 0.4f;
+        const V3 p = base + (u * std::cos(a) + v * std::sin(a)) * 0.68f;
+        b.UBox(p.x, p.y, base.z, 0.4f, 0.4f, 0.45f, yaw + a, kLightGrey);
+        b.UBox(p.x + (std::cos(a)) * 0.15f * u.x, p.y, base.z + 0.45f, 0.4f, 0.05f, 0.4f, yaw + a, kLightGrey);
+    }
+    b.Prism(base, base + V3{0, 0, 2.3f}, 0.03f, 0.03f, 4, kGrey);
+    b.Cone(base + V3{0, 0, 2.15f}, 1.45f, 0.5f, 8, umb[int(r.f() * 3.99f)]);
+}
+} // namespace
+
+void TrackWorld::AddIsraeliProps()
+{
+    if (getenv("NFSU2_NO_PROPS") || m_scene)
+        return;
+    const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1200000;
+
+    // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
+    std::unordered_set<int64_t> road4, near8;
+    for (size_t i = 0; i + 5 < m_roadTris.size(); i += 6) {
+        const float cx = (m_roadTris[i] + m_roadTris[i + 2] + m_roadTris[i + 4]) / 3.0f;
+        const float cy = (m_roadTris[i + 1] + m_roadTris[i + 3] + m_roadTris[i + 5]) / 3.0f;
+        road4.insert(Key(int(std::floor(cx / 4.0f)), int(std::floor(cy / 4.0f))));
+        const int gx = int(std::floor(cx / 8.0f)), gy = int(std::floor(cy / 8.0f));
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                near8.insert(Key(gx + dx, gy + dy));
+    }
+
+    std::vector<RTri> props;
+    props.reserve(200000);
+    PropBuilder b{&props, propCap};
+    std::unordered_set<int64_t> busCells, signCells;
+    const size_t kRoofBudget = 220000, kWallBudget = 120000;
+    size_t roofTris = 0, wallTris = 0;
+    size_t flatTris = 0, flatGround = 0, flatRoad = 0, flatNear = 0, flatNoGround = 0;
+    size_t nTrees = 0, nRoofs = 0, nWalls = 0, nCurbs = 0, nBike = 0, nBus = 0, nSigns = 0, nScoot = 0, nCafe = 0;
+
+    for (auto &entry : m_cells) {
+        for (RTri &t : entry.second.render) {
+            if (props.size() >= propCap)
+                break;
+            const V3 p0{t.v[0].x, t.v[0].y, t.v[0].z}, p1{t.v[1].x, t.v[1].y, t.v[1].z}, p2{t.v[2].x, t.v[2].y, t.v[2].z};
+            const V3 nn = Cross(p1 - p0, p2 - p0);
+            const float len = Len(nn);
+            if (len < 1e-4f || t.tex == 0)
+                continue;
+            if (t.v[0].a != 255 || t.v[1].a != 255 || t.v[2].a != 255)
+                continue;
+            const float area = len * 0.5f, nz = std::fabs(nn.z) / len;
+            const V3 c = (p0 + p1 + p2) * (1.0f / 3.0f);
+            const float minz = std::min({p0.z, p1.z, p2.z}), maxz = std::max({p0.z, p1.z, p2.z});
+            const int c4x = int(std::floor(c.x / 4.0f)), c4y = int(std::floor(c.y / 4.0f));
+            Rng rng(HashXY(int(c.x * 10), int(c.y * 10), uint32_t(c.z * 7)));
+            auto inTri = [&](float shrink) {
+                float a = rng.f(), bb = rng.f();
+                if (a + bb > 1.0f)
+                    a = 1.0f - a, bb = 1.0f - bb;
+                const V3 q = p0 + (p1 - p0) * a + (p2 - p0) * bb;
+                return c + (q - c) * shrink;
+            };
+            const bool nearRoad = near8.count(Key(int(std::floor(c.x / 8.0f)), int(std::floor(c.y / 8.0f)))) != 0;
+
+            if (nz > 0.9f) {
+                if (area < 1.5f)
+                    continue;
+                float g;
+                // the surface itself (within 0.7 m below) = ground level; otherwise the ground under a roof
+                if (GroundHeight(c.x, c.y, c.z + 0.3f, g) && std::fabs(c.z - g) >= 0.7f && !GroundHeight(c.x, c.y, c.z - 2.0f, g))
+                    g = c.z - 100.0f;
+                else if (!GroundHeight(c.x, c.y, c.z + 0.3f, g))
+                    g = c.z - 100.0f;
+                const float h = c.z - g;
+                ++flatTris;
+                if (std::fabs(h) < 0.7f) { ++flatGround; if (road4.count(Key(c4x, c4y))) ++flatRoad; else if (nearRoad) ++flatNear; }
+                if (h > 5.0f && h < 140.0f && area > 8.0f && roofTris < kRoofBudget) { // rooftop dressing
+                    const size_t before = props.size();
+                    const District d = DistrictAt(c.x, c.y);
+                    const float dens = area / 85.0f * (1.0f + 0.4f * d.jer + 0.3f * d.hai);
+                    int n = int(dens + rng.f());
+                    for (int i = 0; i < n && props.size() < propCap; ++i) {
+                        const V3 q = inTri(0.7f);
+                        const float k = rng.f();
+                        if (k < 0.5f)
+                            SolarHeater(b, q, 1.5708f * int(rng.f() * 3.99f)), ++nRoofs;
+                        else if (k < 0.72f)
+                            Condenser(b, q, rng.f() * 6.28f, false, {0, 0, 1}), ++nRoofs;
+                        else if (k < 0.88f)
+                            Antenna(b, q, rng.f() * 3.14f), ++nRoofs;
+                        else
+                            WaterTank(b, q), ++nRoofs;
+                    }
+                    roofTris += props.size() - before;
+                } else if (std::fabs(h) < 0.7f && !road4.count(Key(c4x, c4y)) && nearRoad && t.tex) { // pavement / plaza
+                    const District d = DistrictAt(c.x, c.y);
+                    const V3 e1 = p1 - p0, e2 = p2 - p1, e3 = p0 - p2;
+                    V3 ed = e1;
+                    if (Len(e2) > Len(ed)) ed = e2;
+                    if (Len(e3) > Len(ed)) ed = e3;
+                    const float alt = 2.0f * area / std::max(Len(ed), 0.01f);
+                    const float yawE = std::atan2(ed.y, ed.x);
+                    // Tel Aviv: green bike lane on the narrow pavement strips
+                    if (d.tlv > 0.3f && alt < 3.4f && alt > 0.8f && (HashXY(c4x / 5, c4y / 5, 3) & 3) < 2) {
+                        for (RVertex &v : t.v)
+                            v.a = 252;
+                        ++nBike;
+                    }
+                    // trees (kind by district)
+                    if (area > 3.0f && rng.f() < area / 300.0f) {
+                        const V3 q = inTri(0.6f);
+                        const float k = rng.f();
+                        if (d.hai > 0.45f)
+                            k < 0.75f ? Pine(b, q, rng) : Cypress(b, q, rng);
+                        else if (d.jer > 0.45f)
+                            k < 0.45f ? Cypress(b, q, rng) : Olive(b, q, rng);
+                        else if (d.bsh > 0.45f)
+                            k < 0.8f ? Palm(b, q, rng) : Olive(b, q, rng);
+                        else
+                            k < 0.6f ? Palm(b, q, rng) : Olive(b, q, rng);
+                        ++nTrees;
+                    }
+                    if (area > 4.0f && rng.f() < area / 2200.0f && busCells.insert(Key(c4x / 12, c4y / 12)).second) {
+                        BusStop(b, inTri(0.5f), yawE), ++nBus;
+                    }
+                    if (rng.f() < area / 800.0f && signCells.insert(Key(c4x / 6, c4y / 6)).second) {
+                        RoadSign(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 3.99f)), ++nSigns;
+                    }
+                    if (rng.f() < area / 1500.0f * d.tlv * 1.6f) {
+                        const int n = 1 + int(rng.f() * 3.0f);
+                        for (int i = 0; i < n; ++i)
+                            Scooter(b, inTri(0.7f), yawE + (rng.f() - 0.5f) * 0.6f, rng), ++nScoot;
+                    }
+                    if (area > 6.0f && rng.f() < area / 1500.0f * d.tlv) {
+                        const V3 q = inTri(0.5f);
+                        CafeSet(b, q, yawE, rng);
+                        if (rng.f() < 0.7f)
+                            CafeSet(b, q + V3{std::cos(yawE), std::sin(yawE), 0} * 2.6f, yawE, rng);
+                        ++nCafe;
+                    }
+                }
+            } else if (nz < 0.2f) {
+                const float dz = maxz - minz;
+                V3 hz{nn.x, nn.y, 0};
+                const float hl = Len(hz);
+                if (hl < 1e-4f)
+                    continue;
+                hz = hz * (1.0f / hl);
+                // kerb face: low, long, beside a road
+                if (dz > 0.06f && dz < 0.5f && nearRoad) {
+                    const V3 e1 = p1 - p0, e2 = p2 - p1, e3 = p0 - p2;
+                    const float l1 = std::hypot(e1.x, e1.y), l2 = std::hypot(e2.x, e2.y), l3 = std::hypot(e3.x, e3.y);
+                    if (std::max({l1, l2, l3}) > 1.0f) {
+                        float g;
+                        if (GroundHeight(c.x, c.y, maxz + 0.2f, g) && minz - g < 0.45f) {
+                            for (RVertex &v : t.v)
+                                v.a = 253;
+                            ++nCurbs;
+                        }
+                    }
+                } else if (dz > 3.0f && area > 12.0f && nearRoad && wallTris < kWallBudget) { // facade air conditioners
+                    const size_t before = props.size();
+                    float g;
+                    if (!GroundHeight(c.x, c.y, minz + 1.0f, g))
+                        g = minz;
+                    const float dens = area / 34.0f;
+                    int n = int(dens + rng.f());
+                    for (int i = 0; i < n && props.size() < propCap; ++i) {
+                        const V3 q = inTri(0.8f);
+                        if (q.z - g < 2.4f || rng.f() > 0.6f)
+                            continue;
+                        const float yaw = std::atan2(hz.y, hz.x) - 1.5708f;
+                        Condenser(b, V3{q.x, q.y, q.z - 0.3f}, yaw, true, hz);
+                        ++nWalls;
+                    }
+                    wallTris += props.size() - before;
+                }
+            }
+        }
+    }
+
+    // Distribute the props into their 64 m cells.
+    for (const RTri &p : props) {
+        const float cx = (p.v[0].x + p.v[1].x + p.v[2].x) / 3.0f, cy = (p.v[0].y + p.v[1].y + p.v[2].y) / 3.0f;
+        m_cells[CellKey(int(std::floor(cx / kCellSize)), int(std::floor(cy / kCellSize)))].render.push_back(p);
+    }
+    printf("[Props] flat %zu, ground-level %zu (road %zu, near-road non-road %zu)\n", flatTris, flatGround, flatRoad, flatNear);
+    printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
+           "%zu signs, %zu scooters, %zu cafes\n",
+           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe);
+}

@@ -1343,6 +1343,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             m_start = {r.cx, r.cy, r.z + 2.0f, r.yaw, -0.12f};
         }
     }
+    AddIsraeliProps();
     return true;
 }
 

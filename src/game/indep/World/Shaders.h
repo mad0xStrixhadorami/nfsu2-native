@@ -72,7 +72,11 @@ void main() {
         vec3 Nt = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
         float lumT = dot(c.rgb, vec3(0.299, 0.587, 0.114));
         float satT = (max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))) / max(max(c.r, max(c.g, c.b)), 0.01);
-        float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a;
+        float fl = vColor.a * 255.0;                       // triangle flags set by IsraelProps: 254 prop, 253 kerb face, 252 bike-lane pavement
+        float isProp = step(253.5, fl) * step(fl, 254.5);
+        float isKerb = step(252.5, fl) * step(fl, 253.5);
+        float isBike = step(251.5, fl) * step(fl, 252.5);
+        float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a * (1.0 - isProp);
         float flatUp = smoothstep(0.85, 0.97, Nt.z) * t.a;
         // facade courses along the wall (u runs horizontally along it)
         float along = dot(vWorld.xy, normalize(vec2(-Nt.y, Nt.x) + 1e-5));
@@ -94,13 +98,27 @@ void main() {
         vec3 skin = stone * wd.y + plaster * wd.x + concrete * wd.w + stucco * wd.z;
         c.rgb = mix(c.rgb, skin * vColor.rgb * 1.15, wall * keep * uTheme * 0.92);
         // gray interlocking paving stones on bright flat ground (pavements, plazas), 0.22 x 0.11 m pavers in herringbone-ish rows
-        float pave = flatUp * smoothstep(0.42, 0.55, lumT) * (1.0 - smoothstep(0.2, 0.4, satT));
+        float pave = flatUp * (1.0 - isProp) * smoothstep(0.42, 0.55, lumT) * (1.0 - smoothstep(0.2, 0.4, satT));
         vec2 pp = vWorld.xy / vec2(0.22, 0.11);
         float prow = floor(pp.y);
         vec2 pf = fract(vec2(pp.x + 0.5 * mod(prow, 2.0), pp.y));
         float joint = 1.0 - smoothstep(0.0, 0.08, min(min(pf.x, 1.0 - pf.x), min(pf.y, 1.0 - pf.y)) * 2.0);
         float tile = 0.92 + 0.12 * h12(vec2(floor(pp.x + 0.5 * mod(prow, 2.0)), prow));
         c.rgb = mix(c.rgb, c.rgb * tile * (1.0 - 0.28 * joint), pave * uTheme * (1.0 - smoothstep(25.0, 60.0, vDist)));
+        // painted kerbs: 1 m stripes, red-white (no parking) or blue-white (paid parking) by 48 m stretch of street
+        {
+            float seg = floor(along / 1.0);
+            float stripe = mod(seg, 2.0);
+            float blueZone = step(0.5, h12(floor(vWorld.xy / 48.0) + 3.0));
+            vec3 paint = stripe < 0.5 ? vec3(0.95, 0.95, 0.92) : mix(vec3(0.82, 0.08, 0.08), vec3(0.08, 0.28, 0.80), blueZone);
+            c.rgb = mix(c.rgb, paint * (0.75 + 0.45 * vColor.r), isKerb * 0.95);
+        }
+        // green bike lanes on the Tel Aviv pavement strips, with a white dashed edge
+        {
+            float dash = step(0.5, fract(dot(vWorld.xy, vec2(0.7071)) / 2.0));
+            vec3 lane = vec3(0.16, 0.55, 0.30) * (0.6 + 0.7 * lumT);
+            c.rgb = mix(c.rgb, lane, isBike * 0.85);
+        }
         // sun-bleached desert light in Be'er Sheva, cooler marine air in Tel Aviv, green haze on the Haifa slopes
         float lT = dot(c.rgb, vec3(0.299, 0.587, 0.114));
         c.rgb = mix(c.rgb, vec3(lT), 0.18 * wd.w * uTheme);
