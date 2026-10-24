@@ -186,7 +186,7 @@ struct PropBuilder {
 };
 
 namespace {
-constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u, kShutterTex = 0x5e500030u, kAwningTex = 0x5e500040u; // generated sign atlases (512 x 512)
+constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u, kShutterTex = 0x5e500030u, kAwningTex = 0x5e500040u, kPosterTex = 0x5e500050u; // generated sign atlases (512 x 512)
 bool g_signs = false;
 const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3] = {120, 98, 74}, kGrey[3] = {170, 170, 175},
               kLightGrey[3] = {205, 205, 205}, kDarkGrey[3] = {50, 52, 56}, kWhite[3] = {235, 235, 230},
@@ -247,6 +247,12 @@ void SolarHeater(PropBuilder &b, V3 o, float yaw) // dud shemesh: tilted panel w
     b.Box(o + u * 0.47f, u * 0.08f, v * 0.9f, {0, 0, 0.3f}, kGrey);
     const V3 tankC = pc + panelUp + V3{0, 0, 0.32f} + v * 0.1f;
     b.Prism(tankC - u * 0.62f, tankC + u * 0.62f, 0.3f, 0.3f, 8, kTank);
+    if (std::fmod(std::fabs(o.x * 7.31f + o.y * 3.17f), 1.0f) < 0.4f) { // a black plastic water tank next to it
+        static const uint8_t black[3] = {26, 28, 32};
+        const V3 tb = o + u * 1.6f;
+        b.Prism(tb, tb + V3{0, 0, 1.05f}, 0.46f, 0.42f, 10, black);
+        b.Prism(tb + V3{0, 0, 1.05f}, tb + V3{0, 0, 1.12f}, 0.3f, 0.2f, 8, black);
+    }
 }
 
 void Condenser(PropBuilder &b, V3 base, float yaw, bool onWall, V3 wallN)
@@ -256,6 +262,14 @@ void Condenser(PropBuilder &b, V3 base, float yaw, bool onWall, V3 wallN)
     // fan grille on the front face
     const V3 front = (onWall ? Norm(wallN) : v);
     b.Disc(base + V3{0, 0, 0.32f} + v * 0.175f + (onWall ? V3{0, 0, 0} : V3{0, 0, 0}), front, 0.2f, 8, kDarkGrey);
+    if (onWall) { // the white drain pipe running down the wall, and a damp streak under its end
+        const V3 pipeTop = base + u * 0.36f - Norm(wallN) * 0.0f + V3{0, 0, 0.05f};
+        b.Prism(pipeTop, pipeTop + V3{0, 0, -1.9f}, 0.025f, 0.025f, 4, kLightGrey);
+        b.Prism(pipeTop + V3{0, 0, -1.9f}, pipeTop + V3{0, 0, -1.9f} + Norm(wallN) * 0.25f, 0.025f, 0.025f, 4, kLightGrey);
+        static const uint8_t damp[3] = {70, 74, 70};
+        b.Quad(pipeTop + V3{0, 0, -1.9f} - u * 0.06f + Norm(wallN) * 0.04f, pipeTop + V3{0, 0, -1.9f} + u * 0.06f + Norm(wallN) * 0.04f,
+               pipeTop + V3{0, 0, -2.9f} + u * 0.14f + Norm(wallN) * 0.04f, pipeTop + V3{0, 0, -2.9f} - u * 0.14f + Norm(wallN) * 0.04f, damp);
+    }
 }
 
 void Antenna(PropBuilder &b, V3 base, float yaw)
@@ -363,7 +377,7 @@ void ShopSign(PropBuilder &b, V3 c, V3 along, V3 out, int variant, float width)
 }
 
 // A concrete balcony with a solid parapet, jutting out of the wall along `out`.
-void Balcony(PropBuilder &b, V3 c, V3 along, V3 out, float width, int shade)
+void Balcony(PropBuilder &b, V3 c, V3 along, V3 out, float width, int shade, Rng &rng)
 {
     static const uint8_t cols[3][3] = {{236, 232, 222}, {214, 200, 170}, {190, 190, 192}};
     const uint8_t *col = cols[shade % 3];
@@ -374,16 +388,52 @@ void Balcony(PropBuilder &b, V3 c, V3 along, V3 out, float width, int shade)
         b.Box(c + along * (width * 0.5f * s) - out * 0.1f + V3{0, 0, 0.16f} - (s > 0 ? along * 0.08f : V3{0, 0, 0}), along * 0.08f, out * (depth + 0.1f), {0, 0, 0.95f}, col);
     if (shade % 3 == 1) // some have a sun shade stretched over them
         b.Box(c + V3{0, 0, 2.15f} - along * (width * 0.5f), along * width, out * (depth + 0.3f), {0, 0, 0.04f}, kStone);
+    else if (rng.f() < 0.28f) { // a small pergola: posts, beams and slats
+        static const uint8_t wood[3] = {120, 90, 62};
+        for (int sx = -1; sx <= 1; sx += 2) {
+            const V3 post = c + along * (width * 0.46f * sx) + out * (depth - 0.1f);
+            b.Prism(post + V3{0, 0, 0.16f}, post + V3{0, 0, 2.2f}, 0.04f, 0.04f, 4, wood);
+        }
+        for (int k = 0; k < 6; ++k)
+            b.Box(c + V3{0, 0, 2.2f} - along * (width * 0.5f) + out * (0.1f + k * (depth - 0.1f) / 5.0f), along * width, out * 0.06f, {0, 0, 0.05f}, wood);
+    }
+    if (rng.f() < 0.5f) { // laundry on a line strung across the balcony
+        const V3 l0 = c + out * (depth - 0.25f) - along * (width * 0.44f) + V3{0, 0, 1.75f}, l1 = c + out * (depth - 0.25f) + along * (width * 0.44f) + V3{0, 0, 1.75f};
+        b.Prism(l0, l1, 0.008f, 0.008f, 3, kGrey);
+        static const uint8_t cloth[6][3] = {{235, 235, 235}, {200, 60, 60}, {60, 110, 190}, {240, 200, 70}, {90, 160, 100}, {230, 150, 180}};
+        const int n = 3 + int(rng.f() * 4.0f);
+        for (int k = 0; k < n; ++k) {
+            const float t = (k + 0.5f) / n;
+            const V3 p = l0 + (l1 - l0) * t;
+            const float w = 0.28f + 0.2f * rng.f(), h = 0.45f + 0.3f * rng.f();
+            const uint8_t *col = cloth[int(rng.f() * 5.99f)];
+            b.Quad(p - along * (w * 0.5f), p + along * (w * 0.5f), p + along * (w * 0.5f) + V3{0, 0, -h}, p - along * (w * 0.5f) + V3{0, 0, -h}, col);
+        }
+    }
+    if (rng.f() < 0.3f) { // an air conditioner standing on the balcony slab
+        const V3 ac = c + along * (width * 0.34f) + out * 0.55f + V3{0, 0, 0.16f};
+        Condenser(b, ac, std::atan2(along.y, along.x), false, out);
+    }
 }
 
-// A roller shutter (closed) over a ground-floor opening: ribbed slats and its housing.
-void Shutter(PropBuilder &b, V3 c, V3 along, V3 out, float width, float height, int variant)
+// A roller shutter over an opening: closed, half open or fully rolled up, and sometimes hanging crooked.
+void Shutter(PropBuilder &b, V3 c, V3 along, V3 out, float width, float height, int variant, Rng &rng)
 {
     static const uint8_t housing[3] = {120, 122, 126};
     b.Box(c + V3{0, 0, height} - along * (width * 0.5f) - out * 0.02f, along * width, out * 0.34f, {0, 0, 0.3f}, housing);
+    const float mode = rng.f();
+    float cover = mode < 0.5f ? 1.0f : mode < 0.78f ? 0.45f + 0.3f * rng.f() : 0.0f; // fraction of the opening still covered
+    if (cover <= 0.0f)
+        return;
+    const float tilt = rng.f() < 0.28f ? (rng.f() - 0.5f) * 0.7f : 0.0f; // crooked: one side hangs lower
     const V3 a = c - along * (width * 0.5f) + out * 0.09f, bb = c + along * (width * 0.5f) + out * 0.09f;
-    b.TexQuad(a, bb, bb + V3{0, 0, height}, a + V3{0, 0, height}, kShutterTex + (variant & 3), 0, 1, 0, 1);
-    b.TexQuad(bb, a, a + V3{0, 0, height}, bb + V3{0, 0, height}, kShutterTex + (variant & 3), 0, 1, 0, 1);
+    const float top = height, bot = height * (1.0f - cover);
+    const V3 a0 = a + V3{0, 0, bot + std::min(0.0f, tilt)}, b0 = bb + V3{0, 0, bot + std::max(0.0f, -tilt) * 0.0f + std::max(0.0f, tilt) * 0.0f};
+    (void)b0;
+    const V3 aBot = a + V3{0, 0, std::max(0.0f, bot - (tilt > 0 ? tilt : 0.0f))}, bBot = bb + V3{0, 0, std::max(0.0f, bot - (tilt < 0 ? -tilt : 0.0f))};
+    (void)a0;
+    b.TexQuad(aBot, bBot, bb + V3{0, 0, top}, a + V3{0, 0, top}, kShutterTex + (variant & 3), 0, 1, 0, cover);
+    b.TexQuad(bBot, aBot, a + V3{0, 0, top}, bb + V3{0, 0, top}, kShutterTex + (variant & 3), 0, 1, 0, cover);
 }
 
 // A striped sun awning sloping out from the wall over a window or shop front.
@@ -394,6 +444,16 @@ void Awning(PropBuilder &b, V3 c, V3 along, V3 out, float width, int variant)
     b.TexQuad(b0, b1, a1, a0, kAwningTex + (variant & 3), 0, 1, 0, 1);
     b.TexQuad(b1, b0, a0, a1, kAwningTex + (variant & 3), 0, 1, 0, 1);
     b.TexQuad(b0 - V3{0, 0, 0.25f}, b1 - V3{0, 0, 0.25f}, b1, b0, kAwningTex + (variant & 3), 0, 1, 0.85f, 1); // the valance
+}
+
+// The Moka & Lattee street poster, double-sided on a wall (w x h metres).
+void PosterOnWall(PropBuilder &b, V3 c, V3 along, V3 out, float w, float h)
+{
+    for (int side = 0; side < 2; ++side) {
+        const V3 n = out * (side ? -0.07f : 0.07f), a = along * (side ? -1.0f : 1.0f);
+        b.TexQuad(c + n - a * (w * 0.5f) - V3{0, 0, h * 0.5f}, c + n + a * (w * 0.5f) - V3{0, 0, h * 0.5f}, c + n + a * (w * 0.5f) + V3{0, 0, h * 0.5f},
+                  c + n - a * (w * 0.5f) + V3{0, 0, h * 0.5f}, kPosterTex, 0, 1, 0, 1);
+    }
 }
 
 void Scooter(PropBuilder &b, V3 base, float yaw, Rng &r)
@@ -427,6 +487,255 @@ void CafeSet(PropBuilder &b, V3 base, float yaw, Rng &r)
     b.Prism(base, base + V3{0, 0, 2.3f}, 0.03f, 0.03f, 4, kGrey);
     b.Cone(base + V3{0, 0, 2.15f}, 1.45f, 0.5f, 8, umb[int(r.f() * 3.99f)]);
 }
+
+// ---- street life (ISSUES #280) ----
+// A green municipal dumpster ("tzfardea") on four wheels with a hinged lid, and the orange / blue recycling bins beside it.
+void Dumpster(PropBuilder &b, V3 base, float yaw)
+{
+    static const uint8_t green[3] = {28, 112, 52}, lid[3] = {20, 82, 40}, wheel[3] = {30, 30, 32};
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.UBox(base.x, base.y, base.z + 0.22f, 1.9f, 1.1f, 0.95f, yaw, green);
+    b.Box(base - u * 0.97f - v * 0.6f + V3{0, 0, 1.17f}, u * 1.94f, v * 1.2f, {0, 0, 0.07f}, lid);
+    b.Box(base - u * 0.97f + v * 0.58f + V3{0, 0, 1.0f}, u * 1.94f, v * 0.05f, {0, 0, 0.2f}, lid); // the lid's front lip
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sy = -1; sy <= 1; sy += 2) {
+            const V3 w = base + u * (0.75f * sx) + v * (0.42f * sy) + V3{0, 0, 0.1f};
+            b.Prism(w - v * 0.03f, w + v * 0.03f, 0.1f, 0.1f, 6, wheel);
+        }
+    b.Solid(base.x + u.x * 0.5f, base.y + u.y * 0.5f, 0.75f, base.z, 1.4f);
+    b.Solid(base.x - u.x * 0.5f, base.y - u.y * 0.5f, 0.75f, base.z, 1.4f);
+}
+void RecycleBin(PropBuilder &b, V3 base, float yaw, bool orange)
+{
+    static const uint8_t body[3] = {68, 72, 78}, org[3] = {238, 118, 22}, blue[3] = {30, 90, 190};
+    b.UBox(base.x, base.y, base.z + 0.08f, 0.78f, 0.78f, 0.95f, yaw, body);
+    b.UBox(base.x, base.y, base.z + 1.03f, 0.84f, 0.84f, 0.1f, yaw, orange ? org : blue);
+    b.Solid(base.x, base.y, 0.5f, base.z, 1.1f);
+}
+
+// A cat: sitting or lying, in one of a few coats.
+void StreetCat(PropBuilder &b, V3 base, float yaw, const uint8_t fur[3], bool lying)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    static const uint8_t pink[3] = {220, 140, 150};
+    if (lying) {
+        b.Ellipsoid(base + V3{0, 0, 0.1f}, 0.24f, 0.1f, 6, fur);
+        b.Ellipsoid(base + u * 0.26f + V3{0, 0, 0.12f}, 0.1f, 0.09f, 6, fur);
+        b.Prism(base - u * 0.2f + V3{0, 0, 0.05f}, base - u * 0.42f + v * 0.18f + V3{0, 0, 0.04f}, 0.03f, 0.02f, 4, fur);
+        for (int k = -1; k <= 1; k += 2)
+            b.Cone(base + u * 0.3f + v * (0.045f * k) + V3{0, 0, 0.18f}, 0.03f, 0.07f, 3, pink);
+    } else {
+        b.Ellipsoid(base + V3{0, 0, 0.17f}, 0.17f, 0.17f, 6, fur);
+        b.Ellipsoid(base + u * 0.1f + V3{0, 0, 0.36f}, 0.09f, 0.09f, 6, fur);
+        for (int k = -1; k <= 1; k += 2)
+            b.Cone(base + u * 0.1f + v * (0.055f * k) + V3{0, 0, 0.42f}, 0.035f, 0.09f, 3, fur);
+        b.Prism(base - u * 0.14f + V3{0, 0, 0.05f}, base - u * 0.3f + v * 0.2f + V3{0, 0, 0.25f}, 0.03f, 0.02f, 4, fur); // the tail curling up
+    }
+}
+const uint8_t *CatColour(int i)
+{
+    static const uint8_t cols[5][3] = {{214, 132, 52}, {28, 28, 32}, {132, 132, 138}, {232, 228, 220}, {96, 78, 60}};
+    return cols[i % 5];
+}
+
+// The easter egg: Moka (dark brown) and Lattee (cream) side by side with a little coffee cup between them.
+void MokaLattee(PropBuilder &b, V3 base, float yaw)
+{
+    static const uint8_t moka[3] = {74, 44, 28}, lattee[3] = {238, 216, 176}, cup[3] = {250, 250, 250}, coffee[3] = {110, 66, 36};
+    const V3 v{-std::sin(yaw), std::cos(yaw), 0};
+    StreetCat(b, base - v * 0.35f, yaw, moka, false);
+    StreetCat(b, base + v * 0.35f, yaw, lattee, false);
+    b.Prism(base + V3{0, 0, 0.0f}, base + V3{0, 0, 0.1f}, 0.07f, 0.06f, 8, cup);
+    b.Prism(base + V3{0, 0, 0.1f}, base + V3{0, 0, 0.105f}, 0.055f, 0.055f, 8, coffee);
+}
+
+void DumpsterGroup(PropBuilder &b, V3 q, float yaw, Rng &rng, bool easter, size_t &cats)
+{
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    Dumpster(b, q, yaw);
+    RecycleBin(b, q + u * 1.7f + v * 0.2f, yaw, true);
+    RecycleBin(b, q + u * 2.6f + v * 0.2f, yaw, false);
+    if (rng.f() < 0.4f)
+        Dumpster(b, q - u * 2.4f, yaw + 0.1f * (rng.f() - 0.5f));
+    if (easter) {
+        MokaLattee(b, q + v * 1.5f + u * 0.4f, yaw + 1.5708f), cats += 2;
+        return;
+    }
+    const int n = int(rng.f() * 2.6f); // street cats around the bins
+    for (int i = 0; i < n; ++i) {
+        StreetCat(b, q + v * (1.3f + rng.f()) + u * (rng.f() * 3.0f - 1.0f), rng.f() * 6.28f, CatColour(int(rng.f() * 4.99f)), rng.f() < 0.4f), ++cats;
+    }
+}
+
+// A public EV charging post with its status light and cable.
+void Charger(PropBuilder &b, V3 base, float yaw)
+{
+    static const uint8_t body[3] = {232, 236, 240}, led[3] = {60, 255, 150}, dark[3] = {30, 34, 40}, cable[3] = {20, 20, 22};
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.UBox(base.x, base.y, base.z, 0.42f, 0.26f, 1.5f, yaw, body);
+    b.Box(base - u * 0.14f + v * 0.135f + V3{0, 0, 1.0f}, u * 0.28f, v * 0.012f, {0, 0, 0.32f}, dark); // the screen
+    b.Box(base - u * 0.17f + v * 0.135f + V3{0, 0, 1.38f}, u * 0.34f, v * 0.012f, {0, 0, 0.05f}, led);  // the glowing strip
+    b.Prism(base + v * 0.14f + V3{0, 0, 0.75f}, base + v * 0.5f + u * 0.2f + V3{0, 0, 0.3f}, 0.012f, 0.012f, 4, cable);
+    b.Solid(base.x, base.y, 0.3f, base.z, 1.5f);
+}
+
+// A compact electric SUV (BYD Atto 3-like proportions: 4.46 x 1.88 x 1.62 m), parked and plugged in.
+void ElectricCar(PropBuilder &b, V3 base, float yaw, int colour)
+{
+    static const uint8_t cols[5][3] = {{240, 240, 242}, {60, 64, 72}, {40, 90, 170}, {190, 40, 44}, {150, 156, 162}};
+    static const uint8_t glass[3] = {30, 44, 60}, tyre[3] = {24, 24, 26}, light[3] = {255, 250, 220}, tail[3] = {200, 30, 36}, rim[3] = {170, 172, 176};
+    const uint8_t *c = cols[colour % 5];
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.UBox(base.x, base.y, base.z + 0.32f, 4.46f, 1.86f, 0.78f, yaw, c);                             // lower body
+    b.UBox(base.x - u.x * 0.15f, base.y - u.y * 0.15f, base.z + 1.08f, 2.7f, 1.62f, 0.52f, yaw, c);   // cabin
+    for (int sd = -1; sd <= 1; sd += 2) { // glass: side bands, and the screens
+        const V3 g0 = base - u * 1.25f + v * (0.82f * sd) + V3{0, 0, 1.14f}, g1 = base + u * 1.05f + v * (0.82f * sd) + V3{0, 0, 1.14f};
+        b.Quad(g0, g1, g1 + V3{0, 0, 0.4f}, g0 + V3{0, 0, 0.4f}, glass);
+    }
+    b.Quad(base + u * 1.18f - v * 0.78f + V3{0, 0, 1.12f}, base + u * 1.18f + v * 0.78f + V3{0, 0, 1.12f}, base + u * 1.18f + v * 0.78f + V3{0, 0, 1.56f}, base + u * 1.18f - v * 0.78f + V3{0, 0, 1.56f}, glass);
+    b.Quad(base - u * 1.52f - v * 0.78f + V3{0, 0, 1.12f}, base - u * 1.52f + v * 0.78f + V3{0, 0, 1.12f}, base - u * 1.52f + v * 0.78f + V3{0, 0, 1.52f}, base - u * 1.52f - v * 0.78f + V3{0, 0, 1.52f}, glass);
+    for (int sd = -1; sd <= 1; sd += 2) { // lamps
+        b.Box(base + u * 2.225f + v * (0.55f * sd - 0.18f) + V3{0, 0, 0.78f}, {0.02f, 0, 0}, v * 0.36f, {0, 0, 0.1f}, light);
+        b.Box(base - u * 2.235f + v * (0.55f * sd - 0.18f) + V3{0, 0, 0.86f}, {0.02f, 0, 0}, v * 0.36f, {0, 0, 0.1f}, tail);
+    }
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const V3 w = base + u * (1.35f * sx) + v * (0.9f * sd) + V3{0, 0, 0.36f};
+            b.Prism(w - v * 0.13f, w + v * 0.13f, 0.36f, 0.36f, 10, tyre);
+            b.Prism(w + v * (0.13f * sd) - v * 0.001f, w + v * (0.135f * sd), 0.22f, 0.22f, 8, rim);
+        }
+    b.Solid(base.x + u.x * 1.4f, base.y + u.y * 1.4f, 1.05f, base.z, 1.5f);
+    b.Solid(base.x, base.y, 1.05f, base.z, 1.5f);
+    b.Solid(base.x - u.x * 1.4f, base.y - u.y * 1.4f, 1.05f, base.z, 1.5f);
+}
+
+// A moped or scooter standing on its kickstand; `chainTo` (a pole) gets a chain to the wheel.
+void Moped(PropBuilder &b, V3 base, float yaw, Rng &rng, const V3 *chainTo)
+{
+    static const uint8_t cols[5][3] = {{240, 240, 240}, {200, 40, 40}, {30, 30, 34}, {40, 100, 190}, {240, 190, 40}};
+    static const uint8_t tyre[3] = {22, 22, 24}, seat[3] = {26, 26, 28}, chrome[3] = {200, 202, 206}, chain[3] = {90, 92, 96};
+    const uint8_t *c = cols[int(rng.f() * 4.99f)];
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.UBox(base.x, base.y, base.z + 0.28f, 1.1f, 0.34f, 0.3f, yaw, c);                                                       // the floor and body
+    b.UBox(base.x - u.x * 0.35f, base.y - u.y * 0.35f, base.z + 0.55f, 0.55f, 0.32f, 0.22f, yaw, c);                           // rear body
+    b.UBox(base.x - u.x * 0.12f, base.y - u.y * 0.12f, base.z + 0.76f, 0.55f, 0.3f, 0.09f, yaw, seat);                         // seat
+    b.UBox(base.x + u.x * 0.5f, base.y + u.y * 0.5f, base.z + 0.4f, 0.14f, 0.34f, 0.65f, yaw, c);                              // the front shield
+    b.Prism(base + u * 0.52f + V3{0, 0, 1.0f} - v * 0.3f, base + u * 0.52f + V3{0, 0, 1.0f} + v * 0.3f, 0.015f, 0.015f, 4, chrome); // the handlebar
+    for (int sx = -1; sx <= 1; sx += 2) {
+        const V3 w = base + u * (0.55f * sx) + V3{0, 0, 0.23f};
+        b.Prism(w - v * 0.05f, w + v * 0.05f, 0.23f, 0.23f, 8, tyre);
+    }
+    if (chainTo) { // chained to the pole: a dark chain loop from the pole to the front wheel
+        const V3 w = base + u * 0.55f + V3{0, 0, 0.25f};
+        const V3 pole = *chainTo + V3{0, 0, 0.7f};
+        b.Prism(pole, w, 0.012f, 0.012f, 3, chain);
+        b.Prism(pole + V3{0, 0, -0.05f}, w + V3{0, 0, 0.05f}, 0.012f, 0.012f, 3, chain);
+    }
+    b.Solid(base.x, base.y, 0.5f, base.z, 1.0f);
+}
+
+// A corner convenience store ("pitzutzia") with a lit front, an ice-cream freezer and plastic chairs outside.
+void Kiosk(PropBuilder &b, V3 base, float yaw, Rng &rng, int signVariant)
+{
+    static const uint8_t cols[4][3] = {{236, 232, 220}, {210, 190, 150}, {170, 200, 190}, {222, 200, 190}};
+    static const uint8_t bright[3] = {255, 252, 232}, tube[3] = {255, 255, 255}, counter[3] = {70, 74, 80}, white[3] = {240, 240, 240}, blue[3] = {40, 120, 220};
+    static const uint8_t roof[3] = {130, 130, 128}, stack[3] = {220, 220, 215}, chair[3] = {245, 245, 245}, drink[3] = {200, 60, 60};
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    b.UBox(base.x, base.y, base.z, 4.2f, 3.0f, 2.9f, yaw, cols[int(rng.f() * 3.99f)]);
+    b.UBox(base.x, base.y, base.z + 2.9f, 4.7f, 3.5f, 0.18f, yaw, roof);                       // the flat roof slab
+    b.Box(base - u * 1.7f + v * 1.505f + V3{0, 0, 0.95f}, u * 3.4f, v * 0.02f, {0, 0, 1.55f}, bright);   // the lit shop window
+    b.Box(base - u * 1.7f + v * 1.45f + V3{0, 0, 2.55f}, u * 3.4f, v * 0.06f, {0, 0, 0.07f}, tube);      // fluorescent tubes
+    b.Box(base - u * 1.9f + v * 1.45f + V3{0, 0, 0.88f}, u * 3.8f, v * 0.5f, {0, 0, 0.07f}, counter);    // the serving ledge
+    for (int k = 0; k < 6; ++k) // shelves of goods seen through the window
+        b.Box(base - u * 1.5f + u * (0.55f * k) + v * 1.48f + V3{0, 0, 1.3f + 0.35f * (k % 3)}, u * 0.4f, v * 0.01f, {0, 0, 0.22f}, k % 2 ? drink : stack);
+    ShopSign(b, base + v * 1.52f + V3{0, 0, 2.6f}, u, v, signVariant, 2.6f);
+    // the ice-cream freezer: a white chest with a blue lid
+    const V3 fz = base + u * 2.9f + v * 1.1f;
+    b.UBox(fz.x, fz.y, fz.z, 1.5f, 0.75f, 0.9f, yaw, white);
+    b.UBox(fz.x, fz.y, fz.z + 0.9f, 1.55f, 0.8f, 0.07f, yaw, blue);
+    b.Solid(fz.x, fz.y, 0.85f, fz.z, 1.0f);
+    // plastic chairs and a table
+    const V3 tb = base - u * 2.7f + v * 1.9f;
+    b.Prism(tb + V3{0, 0, 0.72f}, tb + V3{0, 0, 0.76f}, 0.4f, 0.4f, 10, chair);
+    b.Prism(tb, tb + V3{0, 0, 0.72f}, 0.04f, 0.04f, 5, chair);
+    for (int k = 0; k < 3; ++k) {
+        const float a = 2.2f * k + 0.4f;
+        const V3 cp = tb + (u * std::cos(a) + v * std::sin(a)) * 0.75f;
+        b.UBox(cp.x, cp.y, cp.z + 0.35f, 0.42f, 0.42f, 0.05f, yaw + a, chair);
+        b.UBox(cp.x, cp.y, cp.z, 0.04f, 0.04f, 0.36f, yaw + a, chair);
+        b.UBox(cp.x + std::cos(yaw + a) * 0.2f, cp.y + std::sin(yaw + a) * 0.2f, cp.z + 0.4f, 0.04f, 0.42f, 0.42f, yaw + a, chair);
+    }
+    b.Solid(base.x - u.x * 1.2f, base.y - u.y * 1.2f, 1.9f, base.z, 2.9f);
+    b.Solid(base.x + u.x * 1.2f, base.y + u.y * 1.2f, 1.9f, base.z, 2.9f);
+}
+
+// A wooden utility pole with its cross-arm and insulators.
+void UtilityPole(PropBuilder &b, V3 base, float h)
+{
+    static const uint8_t wood[3] = {110, 84, 60}, ins[3] = {70, 110, 90};
+    b.Prism(base, base + V3{0, 0, h}, 0.2f, 0.12f, 6, wood);
+    b.Solid(base.x, base.y, 0.3f, base.z, h);
+    b.Box(base + V3{-1.0f, -0.06f, h - 0.5f}, {2.0f, 0, 0}, {0, 0.12f, 0}, {0, 0, 0.12f}, wood);
+    for (int k = -1; k <= 1; ++k)
+        b.Prism(base + V3{k * 0.8f, 0, h - 0.38f}, base + V3{k * 0.8f, 0, h - 0.2f}, 0.035f, 0.03f, 5, ins);
+}
+
+// A sagging cable between two points (a chain of thin prisms).
+void Cable(PropBuilder &b, V3 a, V3 c, float sag, float r, const uint8_t col[3])
+{
+    const int N = 7;
+    V3 prev = a;
+    for (int i = 1; i <= N; ++i) {
+        const float t = float(i) / N;
+        V3 p = a + (c - a) * t;
+        p.z -= sag * 4.0f * t * (1.0f - t);
+        b.Prism(prev, p, r, r, 3, col);
+        prev = p;
+    }
+}
+
+// A traffic island with a red-and-white kerb and either dry Mediterranean planting or a sculpture.
+void IslandRound(PropBuilder &b, V3 c, Rng &rng)
+{
+    static const uint8_t red[3] = {200, 36, 36}, white[3] = {240, 240, 236}, soil[3] = {150, 126, 84}, dry[3] = {170, 150, 86}, sage[3] = {112, 128, 90};
+    static const uint8_t steel[3] = {176, 180, 188}, rust[3] = {150, 78, 42}, stone[3] = {206, 192, 160};
+    const float R = 2.9f;
+    const int N = 18;
+    for (int i = 0; i < N; ++i) {
+        const float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
+        const V3 p0{c.x + R * std::cos(a0), c.y + R * std::sin(a0), c.z}, p1{c.x + R * std::cos(a1), c.y + R * std::sin(a1), c.z};
+        b.Quad(p0, p1, p1 + V3{0, 0, 0.32f}, p0 + V3{0, 0, 0.32f}, i % 2 ? red : white);
+    }
+    b.Disc(c + V3{0, 0, 0.32f}, {0, 0, 1}, R, N, soil);
+    const int kind = int(rng.f() * 3.99f);
+    if (kind == 0) { // dry planting: agave-like spikes, dry grass tufts, a stone
+        for (int i = 0; i < 9; ++i) {
+            const float a = rng.f() * 6.28f, d = rng.f() * (R - 0.6f);
+            const V3 q = c + V3{std::cos(a) * d, std::sin(a) * d, 0.32f};
+            if (i % 3 == 0)
+                for (int k = 0; k < 6; ++k)
+                    b.Prism(q, q + V3{std::cos(k * 1.05f) * 0.5f, std::sin(k * 1.05f) * 0.5f, 0.8f}, 0.05f, 0.01f, 3, sage);
+            else
+                b.Cone(q, 0.45f, 0.7f, 6, dry);
+        }
+        b.Ellipsoid(c + V3{0.8f, -0.6f, 0.7f}, 0.7f, 0.4f, 6, stone);
+    } else if (kind == 1) { // an abstract steel arc sculpture
+        for (int k = 0; k < 10; ++k) {
+            const float t0 = 3.14159f * k / 10.0f, t1 = 3.14159f * (k + 1) / 10.0f;
+            b.Prism(c + V3{std::cos(t0) * 1.7f, 0, 0.32f + std::sin(t0) * 3.4f}, c + V3{std::cos(t1) * 1.7f, 0, 0.32f + std::sin(t1) * 3.4f}, 0.12f, 0.12f, 5, steel);
+        }
+        b.Ellipsoid(c + V3{0, 0, 3.0f}, 0.45f, 0.45f, 8, rust);
+    } else if (kind == 2) { // an olive tree among stones
+        b.Prism(c + V3{0, 0, 0.32f}, c + V3{0.1f, 0, 2.2f}, 0.28f, 0.16f, 6, kTrunk);
+        b.Ellipsoid(c + V3{0.1f, 0, 3.0f}, 1.8f, 1.1f, 8, sage);
+        b.Ellipsoid(c + V3{1.0f, 0.6f, 0.7f}, 0.6f, 0.35f, 6, stone);
+    } else { // stacked limestone blocks, a monument
+        b.UBox(c.x, c.y, c.z + 0.32f, 2.4f, 2.4f, 0.6f, 0.0f, stone);
+        b.UBox(c.x, c.y, c.z + 0.92f, 1.7f, 1.7f, 0.9f, 0.4f, stone);
+        b.UBox(c.x, c.y, c.z + 1.82f, 1.0f, 1.0f, 1.6f, 0.9f, stone);
+    }
+}
+
 } // namespace
 
 
@@ -711,6 +1020,19 @@ void TrackWorld::AddIsraeliProps()
         std::vector<uint32_t> flag;
         if (SignGen::Make(2, 0, 512, 512, flag))
             m_skinPixels[kFlagTex] = std::move(flag);
+        {
+            std::vector<uint32_t> poster;
+            if (SignGen::Make(5, 0, 512, 512, poster)) {
+                if (const char *dump = getenv("NFSU2_DUMP_POSTER")) // dev aid: write the easter-egg poster as a PPM
+                    if (FILE *f = fopen(dump, "wb")) {
+                        fprintf(f, "P6\n512 512\n255\n");
+                        for (uint32_t px : poster)
+                            fputc(px & 255, f), fputc((px >> 8) & 255, f), fputc((px >> 16) & 255, f);
+                        fclose(f);
+                    }
+                m_skinPixels[kPosterTex] = std::move(poster);
+            }
+        }
         for (int v = 0; v < 4; ++v) {
             std::vector<uint32_t> t;
             if (SignGen::Make(3, v, 512, 512, t))
@@ -719,7 +1041,7 @@ void TrackWorld::AddIsraeliProps()
                 m_skinPixels[kAwningTex + v] = std::move(t);
         }
     }
-    const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 1600000;
+    const size_t propCap = getenv("NFSU2_PROP_CAP") ? size_t(atol(getenv("NFSU2_PROP_CAP"))) : 2600000;
 
     // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
     std::unordered_set<int64_t> road4;
@@ -743,9 +1065,16 @@ void TrackWorld::AddIsraeliProps()
     std::vector<PropSolid> solids;
     PropBuilder b{&props, propCap, &solids};
     std::unordered_set<int64_t> busCells, signCells;
-    const size_t kRoofBudget = 220000, kWallBudget = 520000;
+    const size_t kRoofBudget = 360000, kWallBudget = 520000;
     size_t roofTris = 0, wallTris = 0;
     size_t flatTris = 0, flatGround = 0, flatRoad = 0, flatNear = 0, flatNoGround = 0;
+    size_t nDump = 0, nCats = 0, nEV = 0, nKiosk = 0, nMopeds = 0, nPoles = 0, nCableSpans = 0, nRound = 0, nPosters = 0;
+    std::unordered_set<int64_t> dumpCells, evCells, kioskCells, poleCells;
+    std::vector<V3> poles;
+    struct PosterSpot {
+        V3 c, along, out;
+    };
+    std::vector<PosterSpot> posterSpots;
     size_t nShopSigns = 0, nStreetSigns = 0, nFlags = 0, nBalconies = 0, nShutters = 0, nAwnings = 0, facadeTris = 0;
     const size_t kFacadeBudget = 260000;
     std::unordered_set<int64_t> streetCells;
@@ -819,7 +1148,7 @@ void TrackWorld::AddIsraeliProps()
                 if (h > 5.0f && h < 140.0f && area > 8.0f && roofTris < kRoofBudget) { // rooftop dressing
                     const size_t before = props.size();
                     const District d = DistrictAt(c.x, c.y);
-                    const float dens = area / 85.0f * (1.0f + 0.4f * d.jer + 0.3f * d.hai);
+                    const float dens = area / 48.0f * (1.0f + 0.4f * d.jer + 0.3f * d.hai);
                     int n = int(dens + rng.f());
                     for (int i = 0; i < n && props.size() < propCap; ++i) {
                         const V3 q = inTri(0.7f);
@@ -868,13 +1197,21 @@ void TrackWorld::AddIsraeliProps()
                         BusStop(b, inTri(0.5f), yawE), ++nBus;
                     }
                     if (g_signs && area > 3.0f && rng.f() < area / 1500.0f && streetCells.insert(Key(c4x / 15, c4y / 15)).second) {
-                        StreetSign(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 11.99f)), ++nStreetSigns;
+                        const V3 q = inTri(0.6f);
+                        StreetSign(b, q, yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 11.99f)), ++nStreetSigns;
+                        if (rng.f() < 0.55f) { // a moped chained to the pole
+                            Moped(b, q + V3{std::cos(yawE), std::sin(yawE), 0} * 0.0f + V3{-std::sin(yawE), std::cos(yawE), 0} * 0.7f, yawE, rng, &q), ++nMopeds;
+                        }
                     }
                     if (g_signs && area > 3.0f && rng.f() < area / 2600.0f) {
                         FlagPole(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), 6.0f + 2.0f * rng.f()), ++nFlags;
                     }
                     if (rng.f() < area / 800.0f && signCells.insert(Key(c4x / 6, c4y / 6)).second) {
-                        RoadSign(b, inTri(0.6f), yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 3.99f)), ++nSigns;
+                        const V3 q = inTri(0.6f);
+                        RoadSign(b, q, yawE + 1.5708f * int(rng.f() * 3.99f), int(rng.f() * 3.99f)), ++nSigns;
+                        if (rng.f() < 0.35f) {
+                            Moped(b, q + V3{-std::sin(yawE), std::cos(yawE), 0} * 0.7f, yawE, rng, &q), ++nMopeds;
+                        }
                     }
                     if (rng.f() < area / 1500.0f * d.tlv * 1.6f) {
                         const int n = 1 + int(rng.f() * 3.0f);
@@ -888,6 +1225,34 @@ void TrackWorld::AddIsraeliProps()
                             CafeSet(b, q + V3{std::cos(yawE), std::sin(yawE), 0} * 2.6f, yawE, rng);
                         ++nCafe;
                     }
+                    // street life: dumpsters with their bins and the cats, EV charging bays, corner kiosks, utility poles
+                    if (area > 5.0f && nDump < 900 && rng.f() < area / 1100.0f && dumpCells.insert(Key(c4x / 8, c4y / 8)).second) {
+                        const bool easter = nDump == 7 || nDump == 61 || nDump == 143 || nDump == 290; // Moka & Lattee, hidden at a few bins
+                        const V3 dq = inTri(0.55f);
+                        DumpsterGroup(b, dq, yawE, rng, easter, nCats);
+                        if (getenv("NFSU2_PROP_DEBUG") && (easter || nDump % 200 == 0))
+                            printf("[Dumpster%s] %.1f %.1f %.1f yaw %.2f\n", easter ? "Easter" : "", dq.x, dq.y, dq.z, yawE);
+                        ++nDump;
+                    }
+                    if (area > 8.0f && nEV < 260 && rng.f() < area / 1800.0f && evCells.insert(Key(c4x / 10, c4y / 10)).second) {
+                        const V3 q = inTri(0.5f);
+                        const V3 u{std::cos(yawE), std::sin(yawE), 0};
+                        if (getenv("NFSU2_PROP_DEBUG") && nEV % 80 == 0)
+                            printf("[EV] %.1f %.1f %.1f yaw %.2f\n", q.x, q.y, q.z, yawE);
+                        Charger(b, q, yawE + 1.5708f);
+                        ElectricCar(b, q + u * 0.0f + V3{-u.y, u.x, 0} * 1.3f, yawE, int(rng.f() * 4.99f)), ++nEV;
+                        if (rng.f() < 0.4f)
+                            ElectricCar(b, q + V3{-u.y, u.x, 0} * 1.3f + u * 5.6f, yawE, int(rng.f() * 4.99f)), ++nEV;
+                    }
+                    if (area > 14.0f && nKiosk < 220 && rng.f() < area / 2000.0f && kioskCells.insert(Key(c4x / 18, c4y / 18)).second) {
+                        const V3 kq = inTri(0.45f);
+                        if (getenv("NFSU2_PROP_DEBUG") && nKiosk % 60 == 0)
+                            printf("[Kiosk] %.1f %.1f %.1f yaw %.2f\n", kq.x, kq.y, kq.z, yawE);
+                        Kiosk(b, kq, yawE, rng, int(rng.f() * 15.99f)), ++nKiosk;
+                    }
+                    if (d.tlv < 0.4f && area > 3.0f && rng.f() < area / 900.0f && poleCells.insert(Key(c4x / 7, c4y / 7)).second) // older districts
+                        poles.push_back(inTri(0.7f));
+
                 }
             } else if (nz < 0.2f) {
                 const float dz = maxz - minz;
@@ -935,6 +1300,15 @@ void TrackWorld::AddIsraeliProps()
                         ++nWalls;
                     }
                     wallTris += props.size() - before;
+                    // candidate walls for the Moka & Lattee street posters (a handful over the whole map)
+                    if (posterSpots.size() < 16 && (HashXY(c4x, c4y, 91) % 450) == 0 && area > 6.0f && minz < nearIt->second.second + 1.5f) {
+                        const int ra = [&] { for (int dd = 3; dd <= 18; dd += 3) if (road4.count(Key(int(std::floor((c.x + hz.x * dd) / 4.0f)), int(std::floor((c.y + hz.y * dd) / 4.0f))))) return dd; return 99; }();
+                        const int rb = [&] { for (int dd = 3; dd <= 18; dd += 3) if (road4.count(Key(int(std::floor((c.x - hz.x * dd) / 4.0f)), int(std::floor((c.y - hz.y * dd) / 4.0f))))) return dd; return 99; }();
+                        if (ra != rb && std::min(ra, rb) < 99) {
+                            const V3 out = hz * (ra < rb ? 1.0f : -1.0f);
+                            posterSpots.push_back({V3{c.x, c.y, nearIt->second.first + (posterSpots.size() % 5 == 0 ? 2.4f : 1.7f)}, Norm(V3{-out.y, out.x, 0}), out});
+                        }
+                    }
                     // Israeli facade dressing: balconies on the upper floors, roller shutters and awnings at street level.
                     if (g_signs && facadeTris < kFacadeBudget) {
                         const size_t fbefore = props.size();
@@ -956,7 +1330,7 @@ void TrackWorld::AddIsraeliProps()
                                 const int k = 1 + int(rng.f() * 4.0f);
                                 const float zb = base + 3.4f * float(k);
                                 if (zb > minz + 0.3f && zb < maxz - 1.4f && rng.f() < 0.8f) {
-                                    Balcony(b, V3{q.x, q.y, zb}, along, out, 2.2f + 1.6f * rng.f(), int(rng.f() * 2.99f));
+                                    Balcony(b, V3{q.x, q.y, zb}, along, out, 2.2f + 1.6f * rng.f(), int(rng.f() * 2.99f), rng);
                                     if (getenv("NFSU2_PROP_DEBUG") && nBalconies % 400 == 0)
                                         printf("[Balcony] %.1f %.1f %.1f out %.2f %.2f\n", q.x, q.y, zb, out.x, out.y);
                                     ++nBalconies;
@@ -968,7 +1342,7 @@ void TrackWorld::AddIsraeliProps()
                                     const V3 q = inTri(0.75f);
                                     const float r = rng.f();
                                     if (r < 0.45f) {
-                                        Shutter(b, V3{q.x, q.y, base}, along, out, 1.8f + 1.2f * rng.f(), 2.2f, int(rng.f() * 3.99f)), ++nShutters;
+                                        Shutter(b, V3{q.x, q.y, base}, along, out, 1.8f + 1.2f * rng.f(), 2.2f, int(rng.f() * 3.99f), rng), ++nShutters;
                                     } else if (r < 0.8f) {
                                         Awning(b, V3{q.x, q.y, base + 2.7f}, along, out, 2.0f + 1.5f * rng.f(), int(rng.f() * 3.99f)), ++nAwnings;
                                     }
@@ -982,6 +1356,78 @@ void TrackWorld::AddIsraeliProps()
         }
     }
 
+
+    // ---- poles and cables: connect each pole to its nearest neighbours within reach (older districts only) ----
+    {
+        static const uint8_t black[3] = {20, 20, 22}, grey[3] = {44, 46, 50};
+        std::vector<std::vector<int>> links(poles.size());
+        for (size_t i = 0; i < poles.size(); ++i) {
+            UtilityPole(b, poles[i], 8.2f + 0.8f * float(HashXY(int(poles[i].x), int(poles[i].y), 5) & 3) / 3.0f), ++nPoles;
+            // two nearest poles 12-55 m away that are not already tied to this one
+            int best[2] = {-1, -1};
+            float bd[2] = {1e9f, 1e9f};
+            for (size_t j = 0; j < poles.size(); ++j) {
+                if (j == i)
+                    continue;
+                const float dx = poles[j].x - poles[i].x, dy = poles[j].y - poles[i].y, d = std::sqrt(dx * dx + dy * dy);
+                if (d < 12.0f || d > 55.0f || std::fabs(poles[j].z - poles[i].z) > 8.0f)
+                    continue;
+                if (d < bd[0])
+                    bd[1] = bd[0], best[1] = best[0], bd[0] = d, best[0] = int(j);
+                else if (d < bd[1])
+                    bd[1] = d, best[1] = int(j);
+            }
+            for (int k = 0; k < 2; ++k)
+                if (best[k] > int(i) || (best[k] >= 0 && std::find(links[best[k]].begin(), links[best[k]].end(), int(i)) == links[best[k]].end()))
+                    links[i].push_back(best[k]);
+        }
+        for (size_t i = 0; i < poles.size(); ++i)
+            for (int j : links[i]) {
+                const V3 a = poles[i], c = poles[j];
+                Rng cr(HashXY(int(a.x * 3), int(a.y * 3), 21));
+                const float h0 = 8.2f, h1 = 8.2f;
+                const V3 d = Norm(V3{c.x - a.x, c.y - a.y, 0}), side{-d.y, d.x, 0};
+                (void)side;
+                for (int k = -1; k <= 1; ++k) { // the three power lines
+                    const V3 pa = a + V3{k * 0.8f, 0, h0 - 0.3f}, pc = c + V3{k * 0.8f, 0, h1 - 0.3f};
+                    Cable(b, pa, pc, 0.7f + 0.8f * cr.f(), 0.02f, black);
+                }
+                // the messy part: a thick communication cable lower down, drooping, and a loose drop to a roof
+                Cable(b, a + V3{0, 0, h0 - 1.6f}, c + V3{0, 0, h1 - 1.6f}, 1.1f + 1.0f * cr.f(), 0.04f, grey);
+                if (cr.f() < 0.6f)
+                    Cable(b, a + V3{0.3f, 0, h0 - 2.0f}, c + V3{-0.2f, 0, h1 - 2.4f}, 1.8f + 1.2f * cr.f(), 0.025f, black);
+                ++nCableSpans;
+            }
+    }
+    // ---- roundabout islands at the crossings (visual only: a drive-through island would stall races) ----
+    {
+        std::unordered_set<int64_t> placed;
+        auto has = [&](int gx, int gy) { return near8.count(Key(gx, gy)) != 0; };
+        for (const auto &kv : near8) {
+            const int gx = int(kv.first >> 32), gy = int(int32_t(kv.first & 0xffffffff));
+            if (!has(gx, gy) || nRound >= 120)
+                continue;
+            // a crossing: road in all four directions 3-4 cells (24-32 m) away
+            bool cross = true;
+            for (int k = 3; k <= 4 && cross; ++k)
+                cross = has(gx + k, gy) && has(gx - k, gy) && has(gx, gy + k) && has(gx, gy - k);
+            if (!cross || !placed.insert(Key(gx / 6, gy / 6)).second)
+                continue;
+            const V3 c{(gx + 0.5f) * 8.0f, (gy + 0.5f) * 8.0f, kv.second.second + 0.02f};
+            Rng ir(HashXY(gx, gy, 31));
+            if (getenv("NFSU2_PROP_DEBUG") && nRound % 30 == 0)
+                printf("[Island] %.1f %.1f %.1f\n", c.x, c.y, c.z);
+            IslandRound(b, c, ir), ++nRound;
+        }
+    }
+    // ---- the street poster of Moka & Lattee, a few of them on alley walls and one big mural ----
+    if (g_signs && !posterSpots.empty())
+        for (size_t i = 0; i < posterSpots.size() && i < 16; ++i) {
+            const PosterSpot &ps = posterSpots[i];
+            if (getenv("NFSU2_PROP_DEBUG") && i < 6)
+                printf("[Poster] %.1f %.1f %.1f out %.2f %.2f\n", ps.c.x, ps.c.y, ps.c.z, ps.out.x, ps.out.y);
+            PosterOnWall(b, ps.c, ps.along, ps.out, i % 5 == 0 ? 3.2f : 1.1f, i % 5 == 0 ? 3.2f : 1.55f), ++nPosters;
+        }
     // Solid props join the wall query (ISSUES #275).
     m_propSolids = std::move(solids);
     m_propGrid.clear();
@@ -999,6 +1445,6 @@ void TrackWorld::AddIsraeliProps()
     m_groundSource = savedSource;
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
-           "%zu signs, %zu scooters, %zu cafes, %zu Hebrew shop signs, %zu street-name signs, %zu flags, %zu balconies, %zu shutters, %zu awnings\n",
-           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nShopSigns, nStreetSigns, nFlags, nBalconies, nShutters, nAwnings);
+           "%zu signs, %zu scooters, %zu cafes, %zu dumpster groups, %zu cats, %zu EV bays, %zu kiosks, %zu mopeds, %zu poles, %zu cable spans, %zu islands, %zu posters, %zu Hebrew shop signs, %zu street-name signs, %zu flags, %zu balconies, %zu shutters, %zu awnings\n",
+           props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nDump, nCats, nEV, nKiosk, nMopeds, nPoles, nCableSpans, nRound, nPosters, nShopSigns, nStreetSigns, nFlags, nBalconies, nShutters, nAwnings);
 }

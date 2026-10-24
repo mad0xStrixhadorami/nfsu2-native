@@ -248,6 +248,93 @@ void Flag(Canvas &cv)
     tri(1.5708f);
 }
 
+
+void FillEllipse(Canvas &cv, float cx, float cy, float rx, float ry, uint32_t c, float rot = 0.0f)
+{
+    const float cs = std::cos(rot), sn = std::sin(rot);
+    const int x0 = std::max(0, int(cx - rx - ry - 2)), x1 = std::min(cv.w, int(cx + rx + ry + 2));
+    const int y0 = std::max(0, int(cy - rx - ry - 2)), y1 = std::min(cv.h, int(cy + rx + ry + 2));
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x) {
+            const float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+            const float u = (dx * cs + dy * sn) / rx, v = (-dx * sn + dy * cs) / ry;
+            if (u * u + v * v <= 1.0f)
+                cv.px[size_t(y) * cv.w + x] = c;
+        }
+}
+void FillTri(Canvas &cv, float ax, float ay, float bx, float by, float cx, float cy, uint32_t c)
+{
+    const int x0 = std::max(0, int(std::min({ax, bx, cx}))), x1 = std::min(cv.w - 1, int(std::max({ax, bx, cx})) + 1);
+    const int y0 = std::max(0, int(std::min({ay, by, cy}))), y1 = std::min(cv.h - 1, int(std::max({ay, by, cy})) + 1);
+    auto e = [](float px, float py, float qx, float qy, float x, float y) { return (qx - px) * (y - py) - (qy - py) * (x - px); };
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const float w0 = e(ax, ay, bx, by, x + 0.5f, y + 0.5f), w1 = e(bx, by, cx, cy, x + 0.5f, y + 0.5f), w2 = e(cx, cy, ax, ay, x + 0.5f, y + 0.5f);
+            if ((w0 >= 0 && w1 >= 0 && w2 >= 0) || (w0 <= 0 && w1 <= 0 && w2 <= 0))
+                cv.px[size_t(y) * cv.w + x] = c;
+        }
+}
+void Stroke(Canvas &cv, float ax, float ay, float bx, float by, float width, uint32_t c)
+{
+    const float dx = bx - ax, dy = by - ay, len = std::max(1.0f, std::hypot(dx, dy));
+    for (int i = 0; i <= int(len); ++i)
+        FillEllipse(cv, ax + dx * i / len, ay + dy * i / len, width * 0.5f, width * 0.5f, c);
+}
+
+// A cat sitting, seen from the front: body, head, ears, eyes, muzzle, whiskers, tail.
+void Cat(Canvas &cv, float cx, float base, float size, uint32_t fur, uint32_t belly, uint32_t eye, uint32_t inner)
+{
+    const float s = size;
+    Stroke(cv, cx + s * 0.38f, base - s * 0.12f, cx + s * 0.78f, base - s * 0.22f, s * 0.11f, fur); // tail
+    Stroke(cv, cx + s * 0.78f, base - s * 0.22f, cx + s * 0.84f, base - s * 0.62f, s * 0.11f, fur);
+    FillEllipse(cv, cx, base - s * 0.28f, s * 0.42f, s * 0.30f, fur);        // body
+    FillEllipse(cv, cx, base - s * 0.22f, s * 0.22f, s * 0.22f, belly);      // chest
+    FillEllipse(cv, cx - s * 0.18f, base - s * 0.03f, s * 0.12f, s * 0.07f, belly); // paws
+    FillEllipse(cv, cx + s * 0.18f, base - s * 0.03f, s * 0.12f, s * 0.07f, belly);
+    const float hy = base - s * 0.62f;
+    FillTri(cv, cx - s * 0.30f, hy - s * 0.06f, cx - s * 0.12f, hy - s * 0.36f, cx - s * 0.04f, hy - s * 0.18f, fur); // ears
+    FillTri(cv, cx + s * 0.30f, hy - s * 0.06f, cx + s * 0.12f, hy - s * 0.36f, cx + s * 0.04f, hy - s * 0.18f, fur);
+    FillTri(cv, cx - s * 0.25f, hy - s * 0.10f, cx - s * 0.13f, hy - s * 0.28f, cx - s * 0.08f, hy - s * 0.17f, inner);
+    FillTri(cv, cx + s * 0.25f, hy - s * 0.10f, cx + s * 0.13f, hy - s * 0.28f, cx + s * 0.08f, hy - s * 0.17f, inner);
+    FillEllipse(cv, cx, hy, s * 0.32f, s * 0.27f, fur);                       // head
+    FillEllipse(cv, cx, hy + s * 0.09f, s * 0.15f, s * 0.11f, belly);         // muzzle
+    FillEllipse(cv, cx - s * 0.13f, hy - s * 0.03f, s * 0.065f, s * 0.08f, eye);
+    FillEllipse(cv, cx + s * 0.13f, hy - s * 0.03f, s * 0.065f, s * 0.08f, eye);
+    FillEllipse(cv, cx - s * 0.13f, hy - s * 0.03f, s * 0.025f, s * 0.06f, Rgba(10, 10, 12, 255));
+    FillEllipse(cv, cx + s * 0.13f, hy - s * 0.03f, s * 0.025f, s * 0.06f, Rgba(10, 10, 12, 255));
+    FillTri(cv, cx - s * 0.04f, hy + s * 0.05f, cx + s * 0.04f, hy + s * 0.05f, cx, hy + s * 0.10f, Rgba(220, 120, 130, 255)); // nose
+    for (int k = -1; k <= 1; k += 2)
+        for (int w = 0; w < 3; ++w)
+            Stroke(cv, cx + k * s * 0.10f, hy + s * 0.09f, cx + k * s * 0.40f, hy + s * (0.02f + 0.06f * w), std::max(1.5f, s * 0.012f), Rgba(235, 235, 235, 255));
+}
+
+// The street-art poster: "MOKA & LATTEE", two cats and a cup of coffee.
+void Poster(Canvas &cv)
+{
+    for (int y = 0; y < cv.h; ++y)
+        for (int x = 0; x < cv.w; ++x) {
+            const float t = float(y) / cv.h;
+            const bool dot = ((x / 14 + y / 14) % 2 == 0) && t > 0.55f;
+            cv.px[size_t(y) * cv.w + x] = Rgba(int(30 + 30 * (1 - t)) + (dot ? 6 : 0), int(34 + 40 * (1 - t)) + (dot ? 6 : 0), int(60 + 50 * (1 - t)) + (dot ? 8 : 0), 255);
+        }
+    const int b = std::max(6, cv.w / 40);
+    Fill(cv, 0, 0, cv.w, b, Rgba(240, 190, 90, 255)), Fill(cv, 0, cv.h - b, cv.w, cv.h, Rgba(240, 190, 90, 255));
+    Fill(cv, 0, 0, b, cv.h, Rgba(240, 190, 90, 255)), Fill(cv, cv.w - b, 0, cv.w, cv.h, Rgba(240, 190, 90, 255));
+    std::vector<float> mask;
+    TextMask(cv, "MOKA & LATTEE", cv.w * 0.08f, cv.h * 0.05f, cv.w * 0.84f, cv.h * 0.14f, mask);
+    Over(cv, mask, Rgba(255, 225, 160));
+    TextMask(cv, "מוקה ולאטה", cv.w * 0.18f, cv.h * 0.19f, cv.w * 0.64f, cv.h * 0.10f, mask);
+    Over(cv, mask, Rgba(255, 255, 255));
+    const float base = cv.h * 0.86f, size = cv.w * 0.40f;
+    Cat(cv, cv.w * 0.29f, base, size, Rgba(86, 52, 34, 255), Rgba(236, 214, 180, 255), Rgba(110, 200, 90, 255), Rgba(200, 140, 130, 255));   // Moka
+    Cat(cv, cv.w * 0.71f, base, size, Rgba(238, 214, 170, 255), Rgba(255, 246, 232, 255), Rgba(90, 170, 235, 255), Rgba(240, 170, 170, 255)); // Lattee
+    // the coffee cup between them
+    FillEllipse(cv, cv.w * 0.5f, base - cv.h * 0.04f, cv.w * 0.07f, cv.h * 0.05f, Rgba(250, 250, 250, 255));
+    FillEllipse(cv, cv.w * 0.5f, base - cv.h * 0.075f, cv.w * 0.055f, cv.h * 0.02f, Rgba(120, 70, 40, 255));
+    for (int k = 0; k < 3; ++k)
+        Stroke(cv, cv.w * (0.47f + 0.03f * k), base - cv.h * 0.11f, cv.w * (0.48f + 0.03f * k), base - cv.h * 0.17f, 3.0f, Rgba(255, 255, 255, 180));
+}
+
 struct Neonword {
     const char *key, *he;
 };
@@ -319,6 +406,8 @@ bool Make(int kind, int variant, int w, int h, std::vector<uint32_t> &rgba)
     } else if (kind == 1) {
         const auto &s = kStreets[variant % StreetVariants()];
         Panel(cv, s.he, Rgba(0, 76, 150), Rgba(255, 255, 255), s.en, Rgba(255, 255, 255));
+    } else if (kind == 5) {
+        Poster(cv);
     } else if (kind == 3) { // roller shutter ("trisim"): horizontal slats in grey / beige / green / blue-grey
         static const int cols[4][3] = {{150, 154, 158}, {205, 190, 160}, {95, 135, 105}, {110, 130, 160}};
         const int *c = cols[variant & 3];
