@@ -1572,7 +1572,7 @@ int main(int argc, char **argv)
             if (!pausePkg && !cribPkg && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
                 const Career::Hotspot *inside = nullptr;
                 for (const Career::Hotspot &h : Career::HotspotTable::Get().All())
-                    if (std::hypot(car.X() - h.x, car.Y() - h.y) < 9.0f)
+                    if (h.Contains(car.X(), car.Y()))
                         inside = &h;
                 if (!inside)
                     hotArmed = nullptr;

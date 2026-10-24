@@ -49,6 +49,20 @@ Hotspot::Kind Hotspot::kind() const
     return kOther;
 }
 
+bool Hotspot::Contains(float px, float py) const
+{
+    if (!hasZone)
+        return (px - x) * (px - x) + (py - y) * (py - y) < 81.0f;
+    // Convex polygon: the point lies on one side of every edge (either winding).
+    bool pos = false, neg = false;
+    for (int i = 0; i < 4; ++i) {
+        const float *a = zone[i], *b = zone[(i + 1) % 4];
+        const float c = (b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0]);
+        pos |= c > 0, neg |= c < 0;
+    }
+    return !(pos && neg);
+}
+
 HotspotTable &HotspotTable::Get()
 {
     static HotspotTable table;
@@ -101,6 +115,11 @@ size_t HotspotTable::LoadPositions(const std::vector<uint8_t> &paths)
             h.dx = F32(d, j - 0x24);
             h.dy = F32(d, j - 0x20);
             h.z = F32(d, j - 0x1c);
+            if (j + 0x14 + 32 <= roads->size) {
+                for (int c = 0; c < 4; ++c)
+                    h.zone[c][0] = F32(d, j + 0x14 + c * 8), h.zone[c][1] = F32(d, j + 0x18 + c * 8);
+                h.hasZone = true;
+            }
             m_placed.push_back(h);
             break;
         }

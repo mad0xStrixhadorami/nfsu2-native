@@ -19,6 +19,11 @@ struct Hotspot {
     uint32_t hash = 0;
     uint8_t flag = 0, area = 0;
     float x = 0, y = 0, dx = 0, dy = 1, z = 0; // z = road height at the spot
+    // Trigger polygon: 4 corner pairs at record +0x14 after hashB (an oriented rectangle about the spot, ~15 m a side);
+    // hasZone is false for a record too short to hold it.
+    float zone[4][2] = {};
+    bool hasZone = false;
+    bool Contains(float px, float py) const; // inside the trigger polygon (falls back to a 9 m circle)
     enum Kind { kCrib, kCarLot, kBodyShop, kGraphics, kPerformance, kSpecialty, kOther };
     Kind kind() const;
 };
