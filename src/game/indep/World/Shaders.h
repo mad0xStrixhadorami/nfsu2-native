@@ -8,11 +8,14 @@ varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
 varying vec3 vWorld;
+varying vec3 vRel;
+uniform vec3 uCam;
 void main() {
     gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
     vColor = gl_Color;
     vUV = gl_MultiTexCoord0.xy;
     vWorld = gl_Vertex.xyz;
+    vRel = gl_Vertex.xyz - uCam;
     vDist = length((gl_ModelViewMatrix * gl_Vertex).xyz);
 }
 )";
@@ -26,14 +29,31 @@ uniform float uGrade;
 uniform vec3 uCam;
 uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
+uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
+uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
+uniform sampler2D uMN0, uMN1, uMN2, uMN3, uMN4;                   // normals: asphalt, pavers, stone, concrete, plaster
 varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
 varying vec3 vWorld;
+varying vec3 vRel;
 float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y);
+}
+vec3 matC(sampler2D s, vec2 uv) { // two taps at different scales blended by noise break up the repeat
+    vec3 a = texture2D(s, uv).rgb, b = texture2D(s, uv * 0.27 + vec2(0.31, 0.17)).rgb;
+    return mix(a, b, smoothstep(0.4, 0.6, vnoise(uv * 0.23)) * 0.6);
+}
+vec3 matN(sampler2D s, vec2 uv) {
+    vec3 a = texture2D(s, uv).xyz, b = texture2D(s, uv * 0.27 + vec2(0.31, 0.17)).xyz;
+    return normalize(mix(a, b, smoothstep(0.4, 0.6, vnoise(uv * 0.23)) * 0.6) * 2.0 - 1.0);
+}
+float bumpL(vec3 nts, vec3 T, vec3 B, vec3 N) { // lighting ratio of the perturbed normal against the geometric one
+    vec3 L = normalize(vec3(0.35, 0.2, 0.9));
+    vec3 wn = normalize(T * nts.x + B * nts.y + N * nts.z);
+    return (0.5 + 0.7 * max(dot(wn, L), 0.0)) / (0.5 + 0.7 * max(dot(N, L), 0.0));
 }
 void main() {
     vec4 t = texture2D(uTex, vUV);
@@ -41,7 +61,7 @@ void main() {
     float wetMask = 0.0;
     if (uWet > 0.0 && vDist < 90.0) {
         // road-like surface: facing up, grey and not bright
-        vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        vec3 N = normalize(cross(dFdx(vRel), dFdy(vRel)));
         float mx = max(t.r, max(t.g, t.b)), mn = min(t.r, min(t.g, t.b));
         float road = smoothstep(0.85, 0.97, abs(N.z)) * (1.0 - smoothstep(0.25, 0.5, (mx - mn) / max(mx, 0.01))) * (1.0 - smoothstep(0.45, 0.65, mx)) * t.a;
         float puddles = smoothstep(0.50, 0.66, vnoise(vWorld.xy * 0.11) * 0.65 + vnoise(vWorld.xy * 0.43) * 0.35);
@@ -69,7 +89,7 @@ void main() {
                        exp(-dot(vWorld.xy - vec2(-1850.0, 1120.0), vWorld.xy - vec2(-1850.0, 1120.0)) / 490000.0),
                        exp(-dot(vWorld.xy - vec2(-250.0, -1650.0), vWorld.xy - vec2(-250.0, -1650.0)) / 640000.0));
         wd /= max(dot(wd, vec4(1.0)), 1e-4);
-        vec3 Nt = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        vec3 Nt = normalize(cross(dFdx(vRel), dFdy(vRel)));
         float lumT = dot(c.rgb, vec3(0.299, 0.587, 0.114));
         float satT = (max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))) / max(max(c.r, max(c.g, c.b)), 0.01);
         float fl = vColor.a * 255.0;                       // triangle flags set by IsraelProps: 254 prop, 253 kerb face, 252 bike-lane pavement
@@ -96,7 +116,7 @@ void main() {
         // Haifa: terraced houses in warm stucco on the slopes
         vec3 stucco = vec3(0.90, 0.80, 0.66) * (0.6 + 0.6 * lumT) * (0.94 + 0.06 * vnoise(vWorld.xy * 0.4));
         vec3 skin = stone * wd.y + plaster * wd.x + concrete * wd.w + stucco * wd.z;
-        c.rgb = mix(c.rgb, skin * vColor.rgb * 1.15, wall * keep * uTheme * 0.92);
+        c.rgb = mix(c.rgb, skin * vColor.rgb * 1.15, wall * keep * uTheme * 0.92 * (1.0 - uMatOn));
         // gray interlocking paving stones on bright flat ground (pavements, plazas), 0.22 x 0.11 m pavers in herringbone-ish rows
         float pave = flatUp * (1.0 - isProp) * smoothstep(0.42, 0.55, lumT) * (1.0 - smoothstep(0.2, 0.4, satT));
         vec2 pp = vWorld.xy / vec2(0.22, 0.11);
@@ -104,7 +124,57 @@ void main() {
         vec2 pf = fract(vec2(pp.x + 0.5 * mod(prow, 2.0), pp.y));
         float joint = 1.0 - smoothstep(0.0, 0.08, min(min(pf.x, 1.0 - pf.x), min(pf.y, 1.0 - pf.y)) * 2.0);
         float tile = 0.92 + 0.12 * h12(vec2(floor(pp.x + 0.5 * mod(prow, 2.0)), prow));
-        c.rgb = mix(c.rgb, c.rgb * tile * (1.0 - 0.28 * joint), pave * uTheme * (1.0 - smoothstep(25.0, 60.0, vDist)));
+        c.rgb = mix(c.rgb, c.rgb * tile * (1.0 - 0.28 * joint), pave * uTheme * (1.0 - uMatOn) * (1.0 - smoothstep(25.0, 60.0, vDist)));
+        if (uMatOn > 0.5) {
+            // ---- photographic materials (ISSUES #274), mapped by world position; classification from the unlit texture ----
+            float mxO = max(t.r, max(t.g, t.b)), mnO = min(t.r, min(t.g, t.b));
+            float satO = (mxO - mnO) / max(mxO, 0.01);
+            float nearM = 1.0 - smoothstep(70.0, 170.0, vDist);
+            vec3 up = Nt;
+            vec3 Tg = vec3(1.0, 0.0, 0.0), Bg = vec3(0.0, 1.0, 0.0);
+            // asphalt: dark desaturated flat surfaces that are not lane paint
+            float roadM = flatUp * (1.0 - isProp) * (1.0 - smoothstep(0.22, 0.45, satO)) * (1.0 - smoothstep(0.42, 0.62, mxO)) * (1.0 - isBike);
+            if (roadM * nearM > 0.01) {
+                vec2 ru = vWorld.xy / 3.4;
+                vec3 col = matC(uMC0, ru) * vec3(0.80, 0.79, 0.78);
+                col *= mix(1.0, clamp(mxO / 0.25, 0.55, 1.3), 0.45);       // keep the original's tyre marks and patches
+                float bl = mix(1.0, bumpL(matN(uMN0, ru), Tg, Bg, up), 0.8);
+                c.rgb = mix(c.rgb, col * vColor.rgb * 1.15 * bl, roadM * nearM * 0.92);
+            }
+            // pavements and plazas: grey block pavers, cream paving in Jerusalem and on the Tel Aviv promenade
+            float paveM = flatUp * (1.0 - isProp) * (1.0 - roadM) * smoothstep(0.40, 0.56, mxO) * (1.0 - smoothstep(0.25, 0.5, satO));
+            if (paveM * nearM > 0.01) {
+                vec2 pu = vWorld.xy / 2.6;
+                float cream = clamp(wd.y * 1.2 + wd.x * 0.35, 0.0, 1.0);
+                vec3 grey = matC(uMC1, pu), warm = matC(uMC2, vWorld.xy / 2.2);
+                vec3 col = mix(grey, warm, cream);
+                float bl = mix(1.0, bumpL(matN(uMN1, pu), Tg, Bg, up), 0.7 * (1.0 - cream));
+                c.rgb = mix(c.rgb, col * vColor.rgb * 1.2 * bl, paveM * nearM * 0.95);
+            }
+            // facades
+            if (wall * keep * nearM > 0.01) {
+                vec3 Tw = normalize(cross(vec3(0.0, 0.0, 1.0), Nt) + vec3(1e-4, 0.0, 0.0));
+                vec3 Bw = cross(Nt, Tw);
+                vec2 uv = vec2(dot(vWorld, Tw), vWorld.z);
+                vec3 skinM = vec3(0.0), nM = vec3(0.0);
+                if (wd.y > 0.03) { // Jerusalem stone; patches of finer cladding
+                    float patch = step(0.68, h12(floor(vWorld.xy / 55.0) + 11.0));
+                    vec3 st = mix(matC(uMC3, uv / 2.6), matC(uMC4, uv / 2.4), patch) * vec3(1.04, 1.0, 0.95);
+                    skinM += st * wd.y, nM += matN(uMN2, uv / 2.6) * wd.y;
+                }
+                if (wd.x > 0.03) { // Tel Aviv white render
+                    skinM += matC(uMC5, uv / 3.2) * vec3(1.0, 0.99, 0.96) * wd.x, nM += matN(uMN4, uv / 3.2) * wd.x;
+                }
+                if (wd.w > 0.03) { // Be'er Sheva board-marked concrete
+                    skinM += matC(uMC6, uv / 3.6) * vec3(1.02, 0.99, 0.92) * wd.w, nM += matN(uMN3, uv / 3.6) * wd.w;
+                }
+                if (wd.z > 0.03) { // Haifa stucco in warm tones
+                    skinM += matC(uMC7, uv / 3.0) * vec3(1.10, 0.97, 0.82) * wd.z, nM += vec3(0.0, 0.0, 1.0) * wd.z;
+                }
+                float bl = mix(1.0, bumpL(normalize(nM + 1e-4), Tw, Bw, Nt), 0.85);
+                c.rgb = mix(c.rgb, skinM * vColor.rgb * 1.2 * bl, wall * keep * nearM * uTheme * 0.95);
+            }
+        }
         // painted kerbs: 1 m stripes, red-white (no parking) or blue-white (paid parking) by 48 m stretch of street
         {
             float seg = floor(along / 1.0);

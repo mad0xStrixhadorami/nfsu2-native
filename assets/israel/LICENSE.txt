@@ -1,0 +1,3 @@
+Textures in this directory come from ambientCG (https://ambientcg.com), released under CC0 1.0 (public domain):
+Asphalt031, PavingStones128, PavingStones146, Bricks084, Bricks093, Concrete048, Plaster002, Concrete047A.
+Colour maps are re-encoded 2K JPEG, normal maps 1K JPEG (OpenGL convention).

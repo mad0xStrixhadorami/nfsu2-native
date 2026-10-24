@@ -87,7 +87,7 @@ target_link_libraries(feng_test PRIVATE feng)
 
 file(GLOB_RECURSE NFSU2_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_executable(nfsu2 ${NFSU2_SOURCES})
-target_include_directories(nfsu2 PRIVATE include src)
+target_include_directories(nfsu2 PRIVATE include src third_party/stb)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswresample)
 find_package(OpenGL REQUIRED)

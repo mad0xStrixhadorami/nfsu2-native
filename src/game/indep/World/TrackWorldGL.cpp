@@ -14,6 +14,7 @@
 #include "game/indep/Texture/TexturePack.h"
 #include "game/indep/World/GLBridge.h"
 #include "game/indep/World/GLShader.h"
+#include "game/indep/World/MaterialLibrary.h"
 #include "game/indep/World/Shaders.h"
 
 namespace {
@@ -405,6 +406,27 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(GLShader::Uniform(m_progWorld, "uCam"), cam.x, cam.y, cam.z);
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uTheme"), getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
+        {   // photographic materials on units 2..14 (colours 2..9, normals 10..14), ISSUES #274
+            const bool mats = MaterialLibrary::Load();
+            GLShader::Set1f(GLShader::Uniform(m_progWorld, "uMatOn"), mats ? 1.0f : 0.0f);
+            if (mats) {
+                for (int i = 0; i < MaterialLibrary::kColours; ++i) {
+                    char name[8];
+                    snprintf(name, sizeof(name), "uMC%d", i);
+                    GLShader::Set1i(GLShader::Uniform(m_progWorld, name), 2 + i);
+                    GLShader::ActiveTexture(2 + i);
+                    glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Colour(i));
+                }
+                for (int i = 0; i < MaterialLibrary::kNormals; ++i) {
+                    char name[8];
+                    snprintf(name, sizeof(name), "uMN%d", i);
+                    GLShader::Set1i(GLShader::Uniform(m_progWorld, name), 10 + i);
+                    GLShader::ActiveTexture(10 + i);
+                    glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Normal(i));
+                }
+                GLShader::ActiveTexture(0);
+            }
+        }
         GLShader::Set1f(GLShader::Uniform(m_progWorld, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : 0.8f));
     };
 
