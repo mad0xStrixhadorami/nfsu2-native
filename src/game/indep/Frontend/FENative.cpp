@@ -1522,6 +1522,19 @@ SDL_Texture *FENativeInterface::TextureFor(uint32_t hash)
                     }
             }
             if (pack->Decode(info, img)) {
+                if (const char *dd = getenv("NFSU2_FETEX_DUMP")) { // dev aid: every FEng texture as <hash>.ppm (alpha over mid-grey)
+                    char path[512];
+                    snprintf(path, sizeof path, "%s/%08x.ppm", dd, hash);
+                    if (FILE *f = fopen(path, "wb")) {
+                        fprintf(f, "P6\n%d %d\n255\n", img.width, img.height);
+                        for (uint32_t px : img.rgba) {
+                            const unsigned a = (px >> 24) & 0xff;
+                            const unsigned char rgb[3] = {uint8_t(((px & 0xff) * a + 90 * (255 - a)) / 255), uint8_t((((px >> 8) & 0xff) * a + 90 * (255 - a)) / 255), uint8_t((((px >> 16) & 0xff) * a + 90 * (255 - a)) / 255)};
+                            fwrite(rgb, 1, 3, f);
+                        }
+                        fclose(f);
+                    }
+                }
                 tex = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.width,
                                         img.height);
                 SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
@@ -1607,6 +1620,75 @@ void FENativeInterface::GetViewTransformation(FEMatrix4 *pView)
     pView->Identify();
 }
 
+
+// ---- Hybrid UI theme (ISSUES #290): the original FEng screens keep their layout, fonts and art, but their colours follow the
+// modern HUD palette (ModernUI: blue accent, white, amber, dark blue glass). The original lime / yellow / grey is remapped
+// per draw. NFSU2_CLASSIC_UI=1 or NFSU2_CLASSIC_THEME=1 keeps the original colours.
+namespace {
+void ToHsv(int r, int g, int b, float &h, float &s, float &v)
+{
+    const float fr = r / 255.0f, fg = g / 255.0f, fb = b / 255.0f;
+    const float mx = std::max({fr, fg, fb}), mn = std::min({fr, fg, fb}), d = mx - mn;
+    v = mx, s = mx > 0 ? d / mx : 0;
+    if (d < 1e-5f)
+        h = 0;
+    else if (mx == fr)
+        h = 60.0f * std::fmod((fg - fb) / d + 6.0f, 6.0f);
+    else if (mx == fg)
+        h = 60.0f * ((fb - fr) / d + 2.0f);
+    else
+        h = 60.0f * ((fr - fg) / d + 4.0f);
+}
+bool ThemeOn()
+{
+    static const bool on = !getenv("NFSU2_CLASSIC_UI") && !getenv("NFSU2_CLASSIC_THEME");
+    return on;
+}
+void Scaled(int &r, int &g, int &b, int cr, int cg, int cb, float v)
+{
+    r = std::clamp(int(cr * v + 0.5f), 0, 255), g = std::clamp(int(cg * v + 0.5f), 0, 255), b = std::clamp(int(cb * v + 0.5f), 0, 255);
+}
+// Text: lime titles / selection -> bright accent blue-white, yellow list text -> soft white-blue.
+void ThemeText(int &r, int &g, int &b)
+{
+    if (!ThemeOn())
+        return;
+    float h, s, v;
+    ToHsv(r, g, b, h, s, v);
+    if (s < 0.35f)
+        return;
+    if (h >= 62.0f && h <= 170.0f)
+        Scaled(r, g, b, 150, 218, 255, std::min(1.0f, v * 1.1f));
+    else if (h >= 36.0f && h < 62.0f)
+        Scaled(r, g, b, 226, 236, 250, std::min(1.0f, v * 1.15f));
+}
+// Images: greens (stat bars, highlight frames) -> accent blue, yellow selection bars -> deep blue, translucent grey / white
+// panel pieces -> dark blue glass. texW/texH = the texture's size (panels are made of small nine-slice pieces).
+void ThemeImage(int &r, int &g, int &b, int &a, int texW, int texH, uint32_t hash)
+{
+    if (!ThemeOn())
+        return;
+    float h, s, v;
+    ToHsv(r, g, b, h, s, v);
+    if (s >= 0.35f) {
+        if (h >= 62.0f && h <= 170.0f)
+            Scaled(r, g, b, 70, 190, 255, std::min(1.0f, v * 1.1f));
+        else if (h >= 36.0f && h < 62.0f)
+            Scaled(r, g, b, 40, 120, 225, std::min(1.0f, v * 1.15f));
+        return;
+    }
+    // low saturation: a translucent panel fill (not an icon: those are drawn at near-full alpha)
+    // (the 128x64+ textures are mostly artwork: car cards, logos; only the known frame / gradient panels qualify)
+    const bool frame = hash == 0x2dbcbc19 || hash == 0xdf422345 || hash == 0x588c60d5 || hash == 0x5b9d84db;
+    const bool piece = (texW <= 32 && texH <= 32) || frame;
+    if (piece && a >= 90 && a <= 232 && v > 0.3f) {
+        const float k = 0.55f + 0.45f * v; // lighter grey fills stay a little lighter
+        Scaled(r, g, b, 16, 30, 58, k);
+        a = std::clamp(int(a * 0.92f) + 8, 0, 255);
+    }
+}
+} // namespace
+
 void FENativeInterface::DrawImage(FEObject *obj)
 {
     if (!m_renderer)
@@ -1627,11 +1709,20 @@ void FENativeInterface::DrawImage(FEObject *obj)
     ObjectColor(obj, r, g, b, a);
     if (a == 0)
         return;
+    if (getenv("NFSU2_THEME_DEBUG"))
+        fprintf(stderr, "[ThemeImg] %08x col %d %d %d %d size %.0fx%.0f tex %08x\n", obj->NameHash, r, g, b, a, d->Size.x, d->Size.y, obj->Handle);
     SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
 
     SDL_Texture *tex = obj->Handle ? TextureFor(obj->Handle) : m_white;
     if (!tex)
         return; // texture not in any loaded pack: draw nothing rather than a placeholder
+    {
+        int tw = 0, th = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        int tr = col.r, tg = col.g, tb = col.b, ta = col.a;
+        ThemeImage(tr, tg, tb, ta, tw, th, obj->Handle);
+        col = {Uint8(tr), Uint8(tg), Uint8(tb), Uint8(ta)};
+    }
     DrawQuad(xform, -0.5f, -0.5f, 0.5f, 0.5f, d->UpperLeft.x, d->UpperLeft.y, d->LowerRight.x, d->LowerRight.y, col, tex);
 }
 
@@ -1823,7 +1914,9 @@ void FENativeInterface::DrawString(FEObject *obj)
     ObjectColor(obj, r, g, b, a);
     if (a == 0)
         return;
+    ThemeText(r, g, b);
     SDL_Color col = {Uint8(r), Uint8(g), Uint8(b), Uint8(a)};
+    const SDL_Color shadow = {4, 8, 20, Uint8(a * 0.55f)};
     SDL_Texture *tex = TextureFor(f.TextureHash());
     if (!tex)
         return;
@@ -1858,6 +1951,9 @@ void FENativeInterface::DrawString(FEObject *obj)
         float kern = prev ? static_cast<float>(f.Kern(gl, prev)) : 0.0f;
         float gw = std::max<float>(gl->width, 4.0f);
         float x0 = x + kern + gl->offsetX, y0 = y + gl->offsetY;
+        if (ThemeOn() && a > 60) // a soft drop shadow lifts the text off the glass
+            DrawQuad(xform, x0 + 1.2f, y0 + 1.2f, x0 + 1.2f + gw, y0 + 1.2f + gl->height, float(gl->u) / tw, float(gl->v) / th,
+                     float(gl->u + gl->width + 1) / tw, float(gl->v + gl->height) / th, shadow, tex);
         DrawQuad(xform, x0, y0, x0 + gw, y0 + gl->height, float(gl->u) / tw, float(gl->v) / th,
                  float(gl->u + gl->width + 1) / tw, float(gl->v + gl->height) / th, col, tex);
         x += gl->advanceX + kern;
