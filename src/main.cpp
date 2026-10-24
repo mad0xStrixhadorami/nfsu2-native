@@ -668,6 +668,8 @@ int main(int argc, char **argv)
     Minimap minimap; // the HUD's round map (#259)
     bool mapNative = false, mapRotate = true; // the Unbound-style native map is being drawn (#296)
     Uint32 lastFxTicks = 0;
+    unsigned mapFrame = 0;
+    bool mapFresh = true;
     float mapWindow = 260.0f;
     std::vector<uint32_t> minimapPixels;
     bool minimapBound = false;
@@ -2314,7 +2316,10 @@ int main(int argc, char **argv)
                     mapNative = modernUi.Ready() && race.ModernHud() && !getenv("NFSU2_CLASSIC_MAP");
                     mapWindow = window, mapRotate = mode == 2;
                     if (mapNative) {
-                        minimap.RenderModern(car.X(), car.Y(), car.Yaw(), window, mapRotate, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
+                        mapFrame++;
+                        mapFresh = (mapFrame & 1) == 0 || minimapPixels.size() != 256 * 256; // the image refreshes at 30 Hz: the arrow is live
+                        if (mapFresh)
+                            minimap.RenderModern(car.X(), car.Y(), car.Yaw(), window, mapRotate, route.Valid() ? &route : nullptr, dots, 256, minimapPixels);
                         if (FEObject *mo = hud->FindObjectByHash(kMapObj))
                             mo->Flags |= 1u;
                         if (FEObject *no = hud->FindObjectByHash(kNorthObj))
@@ -2537,7 +2542,7 @@ int main(int argc, char **argv)
                     static const char *const kEventNames[] = {"CIRCUIT", "SPRINT", "DRAG", "DRIFT", "U.R.L.", "RACE", "RACE", "RACE", "RACE", "FREE ROAM", "STREET X"};
                     const int rt = race.RaceType();
                     mh.eventName = race.IsFreeRun() ? "FREE ROAM" : (rt >= 0 && rt <= 10 ? kEventNames[rt] : "RACE");
-                    mh.mapPixels = minimapPixels.data(), mh.mapSize = 256, mh.mapRotate = mapRotate, mh.mapYaw = car.Yaw(), mh.mapMetres = mapWindow;
+                    mh.mapNew = mapFresh, mh.mapPixels = minimapPixels.data(), mh.mapSize = 256, mh.mapRotate = mapRotate, mh.mapYaw = car.Yaw(), mh.mapMetres = mapWindow;
                     mh.finishKm = (race.IsFreeRun() || race.RaceLength() < 50.0f || !route.Valid()) ? -1.0f : std::max(0.0f, (race.RaceLength() - race.PlayerDistance()) * 0.001f);
                 }
                 // Wind (ISSUES #292): streaks from ~90 km/h, full by ~200; nitrous adds a blue tunnel.

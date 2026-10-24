@@ -35,6 +35,8 @@ public:
 
 private:
     std::vector<uint8_t> m_road; // 255 on a road
+    std::vector<uint8_t> m_edge, m_glow; // derived once at build: the road's inner edge, and the road blurred (for the glow), see BuildDerived
+    void BuildDerived();
     int m_w = 0, m_h = 0;
     float m_x0 = 0, m_y0 = 0;
     static constexpr float kRes = 1.5f; // metres per bitmap pixel

@@ -44,7 +44,45 @@ void Minimap::Build(const std::vector<float> &t)
                     m_road[size_t(py) * size_t(m_w) + size_t(px)] = 255;
             }
     }
+    BuildDerived();
     printf("[Minimap] road bitmap %d x %d (%.1f m / px), %zu road triangles\n", m_w, m_h, kRes, t.size() / 6);
+}
+
+// The edge and glow images of the modern map, computed once instead of 12 extra taps per pixel per frame (the first version cost 14 ms).
+void Minimap::BuildDerived()
+{
+    m_edge.assign(m_road.size(), 0);
+    m_glow.assign(m_road.size(), 0);
+    if (m_w < 8 || m_h < 8)
+        return;
+    auto at = [&](int x, int y) { return (x < 0 || y < 0 || x >= m_w || y >= m_h) ? 0 : int(m_road[size_t(y) * size_t(m_w) + size_t(x)]); };
+    for (int y = 0; y < m_h; ++y)
+        for (int x = 0; x < m_w; ++x) {
+            const int c = at(x, y);
+            if (!c)
+                continue;
+            const int nb = std::min({at(x + 2, y), at(x - 2, y), at(x, y + 2), at(x, y - 2)});
+            m_edge[size_t(y) * size_t(m_w) + size_t(x)] = uint8_t(c * (255 - nb) / 255);
+        }
+    // glow: a separable box blur of the road, radius 3 pixels (4.5 m)
+    std::vector<uint8_t> tmp(m_road.size(), 0);
+    const int R = 3;
+    for (int y = 0; y < m_h; ++y)
+        for (int x = 0; x < m_w; ++x) {
+            int sum = 0;
+            for (int k = -R; k <= R; ++k)
+                sum += at(x + k, y);
+            tmp[size_t(y) * size_t(m_w) + size_t(x)] = uint8_t(sum / (2 * R + 1));
+        }
+    for (int y = 0; y < m_h; ++y)
+        for (int x = 0; x < m_w; ++x) {
+            int sum = 0;
+            for (int k = -R; k <= R; ++k) {
+                const int yy = y + k;
+                sum += (yy < 0 || yy >= m_h) ? 0 : int(tmp[size_t(yy) * size_t(m_w) + size_t(x)]);
+            }
+            m_glow[size_t(y) * size_t(m_w) + size_t(x)] = uint8_t(sum / (2 * R + 1));
+        }
 }
 
 void Minimap::BuildFromLinks(const std::vector<float> &seg, float width)
@@ -78,6 +116,7 @@ void Minimap::BuildFromLinks(const std::vector<float> &seg, float width)
                 }
         }
     }
+    BuildDerived();
     printf("[Minimap] city map from %zu lane links: bitmap %d x %d, roads %.0f m wide\n", seg.size() / 4, m_w, m_h, width);
 }
 
@@ -207,11 +246,11 @@ void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rot
         sx = (u / R * 0.5f + 0.5f) * n;
         sv = (0.5f - v / R * 0.5f) * n;
     };
-    auto roadAt = [&](float bx, float by) { // bilinear road coverage 0..1 (smooth edges)
+    auto sampleImg = [&](const std::vector<uint8_t> &img, float bx, float by) { // bilinear 0..1
         bx -= 0.5f, by -= 0.5f;
         const int x = int(std::floor(bx)), y = int(std::floor(by));
         const float fx = bx - float(x), fy = by - float(y);
-        auto at = [&](int xx, int yy) { return (xx < 0 || yy < 0 || xx >= m_w || yy >= m_h) ? 0.0f : float(m_road[size_t(yy) * size_t(m_w) + size_t(xx)]); };
+        auto at = [&](int xx, int yy) { return (xx < 0 || yy < 0 || xx >= m_w || yy >= m_h) ? 0.0f : float(img[size_t(yy) * size_t(m_w) + size_t(xx)]); };
         return ((at(x, y) * (1 - fx) + at(x + 1, y) * fx) * (1 - fy) + (at(x, y + 1) * (1 - fx) + at(x + 1, y + 1) * fx) * fy) * (1.0f / 255.0f);
     };
     auto blendPx = [&](int x, int y, float r, float g, float b, float a) {
@@ -235,17 +274,10 @@ void Minimap::RenderModern(float px, float py, float yaw, float metres, bool rot
             float wx, wy;
             toWorld(u, v, wx, wy);
             const float bx = (wx - m_x0) / kRes, by = (wy - m_y0) / kRes;
-            const float c0 = roadAt(bx, by);
-            // roads: the fill, its edge (inside, against the nearest non-road) and a soft glow around it
-            const float e = 2.2f;
-            const float nb = std::min({roadAt(bx + e, by), roadAt(bx - e, by), roadAt(bx, by + e), roadAt(bx, by - e)});
-            const float edge = std::clamp(c0 * (1.0f - nb) * 1.25f, 0.0f, 1.0f);
-            float glow = 0.0f;
-            for (int k = 0; k < 8; ++k) {
-                const float a = float(k) * 0.785398f;
-                glow += roadAt(bx + std::cos(a) * 4.5f, by + std::sin(a) * 4.5f);
-            }
-            glow = (glow * 0.125f) * (1.0f - c0);
+            // three bilinear lookups: the road, its inner edge and its blurred glow (the last two are precomputed at build)
+            const float c0 = sampleImg(m_road, bx, by);
+            const float edge = std::clamp(sampleImg(m_edge, bx, by) * 1.25f, 0.0f, 1.0f);
+            const float glow = sampleImg(m_glow, bx, by) * (1.0f - c0);
             // Frosted glass (NFS Unbound): a pale desaturated ground that lets the scene show through, darker towards the rim, with the roads
             // as thin pale lines over a faint fill.
             const float vig = 1.0f - 0.55f * rr * rr * rr;

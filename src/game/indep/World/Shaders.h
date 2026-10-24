@@ -65,6 +65,18 @@ float vnoise(vec2 p) {
     return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y);
 }
 #ifdef FULL
+float crackEdge(vec2 p) { // Worley edge distance: ~0 along the cell borders, which become the cracks
+    vec2 i = floor(p), f = fract(p);
+    float d1 = 8.0, d2 = 8.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            vec2 g = vec2(float(x), float(y));
+            vec2 o = vec2(h12(i + g), h12(i + g + 17.0));
+            float d = length(g + o - f);
+            if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+        }
+    return d2 - d1;
+}
 vec3 matC(sampler2D s, vec2 uv) { // two taps at different scales blended by noise break up the repeat
     vec3 a = texture2D(s, uv).rgb, b = texture2D(s, uv * 0.27 + vec2(0.31, 0.17)).rgb;
     return mix(a, b, smoothstep(0.4, 0.6, vnoise(uv * 0.23)) * 0.6);
@@ -165,6 +177,43 @@ void main() {
                 col *= mix(1.0, clamp(mxO / 0.25, 0.55, 1.3), 0.45);       // keep the original's tyre marks and patches
                 float bl = mix(1.0, bumpL(matN(uMN0, ru), Tg, Bg, up), 0.8);
                 c.rgb = mix(c.rgb, col * vColor.rgb * 1.15 * bl, roadM * nearM * 0.92);
+            }
+            // ---- a worn, weathered road surface (ISSUES #299) -----------------------------------------------------------------------
+            if (roadM > 0.01) {
+                vec2 w2 = vWorld.xy;
+                float nearC = 1.0 - smoothstep(30.0, 55.0, vDist);          // cracks and gravel only close up (no shimmer far away)
+                float macro = vnoise(w2 * 0.045) * 0.6 + vnoise(w2 * 0.17) * 0.4;
+                float repair = smoothstep(0.60, 0.625, vnoise(w2 * 0.23 + 7.0));  // patched stretches: darker, smoother, with hard edges
+                float rough = clamp(0.62 + 0.3 * (macro - 0.5) * 2.0 - 0.34 * repair, 0.18, 0.95);
+                vec3 road = c.rgb;
+                road *= 0.88 + 0.26 * macro;                                // broad tonal drift of the surface
+                road *= 1.0 - 0.20 * repair;
+                vec2 warp = vec2(vnoise(w2 * 2.3), vnoise(w2 * 2.3 + 9.0)) - 0.5;
+                float ce = crackEdge(w2 / 0.8 + warp * 0.9);                // wiggly, small-celled
+                float crk = (1.0 - smoothstep(0.0, 0.028, ce)) * smoothstep(0.62, 0.76, vnoise(w2 * 0.13 + 3.0)) * (1.0 - repair);
+                float hair = (1.0 - smoothstep(0.0, 0.012, crackEdge(w2 / 0.27 + warp * 1.4))) * smoothstep(0.55, 0.8, vnoise(w2 * 0.31 + 5.0));
+                road *= 1.0 - (0.34 * crk + 0.16 * hair) * nearC;           // sparse, fine, dark cracks in the worn stretches
+                float oil = smoothstep(0.74, 0.80, vnoise(w2 * 0.8 + 11.0)) * smoothstep(0.45, 0.65, vnoise(w2 * 0.09));
+                road *= 1.0 - 0.28 * oil;                                   // oil and rubber stains
+                road += step(0.992, h12(floor(w2 * 55.0))) * 0.10 * nearC;   // a few bright grains of aggregate
+                // sheen: Fresnel reflection of the sky (the far road turns glossy at a grazing angle) and a sun glint
+                vec3 Vr = normalize(uCam - vWorld);
+                vec3 Lr = normalize(vec3(0.40, 0.30, 0.866));
+                float fr = 0.035 + 0.965 * pow(1.0 - clamp(Vr.z, 0.0, 1.0), 5.0);
+                vec3 skyC = mix(vec3(0.07, 0.10, 0.18), vec3(0.60, 0.72, 0.90), uDay) * mix(0.55, 1.0, clamp(1.0 - Vr.z, 0.0, 1.0));
+                vec3 Hr = normalize(Lr + Vr);
+                float spec = pow(max(Hr.z, 0.0), mix(24.0, 90.0, 1.0 - rough)) * (1.0 - rough) * 0.55 * uDay;
+                road += skyC * fr * (1.0 - rough) * 0.6 + vec3(1.0, 0.95, 0.85) * spec;
+                c.rgb = mix(c.rgb, road, roadM * (1.0 - smoothstep(250.0, 520.0, vDist)));
+            }
+            // worn lane paint: yellow centre lines chipped and faded unevenly
+            {
+                float yel = flatUp * (1.0 - isProp) * smoothstep(0.30, 0.50, satO) * smoothstep(0.35, 0.55, mxO);
+                if (yel > 0.01) {
+                    float wearP = 0.70 + 0.30 * vnoise(vWorld.xy * 5.5) * (0.6 + 0.4 * vnoise(vWorld.xy * 1.3));
+                    c.rgb *= mix(1.0, wearP, yel);
+                    c.rgb = mix(vec3(dot(c.rgb, vec3(0.3, 0.59, 0.11))), c.rgb, 1.0 + 0.18 * yel); // a touch more punch
+                }
             }
             // pavements and plazas: grey block pavers, cream paving in Jerusalem and on the Tel Aviv promenade
             float paveM = flatUp * (1.0 - isProp) * (1.0 - roadM) * smoothstep(0.40, 0.56, mxO) * (1.0 - smoothstep(0.25, 0.5, satO));

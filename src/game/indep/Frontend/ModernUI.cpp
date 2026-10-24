@@ -169,7 +169,7 @@ void ModernUI::ArcSegment(float cx, float cy, float r0, float r1, float a0, floa
 
 void ModernUI::Arc(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c0, SDL_Color c1)
 {
-    const int steps = std::max(2, int(std::ceil(std::fabs(a1 - a0) / 0.06f)));
+    const int steps = std::max(2, int(std::ceil(std::fabs(a1 - a0) / 0.09f)));
     auto mix = [&](float t) {
         return SDL_Color{Uint8(c0.r + (c1.r - c0.r) * t), Uint8(c0.g + (c1.g - c0.g) * t), Uint8(c0.b + (c1.b - c0.b) * t), Uint8(c0.a + (c1.a - c0.a) * t)};
     };
@@ -271,7 +271,8 @@ void ModernUI::DrawMinimap(int w, int h, const Hud &hud, float t)
     }
     if (!m_map)
         return;
-    SDL_UpdateTexture(m_map, nullptr, hud.mapPixels, hud.mapSize * 4);
+    if (hud.mapNew)
+        SDL_UpdateTexture(m_map, nullptr, hud.mapPixels, hud.mapSize * 4);
     // NFS Unbound's map: a frosted glass disc (the scene shows through), a thin white double ring with a colour fringe, a yellow arrow with
     // green rings, and the event name in a wide face underneath.
     const float s = float(h) / 720.0f;
@@ -279,8 +280,8 @@ void ModernUI::DrawMinimap(int w, int h, const Hud &hud, float t)
     const SDL_FRect dst{cx - R, cy - R, R * 2.0f, R * 2.0f};
     SDL_RenderCopyF(m_r, m_map, nullptr, &dst);
     // a soft inner shade towards the rim
-    for (int i = 0; i < 7; ++i)
-        Ring(cx, cy, R - float(i + 1) * 2.4f * s, R - float(i) * 2.4f * s, {0, 0, 0, Uint8(5 + (6 - i) * 1)});
+    for (int i = 0; i < 4; ++i)
+        Ring(cx, cy, R - float(i + 1) * 4.2f * s, R - float(i) * 4.2f * s, {0, 0, 0, Uint8(7 + (3 - i) * 2)});
     Ring(cx + 1.3f * s, cy, R - 0.6f * s, R + 0.9f * s, {255, 70, 90, 60});  // chromatic fringe
     Ring(cx - 1.3f * s, cy, R - 0.6f * s, R + 0.9f * s, {70, 220, 255, 60});
     Ring(cx, cy, R - 0.9f * s, R + 1.2f * s, {250, 252, 255, 238});

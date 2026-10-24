@@ -27,6 +27,7 @@ public:
         // The map (ISSUES #296): the RGBA window from Minimap::RenderModern, its heading and how far to the finish.
         const uint32_t *mapPixels = nullptr;
         int mapSize = 0;
+        bool mapNew = true;    // the pixels changed since the last draw (the map image refreshes at 30 Hz)
         bool mapRotate = true; // heading up; otherwise north up
         float mapYaw = 0;      // the car's yaw (rad)
         float mapMetres = 0;   // the window's diameter in metres (the scale label)
