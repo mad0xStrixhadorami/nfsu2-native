@@ -69,6 +69,7 @@ struct PropBuilder {
     std::vector<TrackWorld::RTriPublic> *out;
     size_t cap;
     std::vector<TrackWorld::PropSolid> *solids = nullptr;
+    uint8_t alpha = 254; // 254 = prop (skips the facade skin); 255 = an ordinary wall the world shader skins
     void Solid(float x, float y, float r, float z, float h)
     {
         if (solids)
@@ -91,7 +92,7 @@ struct PropBuilder {
             t.v[i].r = uint8_t(std::min(255.0f, col[0] * k));
             t.v[i].g = uint8_t(std::min(255.0f, col[1] * k));
             t.v[i].b = uint8_t(std::min(255.0f, col[2] * k));
-            t.v[i].a = 254;
+            t.v[i].a = alpha;
         }
         out->push_back(t);
     }
@@ -427,6 +428,262 @@ void CafeSet(PropBuilder &b, V3 base, float yaw, Rng &r)
     b.Cone(base + V3{0, 0, 2.15f}, 1.45f, 0.5f, 8, umb[int(r.f() * 3.99f)]);
 }
 } // namespace
+
+
+// ---- Bauhaus ("White City") buildings (ISSUES #279): replace suitable XB_* buildings of the Tel Aviv district with
+// generated white blocks of the same footprint and height: ribbon windows under concrete eyebrows, a rounded corner,
+// a glazed stair tower, a recessed penthouse, pilotis on some, and a parapeted roof with solar heaters. ----
+namespace {
+struct P2 {
+    float x, y;
+};
+
+// vertical wall strips along a convex footprint polygon (counter-clockwise), from z0 to z1
+void Walls(PropBuilder &b, const std::vector<P2> &poly, float z0, float z1, const uint8_t col[3])
+{
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const P2 &p = poly[i], &q = poly[(i + 1) % poly.size()];
+        b.Quad({p.x, p.y, z0}, {q.x, q.y, z0}, {q.x, q.y, z1}, {p.x, p.y, z1}, col);
+    }
+}
+
+void RoofFan(PropBuilder &b, const std::vector<P2> &poly, float z, const uint8_t col[3])
+{
+    P2 c{0, 0};
+    for (const P2 &p : poly)
+        c.x += p.x / float(poly.size()), c.y += p.y / float(poly.size());
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const P2 &p = poly[i], &q = poly[(i + 1) % poly.size()];
+        b.Tri({c.x, c.y, z}, {p.x, p.y, z}, {q.x, q.y, z}, col);
+    }
+}
+
+// Ribbon windows, mullions and eyebrows on every edge of the footprint for the floors [f0, f1).
+void Ribbons(PropBuilder &b, const std::vector<P2> &poly, float zBase, float fh, int f0, int f1, bool pilotisBelow)
+{
+    static const uint8_t glass[3] = {46, 78, 108}, brow[3] = {236, 234, 226}, mull[3] = {240, 240, 236};
+    (void)pilotisBelow;
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const P2 &p = poly[i], &q = poly[(i + 1) % poly.size()];
+        const float len = std::hypot(q.x - p.x, q.y - p.y);
+        if (len < 0.5f)
+            continue;
+        const V3 u{(q.x - p.x) / len, (q.y - p.y) / len, 0}, n{u.y, -u.x, 0}; // CCW polygon: the outward side is to the right
+        const bool arc = len < 2.6f;
+        const float inset = arc ? 0.0f : std::min(0.9f, len * 0.12f);
+        for (int f = f0; f < f1; ++f) {
+            const float zf = zBase + f * fh;
+            const V3 a{p.x + u.x * inset, p.y + u.y * inset, zf + 0.9f}, c{q.x - u.x * inset, q.y - u.y * inset, zf + 0.9f};
+            b.Quad(a + n * 0.03f, c + n * 0.03f, c + n * 0.03f + V3{0, 0, 1.45f}, a + n * 0.03f + V3{0, 0, 1.45f}, glass);
+            // eyebrow shade over the window band
+            b.Box(V3{p.x + u.x * (inset - 0.1f), p.y + u.y * (inset - 0.1f), zf + 2.38f}, u * (len - 2 * inset + 0.2f), n * (arc ? 0.45f : 0.55f), {0, 0, 0.1f}, brow);
+            // mullions every ~2.4 m
+            if (!arc) {
+                const int m = int((len - 2 * inset) / 2.4f);
+                for (int k = 1; k <= m; ++k) {
+                    const float t = inset + (len - 2 * inset) * float(k) / float(m + 1);
+                    const V3 base{p.x + u.x * t, p.y + u.y * t, zf + 0.9f};
+                    b.Quad(base + n * 0.05f - u * 0.04f, base + n * 0.05f + u * 0.04f, base + n * 0.05f + u * 0.04f + V3{0, 0, 1.45f}, base + n * 0.05f - u * 0.04f + V3{0, 0, 1.45f}, mull);
+                }
+            }
+        }
+    }
+}
+} // namespace
+
+bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::Triangle> &tris, const float *pos, const float *m)
+{
+    if (strncmp(name, "XB_", 3) != 0 || tris.empty())
+        return false;
+    static size_t cXB = 0, cRot = 0, cSize = 0, cDist = 0, cTall = 0;
+    ++cXB;
+    if (getenv("NFSU2_PROP_DEBUG") && cXB % 400 == 0)
+        printf("[BauhausStats] XB %zu rotation-rejected %zu size-rejected %zu (tall %zu) district-rejected %zu\n", cXB, cRot, cSize, cTall, cDist);
+    // the instance's oriented footprint from its own geometry: rows 0 / 1 of the matrix are the world directions of the solid's
+    // x / y axes (with any scale); the solid must stand upright and not be sheared or mirrored upside down
+    const float sx = std::hypot(m[0], m[1]), sy = std::hypot(m[3], m[4]);
+    if (sx < 0.2f || sy < 0.2f || m[8] < 0.2f || std::fabs(m[0] * m[3] + m[1] * m[4]) > 0.14f * sx * sy)
+        return ++cRot, false;
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (const SolidMesh::Triangle &t : tris)
+        for (const SolidMesh::Point &p : t.v) {
+            const float c[3] = {p.x, p.y, p.z};
+            for (int k = 0; k < 3; ++k)
+                lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
+        }
+    float W = (hi[0] - lo[0]) * sx, D = (hi[1] - lo[1]) * sy, H = (hi[2] - lo[2]) * m[8];
+    if (W < 9.0f || D < 9.0f || W > 65.0f || D > 65.0f || H < 7.0f || H > 48.0f)
+        return ++cSize, cTall += H > 48.0f, false;
+    const float ux = m[0] / sx, uy = m[1] / sx, vx = m[3] / sy, vy = m[4] / sy; // unit axes in the world
+    const float ox = pos[0] + lo[0] * m[0] + lo[1] * m[3], oy = pos[1] + lo[0] * m[1] + lo[1] * m[4]; // world position of the local corner
+    const float cx = ox + ux * W * 0.5f + vx * D * 0.5f, cy = oy + uy * W * 0.5f + vy * D * 0.5f;
+    if (DistrictAt(cx, cy).tlv < 0.26f)
+        return ++cDist, false;
+    // companions (window / neon overlays of the same building) share the footprint: build once, hide the rest
+    const int64_t key = Key(int(cx * 0.5f), int(cy * 0.5f)) ^ (int64_t(int(W)) << 50) ^ (int64_t(int(D)) << 40);
+    if (!m_bauhausDone.insert(key).second)
+        return true;
+    if (m_bauhaus.size() > 1200000)
+        return false;
+    if (getenv("NFSU2_PROP_DEBUG") && m_bauhausDone.size() % 10 == 1)
+        printf("[BauhausAt] %s %.1f %.1f z %.1f W %.1f D %.1f H %.1f yaw %.0f\n", name, cx, cy, pos[2] + lo[2] * m[8], W, D, H, std::atan2(uy, ux) * 57.3f);
+
+    // generated in the footprint's own frame (x along W, y along D, z absolute), then carried into the world
+    std::vector<RTri> local;
+    PropBuilder b{&local, 4000000, nullptr};
+    Rng rng(HashXY(int(cx * 10), int(cy * 10), 77));
+    const float x0 = 0.3f, y0 = 0.3f, x1 = W - 0.3f, y1 = D - 0.3f, zb = pos[2] + lo[2] * m[8], zt = zb + H;
+    W = x1 - x0, D = y1 - y0, H = zt - zb;
+    const int floors = std::max(2, int(H / 3.3f + 0.5f));
+    const float fh = H / float(floors);
+    static const uint8_t white[3] = {244, 242, 234}, roofCol[3] = {160, 160, 156}, parapet[3] = {238, 236, 228}, col2[3] = {232, 229, 220}, shop[3] = {36, 56, 78};
+
+    // footprint: a rectangle, one corner rounded
+    std::vector<P2> poly;
+    const bool rounded = rng.f() < 0.75f;
+    const int corner = int(rng.f() * 3.99f);
+    const float R = std::min(4.5f, std::min(W, D) * 0.28f);
+    const P2 rc[4] = {{x1, y0}, {x1, y1}, {x0, y1}, {x0, y0}}; // CCW corners starting at the lower right
+    for (int i = 0; i < 4; ++i) {
+        if (rounded && i == corner) {
+            const P2 c = rc[i];
+            const float sx = c.x > (x0 + x1) * 0.5f ? -1.0f : 1.0f, sy = c.y > (y0 + y1) * 0.5f ? -1.0f : 1.0f;
+            const P2 ctr{c.x + sx * R, c.y + sy * R};
+            // arc from the edge before to the edge after (CCW)
+            const float a0 = std::atan2(-sy * 0.0f + (i % 2 ? 0.0f : 0.0f), 1.0f);
+            (void)a0;
+            const P2 from = i == 0 ? P2{c.x, c.y + R} : i == 1 ? P2{c.x - R, c.y} : i == 2 ? P2{c.x, c.y - R} : P2{c.x + R, c.y};
+            const P2 to = i == 0 ? P2{c.x - R, c.y} : i == 1 ? P2{c.x, c.y - R} : i == 2 ? P2{c.x + R, c.y} : P2{c.x, c.y + R};
+            // the previous edge ends at `to`'s counterpart; walk the quarter circle about ctr
+            const float t0 = std::atan2(from.y - ctr.y, from.x - ctr.x), t1 = std::atan2(to.y - ctr.y, to.x - ctr.x);
+            // CCW polygon: the outer arc is traversed from the incoming edge's end to the outgoing edge's start
+            float d = t1 - t0;
+            while (d > 3.14159f) d -= 6.28318f;
+            while (d < -3.14159f) d += 6.28318f;
+            // the incoming edge arrives at `to`, the outgoing leaves from `from` (see the rectangle order): start at `to`
+            const float s0 = t1, s1 = t0;
+            float dd = s1 - s0;
+            while (dd > 3.14159f) dd -= 6.28318f;
+            while (dd < -3.14159f) dd += 6.28318f;
+            for (int k = 0; k <= 5; ++k)
+                poly.push_back({ctr.x + R * std::cos(s0 + dd * float(k) / 5.0f), ctr.y + R * std::sin(s0 + dd * float(k) / 5.0f)});
+        } else {
+            poly.push_back(rc[i]);
+        }
+    }
+    const bool pilotis = H > 10.0f && rng.f() < 0.25f;
+    const bool penthouse = floors >= 4 && rng.f() < 0.45f;
+    const int topFloors = penthouse ? floors - 1 : floors;
+    const float zGround = zb + (pilotis ? fh : 0.0f);
+
+    b.alpha = 255; // walls: ordinary triangles, so the world shader gives them the Tel Aviv render
+    Walls(b, poly, zGround, zb + topFloors * fh, white);
+    b.alpha = 254;
+    // ground floor: shop fronts, or the open pilotis with its columns and recessed glazing
+    if (pilotis) {
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const P2 &p = poly[i], &q = poly[(i + 1) % poly.size()];
+            const float len = std::hypot(q.x - p.x, q.y - p.y);
+            if (len < 3.0f)
+                continue;
+            const int cols = std::max(2, int(len / 3.6f));
+            for (int k = 0; k <= cols; ++k) {
+                const float t = len * float(k) / float(cols);
+                const V3 base{p.x + (q.x - p.x) / len * t, p.y + (q.y - p.y) / len * t, zb};
+                b.Prism(base, base + V3{0, 0, fh}, 0.24f, 0.24f, 8, parapet);
+            }
+        }
+    } else {
+        b.alpha = 255;
+        Walls(b, poly, zb, zb + fh, white);
+        b.alpha = 254;
+        for (size_t i = 0; i < poly.size(); ++i) { // shop windows
+            const P2 &p = poly[i], &q = poly[(i + 1) % poly.size()];
+            const float len = std::hypot(q.x - p.x, q.y - p.y);
+            if (len < 3.0f)
+                continue;
+            const V3 u{(q.x - p.x) / len, (q.y - p.y) / len, 0}, n{u.y, -u.x, 0};
+            const V3 a{p.x + u.x * 0.8f, p.y + u.y * 0.8f, zb + 0.35f}, c{q.x - u.x * 0.8f, q.y - u.y * 0.8f, zb + 0.35f};
+            b.Quad(a + n * 0.03f, c + n * 0.03f, c + n * 0.03f + V3{0, 0, 2.55f}, a + n * 0.03f + V3{0, 0, 2.55f}, shop);
+            b.Box(V3{p.x + u.x * 0.6f, p.y + u.y * 0.6f, zb + 2.95f}, u * (len - 1.2f), n * 0.9f, {0, 0, 0.12f}, col2);
+        }
+    }
+    Ribbons(b, poly, zb, fh, 1, topFloors, pilotis);
+    // recessed penthouse under a wide slab
+    float roofZ = zb + topFloors * fh;
+    std::vector<P2> top = poly;
+    if (penthouse) {
+        b.Box(V3{x0 - 0.5f, y0 - 0.5f, roofZ}, {W + 1.0f, 0, 0}, {0, D + 1.0f, 0}, {0, 0, 0.4f}, parapet);
+        roofZ += 0.4f;
+        const float in = std::min(2.6f, std::min(W, D) * 0.18f);
+        top = {{x1 - in, y0 + in}, {x1 - in, y1 - in}, {x0 + in, y1 - in}, {x0 + in, y0 + in}};
+        std::vector<P2> ccw = {{x1 - in, y0 + in}, {x1 - in, y1 - in}, {x0 + in, y1 - in}, {x0 + in, y0 + in}};
+        b.alpha = 255;
+        Walls(b, ccw, roofZ, roofZ + fh, white);
+        b.alpha = 254;
+        Ribbons(b, ccw, roofZ, fh, 0, 1, false);
+        top = ccw;
+        roofZ += fh;
+    }
+    // roof: flat slab, parapet ring
+    RoofFan(b, top, roofZ + 0.02f, roofCol);
+    for (size_t i = 0; i < top.size(); ++i) {
+        const P2 &p = top[i], &q = top[(i + 1) % top.size()];
+        const float len = std::hypot(q.x - p.x, q.y - p.y);
+        if (len < 0.3f)
+            continue;
+        const V3 u{(q.x - p.x) / len, (q.y - p.y) / len, 0}, n{u.y, -u.x, 0};
+        b.Box(V3{p.x, p.y, roofZ} - n * 0.12f, u * len, n * 0.12f, {0, 0, 0.55f}, parapet);
+    }
+    // glazed stair tower on one street-facing facade, rising above the roof
+    if (rng.f() < 0.55f && W > 12.0f) {
+        const float tx = x0 + W * (0.3f + 0.4f * rng.f()), tw = 2.2f;
+        const bool front = rng.f() < 0.5f;
+        const float ty = front ? y0 : y1, dir = front ? -1.0f : 1.0f;
+        b.Box(V3{tx - tw * 0.5f, ty - (front ? 0.7f : 0.0f), zb}, {tw, 0, 0}, {0, 0.7f, 0}, {0, 0, zt - zb + 1.8f}, white);
+        const float gy = ty + dir * 0.72f;
+        b.Quad({tx - 0.55f, gy, zb + 1.0f}, {tx + 0.55f, gy, zb + 1.0f}, {tx + 0.55f, gy, roofZ + 1.2f}, {tx - 0.55f, gy, roofZ + 1.2f}, shop);
+    }
+    // roof furniture: solar heaters, condensers, tanks, aerials
+    {
+        float rx0 = 1e9f, ry0 = 1e9f, rx1 = -1e9f, ry1 = -1e9f;
+        for (const P2 &p : top)
+            rx0 = std::min(rx0, p.x), ry0 = std::min(ry0, p.y), rx1 = std::max(rx1, p.x), ry1 = std::max(ry1, p.y);
+        const int items = 2 + int(rng.f() * (std::min(W, D) / 5.0f));
+        for (int i = 0; i < items; ++i) {
+            const V3 q{rx0 + 1.6f + (rx1 - rx0 - 3.2f) * rng.f(), ry0 + 1.6f + (ry1 - ry0 - 3.2f) * rng.f(), roofZ + 0.02f};
+            const float k = rng.f();
+            if (k < 0.5f)
+                SolarHeater(b, q, 1.5708f * int(rng.f() * 3.99f));
+            else if (k < 0.72f)
+                Condenser(b, q, rng.f() * 6.28f, false, {0, 0, 1});
+            else if (k < 0.86f)
+                Antenna(b, q, rng.f() * 3.14f);
+            else
+                WaterTank(b, q);
+        }
+    }
+    // carry the local geometry to the world: (x, y) -> origin + u x + v y
+    for (RTri &t : local)
+        for (RVertex &v : t.v) {
+            const float lx = v.x, ly = v.y;
+            v.x = ox + ux * lx + vx * ly, v.y = oy + uy * lx + vy * ly;
+        }
+    m_bauhaus.insert(m_bauhaus.end(), local.begin(), local.end());
+    return true;
+}
+
+void TrackWorld::FlushBauhaus()
+{
+    for (const RTri &p : m_bauhaus) {
+        const float cx = (p.v[0].x + p.v[1].x + p.v[2].x) / 3.0f, cy = (p.v[0].y + p.v[1].y + p.v[2].y) / 3.0f;
+        m_cells[CellKey(int(std::floor(cx / kCellSize)), int(std::floor(cy / kCellSize)))].render.push_back(p);
+    }
+    if (!m_bauhaus.empty())
+        printf("[Bauhaus] %zu buildings replaced, %zu triangles\n", m_bauhausDone.size(), m_bauhaus.size());
+    m_bauhaus.clear();
+    m_bauhaus.shrink_to_fit();
+}
 
 void TrackWorld::AddIsraeliProps()
 {

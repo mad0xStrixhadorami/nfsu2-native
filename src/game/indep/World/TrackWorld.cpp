@@ -1209,6 +1209,8 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
                 roads.push_back({(bbox[0] + bbox[3]) * 0.5f, (bbox[1] + bbox[4]) * 0.5f, bbox[5],
                                  ex >= ey ? 0.0f : 1.5707963f});
             }
+            if (!getenv("NFSU2_NO_BAUHAUS") && BauhausReplace(name, s.tris, pos, m))
+                continue; // a generated Bauhaus block stands here (ISSUES #279)
             float br, bg, bb;
             BaseColour(kind, br, bg, bb);
             for (const SolidMesh::Triangle &t : s.tris) {
@@ -1389,6 +1391,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             m_start = {r.cx, r.cy, r.z + 2.0f, r.yaw, -0.12f};
         }
     }
+    FlushBauhaus();
     AddIsraeliProps();
     return true;
 }

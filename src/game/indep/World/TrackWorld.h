@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <map>
 #include <vector>
 
@@ -184,6 +185,10 @@ private:
     std::unordered_map<int64_t, std::vector<uint32_t>> m_propGrid; // 16 m cell -> indices into m_propSolids
     bool PropWall(const float *a, const float *b, float *normal) const;
     void AddIsraeliProps(); // ISSUES #273 (IsraelProps.cpp)
+    bool BauhausReplace(const char *name, const std::vector<SolidMesh::Triangle> &tris, const float *pos, const float *rot); // ISSUES #279: true = the instance is replaced / hidden
+    void FlushBauhaus();
+    std::vector<RTri> m_bauhaus;
+    std::unordered_set<int64_t> m_bauhausDone;
     struct Cell {
         std::vector<Tri> tris;    // positions for physics and the software renderer
         std::vector<RTri> render; // consumed by the GL upload
