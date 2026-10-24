@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -337,4 +338,20 @@ void ModernUI::DrawDialog(int w, int h, const std::string &title, const std::vec
             Text(bx + bw * 0.5f, by + 8 * s, 34 * s, i == 0 ? "YES" : "NO", on ? kWhite : SDL_Color{175, 200, 230, 235}, 1);
         }
     }
+}
+
+void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
+{
+    if (!m_font || count <= 0)
+        return;
+    const float s = float(h) / 720.0f, px = 16 * s, py = 16 * s, lh = 21 * s;
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(px - 8 * s, py - 6 * s, 470 * s, lh * float(count) + 12 * s, {0, 0, 0, 175}, {0, 0, 0, 175});
+    for (int i = 0; i < count; ++i) {
+        SDL_Color c = i == 0 ? SDL_Color{120, 255, 160, 255} : SDL_Color{225, 235, 245, 255};
+        if (std::strstr(lines[i], "GPU-bound") || std::strstr(lines[i], "CPU-bound"))
+            c = {255, 190, 70, 255};
+        Text(px, py + lh * float(i), 17 * s, lines[i], c, 0);
+    }
+    (void)w;
 }

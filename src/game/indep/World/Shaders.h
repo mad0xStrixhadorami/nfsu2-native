@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 // GLSL 1.20 sources for the world renderer (ISSUES #263). They keep the fixed-function vertex arrays and matrices.
 namespace Shaders {
 
@@ -20,7 +21,24 @@ void main() {
 }
 )";
 
-inline const char *kWorldFS = R"(#version 120
+// Dev aid (NFSU2_SIMPLE_WORLD_FS=1): the cheapest possible world shader (texture x colour, fog), to separate shader cost from draw cost.
+inline const char *kWorldFSMin = R"(#version 120
+uniform sampler2D uTex;
+uniform vec3 uFogColor;
+uniform float uFogStart;
+uniform float uFogEnd;
+varying vec4 vColor;
+varying vec2 vUV;
+varying float vDist;
+void main() {
+    vec4 c = texture2D(uTex, vUV) * vColor;
+    float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+    c.rgb = mix(c.rgb, uFogColor, f);
+    gl_FragColor = c;
+}
+)";
+
+inline const char *kWorldFSBase = R"(#version 120
 uniform sampler2D uTex;
 uniform vec3 uFogColor;
 uniform float uFogStart;
@@ -31,8 +49,10 @@ uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
 uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
+#ifdef FULL
 uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
 uniform sampler2D uMN0, uMN1, uMN2, uMN3, uMN4;                   // normals: asphalt, pavers, stone, concrete, plaster
+#endif
 varying vec4 vColor;
 varying vec2 vUV;
 varying float vDist;
@@ -43,6 +63,7 @@ float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y);
 }
+#ifdef FULL
 vec3 matC(sampler2D s, vec2 uv) { // two taps at different scales blended by noise break up the repeat
     vec3 a = texture2D(s, uv).rgb, b = texture2D(s, uv * 0.27 + vec2(0.31, 0.17)).rgb;
     return mix(a, b, smoothstep(0.4, 0.6, vnoise(uv * 0.23)) * 0.6);
@@ -56,9 +77,11 @@ float bumpL(vec3 nts, vec3 T, vec3 B, vec3 N) { // lighting ratio of the perturb
     vec3 wn = normalize(T * nts.x + B * nts.y + N * nts.z);
     return (0.5 + 0.7 * max(dot(wn, L), 0.0)) / (0.5 + 0.7 * max(dot(N, L), 0.0));
 }
+#endif
 void main() {
     vec4 t = texture2D(uTex, vUV);
     vec4 c = t * vColor; // the PS2's MODULATE (vertex colours were doubled on the CPU)
+#ifdef FULL
     float wetMask = 0.0;
     if (uWet > 0.0 && vDist < 90.0) {
         // road-like surface: facing up, grey and not bright
@@ -197,6 +220,7 @@ void main() {
         c.rgb = mix(c.rgb, c.rgb * vec3(0.96, 1.01, 1.06) + 0.02, wd.x * uTheme);
         c.rgb = mix(c.rgb, c.rgb * vec3(0.95, 1.05, 0.93), wd.z * 0.6 * uTheme);
     }
+#endif // FULL
     // daylight: the baked lighting is a dusk city; lift it towards a hard Mediterranean sun, warm and a little bleached
     {   // a tone curve, not a gain: shadows lift 2.3x, the highlights stay below white (no blown walls)
         vec3 x = c.rgb * vec3(1.65, 1.58, 1.45);
@@ -214,6 +238,19 @@ void main() {
     gl_FragColor = c;
 }
 )";
+
+// The world fragment shader comes in two variants (ISSUES #282): FULL (district theme, photographic materials, wet roads) for the
+// cells near the camera, and a lite one (colour, daylight curve, fog) for everything far away.  One big shader with runtime
+// branches made every pixel pay for the registers of the whole thing (35 ms vs 13 ms per frame on an integrated GPU).
+inline std::string WorldFSSource(bool full)
+{
+    std::string src = kWorldFSBase;
+    if (full)
+        src.insert(src.find('\n') + 1, "#define FULL 1\n");
+    return src;
+}
+
+
 
 // ---- Office windows: interior mapping (ISSUES #266). The window texels of tall facades are replaced by a procedural
 // room found with a ray through a box grid (Van Dongen's interior mapping): back and side walls, ceiling light panel, floor,

@@ -30,6 +30,8 @@ public:
     // Yes / No question replaces the list (confirmYes = the highlighted answer).
     void DrawDialog(int w, int h, const std::string &title, const std::vector<std::string> &items, int selected, bool confirm,
                     const std::string &question, bool confirmYes, float seconds);
+    // The profiler's overlay (a corner panel of monospaced-looking lines).
+    void DrawOverlay(int w, int h, const char lines[][96], int count);
     ~ModernUI();
 
 private:

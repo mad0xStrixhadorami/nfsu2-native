@@ -15,6 +15,7 @@
 #include "game/indep/World/GLBridge.h"
 #include "game/indep/World/GLShader.h"
 #include "game/indep/World/MaterialLibrary.h"
+#include "game/indep/Perf.h"
 #include "game/indep/World/SignGen.h"
 #include "game/indep/World/Shaders.h"
 
@@ -181,7 +182,11 @@ void TrackWorld::InitShaders()
     m_shadersTried = true;
     if (!GLShader::Load())
         return;
-    m_progWorld = GLShader::Build("world", Shaders::kWorldVS, Shaders::kWorldFS);
+    {
+        const std::string full = Shaders::WorldFSSource(true), lite = Shaders::WorldFSSource(false);
+        m_progWorld = GLShader::Build("world", Shaders::kWorldVS, getenv("NFSU2_SIMPLE_WORLD_FS") ? Shaders::kWorldFSMin : full.c_str());
+        m_progWorldLite = getenv("NFSU2_NO_LOD_SHADER") ? m_progWorld : GLShader::Build("world-lite", Shaders::kWorldVS, getenv("NFSU2_SIMPLE_WORLD_FS") ? Shaders::kWorldFSMin : lite.c_str());
+    }
     m_progInterior = getenv("NFSU2_NO_INTERIORS") ? 0 : GLShader::Build("interior", Shaders::kInteriorVS, Shaders::kInteriorFS);
     m_progCar = GLShader::Build("car", Shaders::kCarVS, Shaders::kCarFS, {{1, "aNormal"}, {2, "aGloss"}, {3, "aAO"}});
     m_progBright = GLShader::Build("bright", Shaders::kPostVS, Shaders::kBrightFS);
@@ -409,50 +414,91 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
 
     static std::vector<Vertex> scratch;
 
-    // The world program: textured scenery with grading and fog (the fixed-function path stays as the fallback).
+    // The world programs: FULL (theme, photographic materials, wet roads) for cells near the camera, LITE for the far ones.  Uniform
+    // locations are looked up once per frame and the per-frame constants are set once; switching only re-uses a program and
+    // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
+    struct WorldUniforms {
+        int tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
+        float lastFogStart = -1.0f, lastFogEnd = -1.0f;
+    };
+    WorldUniforms wuFull, wuLite;
+    auto queryWorldUniforms = [&](unsigned prog, WorldUniforms &u) {
+        u.tex = GLShader::Uniform(prog, "uTex"), u.fogColor = GLShader::Uniform(prog, "uFogColor");
+        u.fogStart = GLShader::Uniform(prog, "uFogStart"), u.fogEnd = GLShader::Uniform(prog, "uFogEnd");
+        u.grade = GLShader::Uniform(prog, "uGrade"), u.cam = GLShader::Uniform(prog, "uCam"), u.theme = GLShader::Uniform(prog, "uTheme");
+        u.day = GLShader::Uniform(prog, "uDay"), u.matOn = GLShader::Uniform(prog, "uMatOn"), u.wet = GLShader::Uniform(prog, "uWet");
+        for (int i = 0; i < MaterialLibrary::kColours; ++i) {
+            char name[8];
+            snprintf(name, sizeof(name), "uMC%d", i);
+            u.mc[i] = GLShader::Uniform(prog, name);
+        }
+        for (int i = 0; i < MaterialLibrary::kNormals; ++i) {
+            char name[8];
+            snprintf(name, sizeof(name), "uMN%d", i);
+            u.mn[i] = GLShader::Uniform(prog, name);
+        }
+    };
+    const bool mats = m_progWorld && MaterialLibrary::Load();
+    auto setFrameUniforms = [&](unsigned prog, WorldUniforms &u) {
+        GLShader::Use(prog);
+        ++Perf::g.programSwitches;
+        GLShader::Set1i(u.tex, 0);
+        GLShader::Set3f(u.fogColor, fogColour[0], fogColour[1], fogColour[2]);
+        GLShader::Set1f(u.grade, getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
+        GLShader::Set3f(u.cam, cam.x, cam.y, cam.z);
+        GLShader::Set1f(u.theme, getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
+        GLShader::Set1f(u.day, day ? 1.0f : 0.0f);
+        GLShader::Set1f(u.matOn, mats ? 1.0f : 0.0f);
+        for (int i = 0; i < MaterialLibrary::kColours; ++i)
+            GLShader::Set1i(u.mc[i], 2 + i);
+        for (int i = 0; i < MaterialLibrary::kNormals; ++i)
+            GLShader::Set1i(u.mn[i], 10 + i);
+        GLShader::Set1f(u.wet, getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (day ? 0.0f : 0.8f)));
+    };
+    if (m_progWorld) {
+        queryWorldUniforms(m_progWorld, wuFull);
+        queryWorldUniforms(m_progWorldLite, wuLite);
+        setFrameUniforms(m_progWorld, wuFull);
+        if (m_progWorldLite != m_progWorld)
+            setFrameUniforms(m_progWorldLite, wuLite);
+        if (mats) { // the material textures stay bound on units 2..14 for the whole frame (ISSUES #274)
+            for (int i = 0; i < MaterialLibrary::kColours; ++i) {
+                GLShader::ActiveTexture(2 + i);
+                glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Colour(i));
+            }
+            for (int i = 0; i < MaterialLibrary::kNormals; ++i) {
+                GLShader::ActiveTexture(10 + i);
+                glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Normal(i));
+            }
+            GLShader::ActiveTexture(0);
+        }
+    }
     float curFogStart = kFogStart, curFogEnd = kDrawDistance;
-    bool onInterior = false;
-    auto worldProgram = [&](float fogStart, float fogEnd) {
-        curFogStart = fogStart, curFogEnd = fogEnd, onInterior = false;
+    unsigned lastProg = 0;
+    auto worldProgram = [&](float fogStart, float fogEnd, bool lite) {
+        curFogStart = fogStart, curFogEnd = fogEnd;
         if (!m_progWorld)
             return;
-        GLShader::Use(m_progWorld);
-        GLShader::Set1i(GLShader::Uniform(m_progWorld, "uTex"), 0);
-        GLShader::Set3f(GLShader::Uniform(m_progWorld, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogStart"), fogStart);
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uFogEnd"), fogEnd);
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
-        GLShader::Set3f(GLShader::Uniform(m_progWorld, "uCam"), cam.x, cam.y, cam.z);
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uTheme"), getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uDay"), day ? 1.0f : 0.0f);
-        {   // photographic materials on units 2..14 (colours 2..9, normals 10..14), ISSUES #274
-            const bool mats = MaterialLibrary::Load();
-            GLShader::Set1f(GLShader::Uniform(m_progWorld, "uMatOn"), mats ? 1.0f : 0.0f);
-            if (mats) {
-                for (int i = 0; i < MaterialLibrary::kColours; ++i) {
-                    char name[8];
-                    snprintf(name, sizeof(name), "uMC%d", i);
-                    GLShader::Set1i(GLShader::Uniform(m_progWorld, name), 2 + i);
-                    GLShader::ActiveTexture(2 + i);
-                    glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Colour(i));
-                }
-                for (int i = 0; i < MaterialLibrary::kNormals; ++i) {
-                    char name[8];
-                    snprintf(name, sizeof(name), "uMN%d", i);
-                    GLShader::Set1i(GLShader::Uniform(m_progWorld, name), 10 + i);
-                    GLShader::ActiveTexture(10 + i);
-                    glBindTexture(GL_TEXTURE_2D, MaterialLibrary::Normal(i));
-                }
-                GLShader::ActiveTexture(0);
-            }
+        const unsigned prog = lite ? m_progWorldLite : m_progWorld;
+        WorldUniforms &u = (lite && m_progWorldLite != m_progWorld) ? wuLite : wuFull;
+        if (prog != lastProg) {
+            GLShader::Use(prog);
+            ++Perf::g.programSwitches;
+            lastProg = prog;
         }
-        GLShader::Set1f(GLShader::Uniform(m_progWorld, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (day ? 0.0f : 0.8f)));
+        if (u.lastFogStart != fogStart || u.lastFogEnd != fogEnd) {
+            GLShader::Set1f(u.fogStart, fogStart);
+            GLShader::Set1f(u.fogEnd, fogEnd);
+            u.lastFogStart = fogStart, u.lastFogEnd = fogEnd;
+        }
     };
 
     // The interior-mapping program for the windowed facades (ISSUES #266).
     auto interiorProgram = [&]() {
         GLShader::Use(m_progInterior);
-        onInterior = true;
+        lastProg = m_progInterior;
+        ++Perf::g.programSwitches;
         GLShader::Set1i(GLShader::Uniform(m_progInterior, "uTex"), 0);
         GLShader::Set3f(GLShader::Uniform(m_progInterior, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogStart"), curFogStart);
@@ -462,6 +508,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uTime"), float(SDL_GetTicks()) * 0.001f);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDebug"), getenv("NFSU2_INTERIOR_DEBUG") ? float(atof(getenv("NFSU2_INTERIOR_DEBUG"))) : 0.0f);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : (day ? 0.12f : 0.42f));
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDay"), day ? 1.0f : 0.0f);
     };
 
     // Upload render triangles once: grouped by texture, one draw range per texture.
@@ -489,34 +536,33 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         cell.vertices = int(scratch.size());
         std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
     };
-    auto drawCell = [&](const GLCell &cell, int pass) {
+    // One cell's ranges for a pass: pass 0 opaque / punch-through, pass 1 blended / additive.  sweep 0 = ordinary textures, sweep 1 =
+    // the window facades (interior program).  The caller switches programs once per group of cells, not per cell.
+    auto drawCell = [&](const GLCell &cell, int pass, int sweep) {
         GLBridge::BindArrayBuffer(cell.buffer);
+        ++Perf::g.bufferBinds;
         glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
         glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
-        // Opaque ranges are drawn twice over: plain facades with the world program, then the window facades with the
-        // interior program (one program switch per cell instead of one per texture).
-        const int sweeps = (pass == 0 && m_progInterior) ? 2 : 1;
-        for (int sweep = 0; sweep < sweeps; ++sweep) {
+        unsigned boundTex = ~0u;
+        for (const GLRange &range : cell.ranges) {
+            if ((range.mode != 0) != (pass == 1))
+                continue;
+            if (pass == 0 && m_progInterior && (range.interior != 0) != (sweep == 1))
+                continue;
             if (sweep == 1)
-                interiorProgram();
-            else if (onInterior)
-                worldProgram(curFogStart, curFogEnd);
-            for (const GLRange &range : cell.ranges) {
-                if ((range.mode != 0) != (pass == 1))
-                    continue;
-                if (pass == 0 && m_progInterior && (range.interior != 0) != (sweep == 1))
-                    continue;
-                if (sweep == 1)
-                    GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), range.interior == 2 ? 1.0f : 0.0f);
-                if (pass == 1)
-                    glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+                GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), range.interior == 2 ? 1.0f : 0.0f);
+            if (pass == 1)
+                glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+            if (range.texture != boundTex) {
                 glBindTexture(GL_TEXTURE_2D, range.texture);
-                glDrawArrays(GL_TRIANGLES, range.first, range.count);
+                boundTex = range.texture;
+                ++Perf::g.textureBinds;
             }
+            glDrawArrays(GL_TRIANGLES, range.first, range.count);
+            ++Perf::g.drawCalls;
+            Perf::g.triangles += uint32_t(range.count / 3);
         }
-        if (onInterior)
-            worldProgram(curFogStart, curFogEnd);
     };
 
     // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.
@@ -530,8 +576,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glMatrixMode(GL_MODELVIEW);
         glDisable(GL_FOG);
         glDisable(GL_DEPTH_TEST);
-        worldProgram(1.0e9f, 2.0e9f); // no fog on the backdrop
-        drawCell(m_glPanorama, 0);
+        worldProgram(1.0e9f, 2.0e9f, true); // no fog on the backdrop; the cheap shader
+        drawCell(m_glPanorama, 0, 0);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FOG);
         glMatrixMode(GL_PROJECTION);
@@ -543,7 +589,11 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const int reach = int(std::ceil(kDrawDistance / kCellSize));
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
     const float coneSlope = tanHalf * 1.05f;
-    std::vector<const GLCell *> drawn;
+    // Reused every frame (capacity kept): no heap allocation in the render loop.
+    static std::vector<const GLCell *> nearCells, farCells;
+    nearCells.clear();
+    farCells.clear();
+    const float kFullShaderRange = getenv("NFSU2_FULL_RANGE") ? float(atof(getenv("NFSU2_FULL_RANGE"))) : 150.0f;
     for (int gx = ccx - reach; gx <= ccx + reach; ++gx)
         for (int gy = ccy - reach; gy <= ccy + reach; ++gy) {
             auto it = m_cells.find(CellKey(gx, gy));
@@ -551,24 +601,40 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 continue;
             float mx = (gx + 0.5f) * kCellSize - cam.x, my = (gy + 0.5f) * kCellSize - cam.y;
             float along = mx * cy + my * sy, across = std::fabs(mx * sy - my * cy);
-            if (!m_scene && (std::hypot(mx, my) > kDrawDistance + kCellSize || along < -kCellSize ||
+            const float dist = std::hypot(mx, my);
+            if (!m_scene && (dist > kDrawDistance + kCellSize || along < -kCellSize ||
                              across > along * coneSlope + kCellSize * 0.75f))
                 continue;
             GLCell &cell = m_glCells[it->first];
             upload(cell, it->second.render);
             if (cell.buffer)
-                drawn.push_back(&cell);
+                (m_scene || dist < kFullShaderRange ? nearCells : farCells).push_back(&cell);
         }
-    worldProgram(kFogStart, kDrawDistance);
-    // Opaque and punch-through first, then blended/additive with depth writes off.
+    // Opaque and punch-through first (plain textures with the full shader near, the lite one far; then the window facades with the
+    // interior program), then blended / additive with depth writes off.
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1) {
             glEnable(GL_BLEND);
             glDepthMask(GL_FALSE);
         }
-        for (const GLCell *cell : drawn)
-            drawCell(*cell, pass);
+        worldProgram(kFogStart, kDrawDistance, false);
+        for (const GLCell *cell : nearCells)
+            drawCell(*cell, pass, 0);
+        if (!farCells.empty()) {
+            worldProgram(kFogStart, kDrawDistance, true);
+            for (const GLCell *cell : farCells)
+                drawCell(*cell, pass, 0);
+        }
+        if (pass == 0 && m_progInterior) {
+            interiorProgram();
+            for (const GLCell *cell : nearCells)
+                drawCell(*cell, 0, 1);
+            for (const GLCell *cell : farCells)
+                drawCell(*cell, 0, 1);
+            lastProg = 0;
+        }
     }
+    Perf::g.cellsDrawn = uint32_t(nearCells.size() + farCells.size());
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
 

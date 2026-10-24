@@ -33,6 +33,7 @@
 #include "game/indep/Career/CarLot.h"
 #include "game/indep/Career/Hotspots.h"
 #include "game/indep/Frontend/ModernUI.h"
+#include "game/indep/Perf.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -1474,11 +1475,15 @@ int main(int argc, char **argv)
         enterWorld(region);
 
 
+    Perf::Init();
     for (bool running = true; running;) {
+        Perf::BeginFrame();
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F10)) // Esc is Back
                 running = false;
+            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F3 && !ev.key.repeat)
+                Perf::ToggleOverlay();
             if (ev.type == SDL_TEXTINPUT && startup.KeyboardActive()) // the name-entry keyboard (#204)
                 startup.OnTextInput(ev.text.text);
         }
@@ -2181,7 +2186,12 @@ int main(int argc, char **argv)
             SDL_GetRendererOutputSize(ren, &w, &h);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
-            if (!world.RenderGL(ren, camera, w, h))
+            Perf::Lap(Perf::kUpdate);
+            Perf::GpuBegin();
+            const bool glWorldOk = world.RenderGL(ren, camera, w, h);
+            Perf::GpuEnd();
+            Perf::Lap(Perf::kWorld);
+            if (!glWorldOk)
                 world.Render(ren, camera, w, h);
             else if (startup.RearviewMirror() && inWorld && !cribPkg && !flyCamera) {
                 // Options > Gameplay > Rearview Mirror: a mirrored view from the car's rear in a strip at the top
@@ -2319,7 +2329,18 @@ int main(int argc, char **argv)
                 running = false;
             }
         }
+        Perf::Lap(Perf::kUI);
+        if (Perf::OverlayOn() && modernUi.Ready()) {
+            char lines[10][96];
+            const int n = Perf::OverlayLines(lines, 10);
+            SDL_RenderSetLogicalSize(ren, 0, 0);
+            int ow, oh;
+            SDL_GetRendererOutputSize(ren, &ow, &oh);
+            modernUi.DrawOverlay(ow, oh, lines, n);
+        }
         SDL_RenderPresent(ren);
+        Perf::Lap(Perf::kPresent);
+        Perf::EndFrame();
         if (maxFrames > 0 && ++frameCount >= maxFrames)
             running = false;
     }
