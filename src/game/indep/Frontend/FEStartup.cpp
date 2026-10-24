@@ -795,11 +795,41 @@ static std::string OptionsPath()
     return Career::MemoryCard::Get().SlotDir() + "/OPTIONS.CFG";
 }
 
+static const char *const kLanguageFiles[] = {"ENGLISH", "FRENCH", "GERMAN", "SPANISH", "ITALIAN", "DUTCH", "SWEDISH", "DANISH",
+                                             "JAPANESE", "KOREAN", "CHINESE"};
+
+std::string FEStartupSequence::SelectedLanguage()
+{
+    constexpr int kCount = int(sizeof(kLanguageFiles) / sizeof(kLanguageFiles[0]));
+    if (const char *env = getenv("NFSU2_LANGUAGE")) {
+        for (int i = 0; i < kCount; ++i)
+            if (strcasecmp(env, kLanguageFiles[i]) == 0)
+                return kLanguageFiles[i];
+        if (*env >= '0' && *env <= '9' && atoi(env) < kCount)
+            return kLanguageFiles[atoi(env)];
+    }
+    if (FILE *f = fopen(OptionsPath().c_str(), "r")) {
+        char key[32];
+        double v;
+        while (fscanf(f, "%31s %lf", key, &v) == 2)
+            if (!strcmp(key, "language") && int(v) >= 0 && int(v) < kCount) {
+                fclose(f);
+                return kLanguageFiles[int(v)];
+            }
+        fclose(f);
+    }
+    return "ENGLISH";
+}
+
 void FEStartupSequence::SaveOptions() const
 {
+    const std::string language = SelectedLanguage();
     FILE *f = fopen(OptionsPath().c_str(), "w");
     if (!f)
         return;
+    for (int i = 0; i < int(sizeof(kLanguageFiles) / sizeof(kLanguageFiles[0])); ++i)
+        if (language == kLanguageFiles[i])
+            fprintf(f, "language %d\n", i);
     for (int i = 0; i < 7; ++i)
         fprintf(f, "volume%d %.2f\n", i, m_audioVolume[i]);
     fprintf(f, "audioMode %d\njump %d\nrearview %d\nunits %d\ndifficulty %d\nexploreMap %d\nraceMap %d\nsave %d\n", m_audioMode,

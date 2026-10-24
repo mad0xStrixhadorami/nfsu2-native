@@ -398,7 +398,12 @@ int main(int argc, char **argv)
     // Language data, as the language init (0x00262840) loads it: font sheets, then the fonts and
     // strings of the current language.
     std::vector<uint8_t> langTextures = ReadGameFile(*fs, "LANGUAGES\\LANGUAGETEXTURES.BIN");
-    std::vector<uint8_t> english = ReadGameFile(*fs, "LANGUAGES\\ENGLISH.BIN");
+    // Language strings and fonts: NFSU2_LANGUAGE=FRENCH (or its index) / the saved option; English when missing.
+    const std::string languageName = FEStartupSequence::SelectedLanguage();
+    std::vector<uint8_t> english = ReadGameFile(*fs, ("LANGUAGES\\" + languageName + ".BIN").c_str());
+    if (english.empty() && languageName != "ENGLISH")
+        english = ReadGameFile(*fs, "LANGUAGES\\ENGLISH.BIN");
+    printf("[Lang] language file %s\n", languageName.c_str());
     FENativeInterface fe(ren);
     fe.AddBundle(globalA.data(), globalA.size());
     fe.AddBundle(langTextures.data(), langTextures.size());

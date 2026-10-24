@@ -38,6 +38,8 @@ class FENativeInterface;
 //       UI_Main.fng         - main menu destination
 class FEStartupSequence {
 public:
+    // Language file name (e.g. "FRENCH") chosen by NFSU2_LANGUAGE (name or index) or the saved `language` option.
+    static std::string SelectedLanguage();
     static constexpr uint32_t kMsgInitComplete = 0x35f8620b; // FEHASH_INITCOMPLETE
     static constexpr uint32_t kMsgScreenTick = 0xc98356ba;   // FEMSG_SCREEN_TICK
     static constexpr uint32_t kMsgMovieDone = 0xc3960eb9;    // movie finished / missing (0x00290cb8)
