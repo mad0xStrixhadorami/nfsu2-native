@@ -1485,9 +1485,35 @@ int main(int argc, char **argv)
                 if (!t100m && v >= 44.70f) t100m = t;
                 if (!tq && std::hypot(bc.X(), bc.Y()) >= 402.3f) tq = t;
             }
+            // Braking: 100 km/h to a standstill, full brake, straight. Grip: 22 m/s on a part-throttle skidpad turn at half lock.
+            float brakeDist = 0, latG = 0;
+            {
+                PlayerCar b2;
+                if (b2.LoadModel(geometry, fe.CarWheels(name, w) ? w : nullptr)) {
+                    b2.SetPerformance(perf), b2.UseUG2Physics(rec), b2.Place(0, 0, 0, 0);
+                    for (int i = 0; i < 120 * 60 && b2.Speed() < 27.78f; ++i)
+                        b2.Update(flat, 1.0f, 0.0f, 0.0f, dt, true, 1.0f);
+                    const float x0 = b2.X(), y0 = b2.Y();
+                    for (int i = 0; i < 120 * 12 && b2.Speed() > 0.3f; ++i)
+                        b2.Update(flat, 0.0f, 1.0f, 0.0f, dt, true, 1.0f);
+                    brakeDist = std::hypot(b2.X() - x0, b2.Y() - y0);
+                }
+                PlayerCar c2;
+                if (c2.LoadModel(geometry, fe.CarWheels(name, w) ? w : nullptr)) {
+                    c2.SetPerformance(perf), c2.UseUG2Physics(rec), c2.Place(0, 0, 0, 0);
+                    float lastYaw = 0, yawRate = 0;
+                    for (int i = 0; i < 120 * 40; ++i) {
+                        const float thr = c2.Speed() < 22.0f ? 1.0f : 0.25f;
+                        c2.Update(flat, thr, 0.0f, i > 120 * 12 ? 0.55f : 0.0f, dt, true, 1.0f);
+                        yawRate = std::remainder(c2.Yaw() - lastYaw, 6.2831853f) / dt, lastYaw = c2.Yaw();
+                        if (i > 120 * 25)
+                            latG = std::max(latG, std::fabs(yawRate) * c2.Speed() / 9.81f);
+                    }
+                }
+            }
             PlayerCar::RunTimes rt = PlayerCar::SimulateRun(perf, w[0].radius > 0 ? w[0].radius : 0.32f);
-            printf("[Bench] %-11s %7.2f %7.2f %7.2f %7.2f %7.0f | %7.2f %7.2f %7.0f | limiter %.0f km/h\n", name.c_str(), t60, t100k, t100m, tq, top * 3.6f,
-                   rt.zeroTo60mph, rt.zeroTo100mph, rt.topSpeed * 3.6f, perf.limiter * 1.609f);
+            printf("[Bench] %-11s %7.2f %7.2f %7.2f %7.2f %7.0f | %7.2f %7.2f %7.0f | limiter %.0f km/h | 100-0 %.1f m, lateral %.2f g\n", name.c_str(), t60,
+                   t100k, t100m, tq, top * 3.6f, rt.zeroTo60mph, rt.zeroTo100mph, rt.topSpeed * 3.6f, perf.limiter * 1.609f, brakeDist, latG);
         }
         return 0;
     }
@@ -2141,6 +2167,7 @@ int main(int argc, char **argv)
                                 behind->ScaleSpeed(0.98f);
                         }
                     }
+                world.UpdateEffects(dt);
                 for (size_t i = 0; i < cars.size(); ++i) {
                     float m[12];
                     cars[i]->Transform(m);
@@ -2148,6 +2175,30 @@ int main(int argc, char **argv)
                     world.SetCarWheels(i, &cars[i]->TriangleWheels(), &cars[i]->TriangleBrakes(), cars[i]->WheelHubs(), cars[i]->WheelAngle(),
                                       cars[i]->WheelSteer(), cars[i]->WheelRate());
                     world.SetCarLamps(i, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
+                    // Tyre smoke and skid marks from the sliding tyres of the UG2-physics cars (ISSUES #294).
+                    if (i == 0 && cars[i]->UsingUG2Physics() && dt > 0.0f && !sceneMode) {
+                        static float lastX[4], lastY[4], lastZ[4];
+                        static bool lastOn[4] = {};
+                        static float smokeAcc[4] = {};
+                        const float speed = std::fabs(cars[i]->Speed());
+                        for (int wi = 0; wi < 4; ++wi) {
+                            const bool on = cars[i]->WheelSliding(wi) && speed > 3.0f;
+                            float cx, cy, cz;
+                            cars[i]->WheelContact(wi, cx, cy, cz);
+                            if (on) {
+                                const float sat = cars[i]->WheelSaturation(wi);
+                                const float strength = std::clamp(0.4f + sat * 0.6f, 0.3f, 1.0f);
+                                if (lastOn[wi])
+                                    world.AddSkid(lastX[wi], lastY[wi], lastZ[wi], cx, cy, cz, 0.24f, strength);
+                                smokeAcc[wi] += dt * (9.0f + 14.0f * cars[i]->DriftAmount()) * strength;
+                                while (smokeAcc[wi] >= 1.0f) {
+                                    smokeAcc[wi] -= 1.0f;
+                                    world.EmitSmoke(cx, cy, cz, -std::cos(cars[i]->Yaw()) * speed * 0.4f, -std::sin(cars[i]->Yaw()) * speed * 0.4f, strength);
+                                }
+                            }
+                            lastOn[wi] = on, lastX[wi] = cx, lastY[wi] = cy, lastZ[wi] = cz;
+                        }
+                    }
                     if (sceneMode && i > 0)
                         m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
                     world.SetCarTransform(i, m);

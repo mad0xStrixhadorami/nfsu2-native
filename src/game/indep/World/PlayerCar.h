@@ -49,6 +49,14 @@ public:
     // The player's handbrake (X / Left Shift): releases the rear tyres' grip and starts a drift (ISSUES #291).
     void SetHandbrake(bool on) { m_handbrake = on; }
     // Drift state from the UG2 vehicle model (all zero for the arcade model).
+    // Tyre state for the smoke and skid marks (0 FL, 1 FR, 2 RR, 3 RL; zero for the arcade model).
+    bool WheelSliding(int i) const { return m_ug2.Valid() && m_ug2.WheelSliding(i); }
+    float WheelSaturation(int i) const { return m_ug2.Valid() ? m_ug2.WheelSaturation(i) : 0.0f; }
+    void WheelContact(int i, float &x, float &y, float &z) const
+    {
+        const UG2Physics::Vec3 c = m_ug2.WheelContactPoint(i);
+        x = c.x, y = c.y, z = c.z;
+    }
     bool Drifting() const { return m_ug2.Valid() && m_ug2.Drifting(); }
     float DriftAmount() const { return m_ug2.Valid() ? m_ug2.DriftAmount() : 0.0f; }
     float DriftAngleDeg() const { return m_ug2.Valid() ? m_ug2.BodySlipAngle() * 57.2958f : 0.0f; }

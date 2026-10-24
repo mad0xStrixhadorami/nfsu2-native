@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <algorithm>
 #include <vector>
 
 #include <SDL.h>
@@ -104,6 +105,35 @@ public:
     void SetCarTransform(size_t car, const float m[12]);
     // Lamp state (ISSUES #284): headlights on, brake pedal down, reverse gear. The lamps fade towards the target a little
     // every call (once per frame), so a tap on the brake does not flicker.
+    // Tyre smoke and skid marks (ISSUES #294). EmitSmoke adds a puff (an emission rate is the caller's business); AddSkid appends a mark
+    // segment between two contact points; UpdateEffects ages them (call once per frame with the frame time).
+    void EmitSmoke(float x, float y, float z, float vx, float vy, float intensity)
+    {
+        if (m_smoke.size() >= 700)
+            m_smoke.erase(m_smoke.begin(), m_smoke.begin() + 100);
+        Smoke s;
+        s.x = x, s.y = y, s.z = z + 0.15f, s.vx = vx * 0.25f, s.vy = vy * 0.25f, s.vz = 0.5f + 0.7f * intensity;
+        s.size = 0.45f + 0.35f * intensity, s.life = 0.9f + 0.7f * intensity, s.a = 0.10f + 0.14f * intensity;
+        m_smoke.push_back(s);
+    }
+    void AddSkid(float x0, float y0, float z0, float x1, float y1, float z1, float width, float strength)
+    {
+        Skid k{x0, y0, z0 + 0.03f, x1, y1, z1 + 0.03f, width, strength, SDL_GetTicks()};
+        if (m_skids.size() < 8000)
+            m_skids.push_back(k);
+        else
+            m_skids[m_skidNext++ % m_skids.size()] = k;
+    }
+    void UpdateEffects(float dt)
+    {
+        for (Smoke &s : m_smoke) {
+            s.age += dt;
+            s.x += s.vx * dt, s.y += s.vy * dt, s.z += s.vz * dt;
+            s.vx *= 1.0f - 1.2f * dt, s.vy *= 1.0f - 1.2f * dt, s.vz *= 1.0f - 0.9f * dt;
+        }
+        m_smoke.erase(std::remove_if(m_smoke.begin(), m_smoke.end(), [](const Smoke &s) { return s.age >= s.life; }), m_smoke.end());
+    }
+    void DrawTyreEffects(const Camera &cam) const;
     void SetCarLamps(size_t car, bool head, bool brake, bool reverse)
     {
         if (car >= m_cars.size())
@@ -301,6 +331,16 @@ private:
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;
     std::vector<Car> m_cars;
     std::vector<Beacon> m_beacons;
+    struct Smoke {
+        float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, age = 0, life = 1, size = 1, a = 0.3f;
+    };
+    struct Skid {
+        float x0, y0, z0, x1, y1, z1, width, strength;
+        unsigned born;
+    };
+    std::vector<Smoke> m_smoke;
+    std::vector<Skid> m_skids;
+    size_t m_skidNext = 0;
     struct Barrier {
         float bbox[6];
         std::vector<Tri> tris;

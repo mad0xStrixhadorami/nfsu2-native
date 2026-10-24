@@ -78,6 +78,10 @@ public:
     // Drifting (ISSUES #291): an arcade layer over the faithful tyre model. The handbrake and a power-over (full throttle with
     // lock on) release the tail, the car keeps its speed and gets counter-steer and spin-out help while it slides, and the
     // slide scores points and tops up the nitrous.
+    // Per-wheel state for the tyre smoke and skid marks (ISSUES #294): FL, FR, RR, RL.
+    bool WheelSliding(int i) const { return m_wheel[i].sliding && m_wheel[i].load > 0.0f; }
+    float WheelSaturation(int i) const { return m_wheel[i].saturation; }
+    Vec3 WheelContactPoint(int i) const { return m_wheel[i].contact; }
     float BodySlipAngle() const { return m_drift.beta; }   // rad, + = the car travels to the left of its nose
     float DriftAmount() const { return m_drift.amount; }   // 0..1, how deep into a drift (smoothed)
     bool Drifting() const { return m_drift.active; }

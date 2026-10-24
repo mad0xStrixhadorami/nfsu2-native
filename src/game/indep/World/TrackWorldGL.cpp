@@ -929,6 +929,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::DisableAttrib(3);
         GLShader::Use(0);
         DrawCarLights(cam, day);
+        DrawTyreEffects(cam);
     } else {
         for (const Car &car : m_cars) {
             if (car.render.empty())
@@ -1107,6 +1108,68 @@ void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
                 pool(car.tailPos[side], -fx, -fy, 4.5f, 0.4f, 1.8f, 1.0f, 0.08f, 0.04f, 0.30f * car.lampBrake);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+    glPopAttrib();
+}
+
+// Tyre smoke (soft grey puffs that grow, rise and fade) and skid marks (dark ribbons on the road that fade over ~30 s), ISSUES #294.
+void TrackWorld::DrawTyreEffects(const Camera &cam) const
+{
+    if ((m_smoke.empty() && m_skids.empty()) || getenv("NFSU2_NO_TYRE_FX"))
+        return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_FOG);
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    const unsigned now = SDL_GetTicks();
+    if (!m_skids.empty()) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-3.0f, -3.0f);
+        glBegin(GL_QUADS);
+        for (const Skid &k : m_skids) {
+            const float age = float(now - k.born) * 0.001f;
+            if (age > 30.0f)
+                continue;
+            const float dx = k.x1 - k.x0, dy = k.y1 - k.y0, len = std::hypot(dx, dy);
+            if (len < 1e-4f || len > 6.0f)
+                continue; // a jump (a respawn), not a mark
+            const float nx = -dy / len * k.width * 0.5f, ny = dx / len * k.width * 0.5f;
+            glColor4f(0.02f, 0.02f, 0.025f, k.strength * (1.0f - age / 30.0f) * 0.7f);
+            glVertex3f(k.x0 + nx, k.y0 + ny, k.z0), glVertex3f(k.x0 - nx, k.y0 - ny, k.z0);
+            glVertex3f(k.x1 - nx, k.y1 - ny, k.z1), glVertex3f(k.x1 + nx, k.y1 + ny, k.z1);
+        }
+        glEnd();
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+    for (const Smoke &s : m_smoke) {
+        float dx = s.x - cam.x, dy = s.y - cam.y, dz = s.z - cam.z;
+        const float dl = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        dx /= dl, dy /= dl, dz /= dl;
+        float rx = dy, ry = -dx;
+        const float rl = std::max(1e-4f, std::sqrt(rx * rx + ry * ry));
+        rx /= rl, ry /= rl;
+        const float ux = ry * dz, uy = -rx * dz, uz = rx * dy - ry * dx;
+        const float u = s.age / s.life;
+        const float R = s.size * (0.6f + 2.4f * u);
+        const float alpha = s.a * (1.0f - u) * std::min(1.0f, u * 8.0f);
+        constexpr float kRing[3][2] = {{0.0f, 1.0f}, {0.55f, 0.45f}, {1.0f, 0.0f}};
+        for (int ring = 0; ring < 2; ++ring) {
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= 12; ++i) {
+                const float a = float(i) * 6.2831853f / 12.0f, ca = std::cos(a), sa = std::sin(a);
+                for (int e = 0; e < 2; ++e) {
+                    const float rr = kRing[ring + e][0] * R;
+                    glColor4f(0.86f, 0.86f, 0.88f, kRing[ring + e][1] * alpha);
+                    glVertex3f(s.x + (rx * ca + ux * sa) * rr, s.y + (ry * ca + uy * sa) * rr, s.z + uz * sa * rr);
+                }
+            }
+            glEnd();
+        }
     }
     glPopAttrib();
 }
