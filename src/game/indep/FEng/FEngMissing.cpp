@@ -1,7 +1,4 @@
 // FEng pieces the nfsmw decompilation does not provide yet.
-#include <cstdio>
-#include <cstdlib>
-
 #include "Speed/Indep/Src/FEng/FEObject.h"
 #include "Speed/Indep/Src/FEng/FEPackage.h"
 #include "Speed/Indep/Src/FEng/FEngine.h"
@@ -13,11 +10,14 @@ u32 FEngine::SysGUID = 0;
 // TODO(ISSUES #24): decompile UG2's FEngine destructor (0x00288240). Only runs at shutdown.
 FEngine::~FEngine() {}
 
-// TODO(ISSUES #24): decompile from UG2. Fails loudly rather than returning a wrong position.
-void FEngGetCenter(FEObject *, float &, float &)
+// 0x00293b90: the object's centre is its position (ObjData +0x1c/+0x20). UG2 special-cases type 2 (strings) by adding
+// half the laid-out text extent; the string metrics are not ported, so strings report their anchor position.
+void FEngGetCenter(FEObject *obj, float &x, float &y)
 {
-    fprintf(stderr, "FEngGetCenter: not implemented yet (ISSUES.md #24)\n");
-    abort();
+    if (!obj || !obj->GetObjData())
+        return;
+    x = obj->GetObjData()->Pos.x;
+    y = obj->GetObjData()->Pos.y;
 }
 
 // Game-side FEng wrapper hooks used inside FEng (MW's cFEng lives in FEngInterface.cpp, which
