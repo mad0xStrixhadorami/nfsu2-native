@@ -11,7 +11,7 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![language](https://img.shields.io/badge/C%2B%2B17-SDL2%20%2B%20OpenGL-blue?style=flat-square)
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
-![commits](https://img.shields.io/badge/commits-300%2B-lightgrey?style=flat-square)
+![commits](https://img.shields.io/badge/commits-320%2B-lightgrey?style=flat-square)
 
 <img src="docs/media/race_drive.gif" width="720" alt="Driving a Skyline through the decompiled city"/>
 
@@ -43,7 +43,11 @@ supply your own legally obtained copy of the game and the program reads it at ru
 
 <table>
 <tr>
-<td width="50%"><img src="docs/media/intro.gif" alt="Cinematic pre-race camera"/><br/><sub><b>Cinematic pre-race camera</b> — dolly, orbit and crane into the chase cam, with letterbox bars.</sub></td>
+<td width="50%"><img src="docs/media/intro.gif" alt="Cinematic pre-race camera"/><br/><sub><b>Cinematic pre-race camera</b> — constant-speed dolly and orbit, then a sweep round the car into the chase cam (letterbox bars).</sub></td>
+<td width="50%"><img src="docs/media/garage_parts.gif" alt="Garage camera following the part"/><br/><sub><b>Garage camera follows the part</b> — scroll Front Bumpers → Rear → Side Skirts → Spoilers → Hoods and the camera glides to that side of the car, Most Wanted style.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/media/night_lights.gif" alt="Night driving with working lights"/><br/><sub><b>Night driving</b> — emissive headlights and tail lights, glass covers, headlight pools on the road, and a chase camera that widens its lens with speed.</sub></td>
 <td width="50%"><img src="docs/media/crib.gif" alt="Career garage"/><br/><sub><b>Career garage</b> — the real <code>CRIB01</code> room with display discs and your other cars.</sub></td>
 </tr>
 <tr>
@@ -51,6 +55,18 @@ supply your own legally obtained copy of the game and the program reads it at ru
 <td width="50%"><img src="docs/media/beacon_shop.jpg" alt="Free-roam shop hot spot"/><br/><sub><b>Free-roam hot spots</b> — shop locations decoded from the region data; roll in and the shop opens.</sub></td>
 </tr>
 </table>
+
+### Lights and wheels
+
+<div align="center">
+<img src="docs/media/lights_wheels.jpg" width="820" alt="Headlights, night headlights, brake lights and wheels"/><br/>
+<sub>Top left: headlight cluster, a translucent cover over the lit lamp. Top right: night headlights. Bottom left: brake lights on, with the centre third light. Bottom right: alloy rim, rubber tyre and a <b>round</b> brake disc.</sub>
+</div>
+
+Two details that took real digging (both in [`ISSUES.md`](ISSUES.md)):
+
+- **The square behind the rims (#284)** was the brake disc: a square quad whose round outline lives in the texture's alpha channel. The car shader forced alpha to 1.0 for brake parts, so the corners drew opaque.
+- **The painted-over headlights (#286):** every lamp cluster has a clear cover whose material slot (`HEADLIGHT_GLASS_LEFT`, `BRAKELIGHT_GLASS_*`, `BRAKELIGHT_CENTRE`) ships **no texture**, so it fell back to body paint. The slot names were recovered by hashing candidate strings against the geometry files; the covers now render as translucent glass in their own pass.
 
 ## Custom shaders
 
@@ -71,12 +87,26 @@ they also work on older drivers; automatic fallback to fixed-function with `NFSU
 | **Interior-mapped windows** | Tall office facades fake whole rooms behind the glass with a ray/box test — zero extra geometry |
 | **Wet-road look** | Puddle mask from two noise octaves, sheen on road-like surfaces, streaked lamp reflections |
 | **Post-process** | Bright-pass → two-pass blur bloom, vignette and exposure, composited before the HUD |
+| **Lamps and glass** | Emissive headlight / tail-light / third-brake-light lenses that react to the brake pedal, a translucent Fresnel pass for the clear covers, soft additive glows and (at night) headlight and brake pools laid on the sampled road height |
 | **Hot-spot beacons** | Additive light columns marking shops, car lots and the crib |
 
 <div align="center">
 <img src="docs/media/garage_car.jpg" width="49%" alt="Garage"/>
 <img src="docs/media/s_intro.jpg" width="49%" alt="Skyline close-up"/>
 </div>
+
+## Camera
+
+The original game's cameras were rebuilt on a small spring-based rig (`World/CameraRig.h`) so every move is
+frame-rate independent and nothing ever pops:
+
+| Camera | What it does |
+|---|---|
+| **Chase** | Spring heading, distance and height; leans into the car's *real* direction of travel in a slide; lens widens 70° → ~81° with speed (+7° with nitrous); noses down under braking; subtle shake at speed; stays out of walls (snaps in, eases out). Bumper and hood views stay rigid. |
+| **Pre-race cinematic** | Three constant-speed shots, then an orbit round the car (never through it) into the chase view, with letterbox bars. The old version stuttered because its wall-avoid filter was a no-op that stepped the zoom every frame. |
+| **Garage** | `GarageShotNow()` maps the open shop screen to a pose: front/rear bumper, skirts, spoiler, hood, roof, headlight, taillight, exhaust, rims → wheel close-up, paint/vinyl → side profile, neon → low side. Every pose parameter is a critically damped spring, so shots glide and can be interrupted. |
+
+Measured with `NFSU2_CAM_LOG=1`: in a drive test the chase yaw never changed by more than 0.07° per frame from one frame to the next.
 
 ## How much of the game is done?
 
@@ -87,7 +117,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 787 (4.7 %)** — about **7 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 60 of 150** — and roughly **58 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **268 entries** in [`ISSUES.md`](ISSUES.md) |
+| Findings, decodes and design notes logged | **286 entries** in [`ISSUES.md`](ISSUES.md) |
 | C++ written | ~31,000 lines (plus the vendored CC0 engine core) |
 
 > **Why the function percentage is low:** the executable holds a huge amount of code this project deliberately
@@ -108,11 +138,11 @@ Honest numbers first, because "percent complete" means different things for a de
 | AI opponents | 🟢 working | Route followers with skill scaling and vinyls |
 | Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules decoded |
 | Car customisation | 🟡 mostly | Parts, performance packages, tuning sliders, dyno, vinyls, decals, paint, rims, spinners, neon |
-| Garage / shops (3D) | 🟡 partial | Garage room renders; shop hot spots placed; per-shop filtering not done |
-| Graphics | 🟢 beyond original | Custom shaders, MSAA, anisotropic filtering, widescreen Hor+ |
+| Garage / shops (3D) | 🟡 partial | Garage room renders with a part-following camera; shop hot spots placed; per-shop filtering not done |
+| Graphics | 🟢 beyond original | Custom shaders, MSAA, anisotropic filtering, widescreen Hor+, working car lights and glass |
 | Audio | 🟡 partial | Engine, skid, turbo and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
-| Stock paint colours, magazine/showcase screens, NOS graph | 🔴 open | Documented in `ISSUES.md` |
+| Stock paint colours, magazine/showcase screens, NOS graph, reverse lamps / turn signals | 🔴 open | Documented in `ISSUES.md` |
 
 If you want **one number** for "can I play the game": roughly **half of the single-player game is reachable
 and playable natively today** (menus → Quick Race → free roam → career flow → customisation), with the long
@@ -161,6 +191,8 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `NFSU2_MSAA=0/2/4/8` | Multisampling |
 | `NFSU2_SCREENSHOT=f.bmp` | Save the whole window and quit |
 | `NFSU2_MEMCARD=dir` | Use a scratch save directory |
+| `NFSU2_NIGHT=1` | Night / dusk look (headlight pools, hot lamps) instead of Israeli daylight |
+| `NFSU2_CAM_LOG=1` / `NFSU2_GARAGE_SHOT=n` | Log the camera every frame / force a garage camera shot |
 
 </details>
 
@@ -175,7 +207,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
    collision mesh, road/traffic graphs, the car database, part database, GLOBALB career tables, FNG UI
    packages and the audio banks.
 4. **Rewrite, don't emulate.** Each decoded behaviour becomes normal C++ with a `// 0xADDRESS` comment to
-   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (268 entries so far — read it,
+   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (286 entries so far — read it,
    it is the real project diary).
 5. **Reuse where legal and sensible.** The engine core shared with the CC0 *Most Wanted* decompilation
    ([`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw)) is vendored in `third_party/nfsmw`.
@@ -187,7 +219,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `src/game/bWare/` | EA Black Box engine core |
 | `src/game/indep/` | Platform-independent game code: `Career/`, `Frontend/`, `Physics/`, `Sound/`, `World/`, `Texture/`, `FEng/` |
 | `src/platform/linux/` | Linux replacements for PS2 hardware and SDK calls |
-| `tools/` | Archive, chunk, VU-strip, audio and hot-spot analysis scripts |
+| `tools/` | Archive, chunk, VU-strip, audio and hot-spot analysis scripts; `record_gif.sh` captures the game window to a GIF for the README |
 | `docs/` | Function map, UI screen registry, physics notes, media |
 | `third_party/nfsmw/` | Vendored CC0 engine code, local changes in `PATCHES.md` |
 | `ISSUES.md` | Numbered log of every decode, fix and open question |

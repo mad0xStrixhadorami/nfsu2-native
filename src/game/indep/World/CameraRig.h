@@ -114,7 +114,7 @@ struct Chase {
         if (in.groundZ + 0.45f > cz)
             cz = in.groundZ + 0.45f;
         if (!in.rigid)
-            clear.Apply(world, in.x, in.y, in.z + 0.9f, cx, cy, cz, dt);
+            clear.Apply(world, in.x, in.y, in.z + 0.9f, cx, cy, cz, dt, 0.5f); // never closer than half the distance: inside the car is worse than inside a kerb
 
         TrackWorld::Camera c;
         c.x = cx, c.y = cy, c.z = cz, c.yaw = viewYaw, c.pitch = in.orbit == 0.0f ? pitch : -0.08f, c.fov = fov;
