@@ -1,4 +1,5 @@
 #pragma once
+#include "game/indep/World/ModCars.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/SolidMesh.h"
 #include <SDL.h>
@@ -290,8 +291,11 @@ public:
     // (e.g. GLOSS_L1_COLOR03 for the Skyline), +0x858 a second default. which = 0 / 1; `fallback` if unknown.
     SDL_Color StockPaintColor(const std::string &folder, int which, SDL_Color fallback) const;
     // Database record index of a car folder = UG2's car type (-1 if unknown).
-    int CarTypeIndex(const std::string &folder) const
+    int CarTypeIndex(const std::string &folderIn) const
     {
+        std::string folder = folderIn;
+        if (const ModCars::Mod *mod = ModCars::Find(folder)) // a car that is not on the disc sounds like its donor (#295)
+            folder = mod->donor;
         for (size_t i = 0; i < m_carRoster.size(); ++i)
             if (m_carRoster[i] == folder)
                 return int(i);

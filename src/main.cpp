@@ -7,6 +7,7 @@
 // Currently: mounts the disc archive, then shows the real boot screen (loading_boot.fng) through
 // the reused FEng engine and the native renderer.
 
+#include <unistd.h>
 #include <SDL.h>
 
 #include <cstdio>
@@ -47,6 +48,7 @@
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/CarCollision.h"
 #include "game/indep/World/CameraRig.h"
+#include "game/indep/World/ModCars.h"
 #include "game/indep/World/IntroCamera.h"
 #include "game/indep/World/Minimap.h"
 #include "game/indep/World/RaceRoute.h"
@@ -209,6 +211,8 @@ static int SelfTest(const ZipFileSystem &fs)
 // Read a whole file from the disc archive, decompressing it if it is compressed.
 static std::vector<uint8_t> ReadGameFile(const ZipFileSystem &fs, const char *gamePath)
 {
+    if (ModCars::IsModPath(gamePath)) // cars that are not on the disc (ISSUES #295): generated model, the donor's textures
+        return ModCars::Read(gamePath, [&fs](const char *p) { return ReadGameFile(fs, p); });
     ZipFile f;
     if (!fs.Open(gamePath, f))
         return {};
@@ -754,6 +758,8 @@ int main(int argc, char **argv)
         // the region the front end asked for (career enters the city, but a forced race lives in the
         // region its race record names, e.g. 4602 -> L4RF).
         std::string region = regionIn;
+        if (const char *pc = getenv("NFSU2_PLAY_CAR")) // dev aid: drive this car (any roster car, e.g. PICANTO)
+            fe.SetPreviewCar(pc);
         if (const char *n = getenv("NFSU2_RACE")) {
             const int want = atoi(n);
             for (const RaceInfo &r : fe.Races())
@@ -1515,7 +1521,8 @@ int main(int argc, char **argv)
             printf("[Bench] %-11s %7.2f %7.2f %7.2f %7.2f %7.0f | %7.2f %7.2f %7.0f | limiter %.0f km/h | 100-0 %.1f m, lateral %.2f g\n", name.c_str(), t60,
                    t100k, t100m, tq, top * 3.6f, rt.zeroTo60mph, rt.zeroTo100mph, rt.topSpeed * 3.6f, perf.limiter * 1.609f, brakeDist, latG);
         }
-        return 0;
+        fflush(stdout);
+        _exit(0); // skip the static destructors (the FEng pools are not torn down in order)
     }
     if (getenv("NFSU2_STRAIGHT_TEST")) { // dev aid: the longest straight lane chain of L4RA (a strip for physics benchmarks)
         TrafficNet net;

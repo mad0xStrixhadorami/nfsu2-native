@@ -1,4 +1,5 @@
 #include "game/indep/Frontend/FENative.h"
+#include "game/indep/World/ModCars.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1200,12 +1201,11 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
             }
         } else if (c->id == 0x00034600) { // car database: 46 records of 0x890 bytes (GLOBALB)
             constexpr uint32_t kCarRecord = 0x890;
-            for (uint32_t off = 0; off + kCarRecord <= c->size; off += kCarRecord) {
-                const uint8_t *r = c->Data() + off;
+            auto addRecord = [&](const uint8_t *r) {
                 const char *folder = reinterpret_cast<const char *>(r + 0x8);
                 const char *manuf = reinterpret_cast<const char *>(r + 0xC8);
                 if (!folder[0])
-                    continue;
+                    return;
                 CarRecord rec;
                 rec.folder = folder;
                 rec.manufacturer = manuf;
@@ -1228,6 +1228,19 @@ void FENativeInterface::AddBundle(const uint8_t *data, size_t size, const char *
                     ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
                 m_carTable[key] = rec;
                 m_carRoster.push_back(key);
+            };
+            for (uint32_t off = 0; off + kCarRecord <= c->size; off += kCarRecord)
+                addRecord(c->Data() + off);
+            // Cars that are not on the disc (ISSUES #295): a patched copy of the donor's record each.
+            for (const ModCars::Mod &mod : ModCars::All()) {
+                auto donor = m_carTable.find(mod.donor);
+                if (donor == m_carTable.end() || donor->second.raw.size() != kCarRecord || m_carTable.count(mod.folder))
+                    continue;
+                const std::vector<uint8_t> record = ModCars::MakeRecord(donor->second.raw, mod);
+                if (record.size() == kCarRecord) {
+                    addRecord(record.data());
+                    printf("[ModCars] %s %s added (donor %s)\n", mod.manufacturer, mod.folder, mod.donor);
+                }
             }
         } else if (c->id == 0x80034a10) { // car-shop price bundle: subchunk 0x34a1c (#176)
             if (m_paint.ParsePrices(c->Data(), c->size))

@@ -304,9 +304,16 @@ void DecodeChunks(const uint8_t *d, size_t dataSize, size_t begin, size_t end,
 }
 
 // Stand-in geometry decoder; the engine equivalent is UG2's solid loader 0x001bf3b8.
+static std::vector<NamedSolid> ParseModSolids(const uint8_t *d, size_t size);
+
 std::vector<Triangle> DecodeGeometry(const uint8_t *d, size_t size)
 {
     std::vector<Triangle> tris;
+    if (size >= 12 && std::memcmp(d, "NFSU2MOD", 8) == 0) { // a car generated in code (ISSUES #295)
+        for (const NamedSolid &s : ParseModSolids(d, size))
+            tris.insert(tris.end(), s.tris.begin(), s.tris.end());
+        return tris;
+    }
     DecodeChunks(d, size, 0, size, tris);
     return tris;
 }
@@ -366,8 +373,76 @@ void CollectNamedSolids(const uint8_t *d, size_t dataSize, size_t begin, size_t 
 }
 } // namespace
 
+std::vector<uint8_t> SerializeModSolids(const std::vector<NamedSolid> &solids)
+{
+    std::vector<uint8_t> out;
+    auto put = [&out](const void *p, size_t n) { out.insert(out.end(), static_cast<const uint8_t *>(p), static_cast<const uint8_t *>(p) + n); };
+    auto u32 = [&put](uint32_t v) { put(&v, 4); };
+    put("NFSU2MOD", 8);
+    u32(uint32_t(solids.size()));
+    for (const NamedSolid &s : solids) {
+        u32(uint32_t(s.name.size()));
+        put(s.name.data(), s.name.size());
+        put(s.bboxMin, 12), put(s.bboxMax, 12);
+        u32(uint32_t(s.textures.size()));
+        for (uint32_t h : s.textures)
+            u32(h);
+        u32(uint32_t(s.tris.size()));
+        for (const Triangle &t : s.tris) {
+            const int32_t tex = t.tex;
+            put(&tex, 4);
+            for (const Point &p : t.v) {
+                const float f[5] = {p.x, p.y, p.z, p.u, p.v};
+                put(f, sizeof f);
+            }
+        }
+    }
+    return out;
+}
+
+static std::vector<NamedSolid> ParseModSolids(const uint8_t *d, size_t size)
+{
+    std::vector<NamedSolid> out;
+    size_t at = 8;
+    auto have = [&](size_t n) { return at + n <= size; };
+    auto u32 = [&]() { uint32_t v = 0; if (have(4)) std::memcpy(&v, d + at, 4); at += 4; return v; };
+    if (!have(4))
+        return out;
+    const uint32_t count = u32();
+    for (uint32_t i = 0; i < count && have(4); ++i) {
+        NamedSolid s;
+        const uint32_t nameLen = u32();
+        if (!have(nameLen + 24))
+            break;
+        s.name.assign(reinterpret_cast<const char *>(d + at), nameLen), at += nameLen;
+        std::memcpy(s.bboxMin, d + at, 12), at += 12;
+        std::memcpy(s.bboxMax, d + at, 12), at += 12;
+        const uint32_t nTex = u32();
+        for (uint32_t k = 0; k < nTex && have(4); ++k)
+            s.textures.push_back(u32());
+        const uint32_t nTris = u32();
+        s.tris.reserve(nTris);
+        for (uint32_t k = 0; k < nTris && have(4 + 60); ++k) {
+            Triangle t;
+            int32_t tex;
+            std::memcpy(&tex, d + at, 4), at += 4;
+            t.tex = int8_t(tex);
+            for (Point &p : t.v) {
+                float f[5];
+                std::memcpy(f, d + at, sizeof f), at += sizeof f;
+                p.x = f[0], p.y = f[1], p.z = f[2], p.u = f[3], p.v = f[4];
+            }
+            s.tris.push_back(t);
+        }
+        out.push_back(std::move(s));
+    }
+    return out;
+}
+
 std::vector<NamedSolid> DecodeNamedSolids(const uint8_t *d, size_t size)
 {
+    if (size >= 12 && std::memcmp(d, "NFSU2MOD", 8) == 0)
+        return ParseModSolids(d, size);
     std::vector<NamedSolid> out;
     CollectNamedSolids(d, size, 0, size, out);
     return out;

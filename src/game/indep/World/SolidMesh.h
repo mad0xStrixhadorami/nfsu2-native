@@ -66,6 +66,9 @@ struct NamedSolid {
         return nullptr;
     }
 };
+// Solids generated in code are exchanged with the loaders as a small binary blob ("NFSU2MOD"), so everything that reads a car's
+// GEOMETRY.BIN (preview, race, garage) takes them through DecodeNamedSolids unchanged (ISSUES #295).
+std::vector<uint8_t> SerializeModSolids(const std::vector<NamedSolid> &solids);
 // Body-panel styles present in a car's GEOMETRY.BIN (ISSUES.md #192).  The GLOBALB catalogue
 // lists every body-kit design for every car, but a car ships only the panels it can mount: the
 // SKYLINE has 25 of the 30 kits and the COROLLA only 10 of the 14 headlight/taillight styles.
