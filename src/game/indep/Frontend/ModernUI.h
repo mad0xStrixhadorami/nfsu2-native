@@ -3,6 +3,7 @@
 // backdrop and a redesigned race HUD (arc rev meter, big speed readout, glass info pills) in the Rajdhani typeface
 // (SIL OFL, assets/ui).  Everything draws with the SDL renderer in window pixels (logical size 0).
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <SDL.h>
@@ -28,8 +29,8 @@ public:
     void DrawHud(int w, int h, const Hud &hud, float seconds);
     // The pause dialog: a dimmed scene, a glass panel with a title and a list (selected = highlighted).  When `confirm` is set a
     // Yes / No question replaces the list (confirmYes = the highlighted answer).
-    void DrawDialog(int w, int h, const std::string &title, const std::vector<std::string> &items, int selected, bool confirm,
-                    const std::string &question, bool confirmYes, float seconds);
+    void DrawDialog(int w, int h, std::string_view title, const char *const *items, int itemCount, int selected, bool confirm,
+                    std::string_view question, bool confirmYes, float seconds);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
     ~ModernUI();
@@ -43,8 +44,8 @@ private:
     Glyph m_glyphs[96] = {};
     int m_atlasW = 0, m_atlasH = 0;
     static constexpr float kBakePx = 96.0f;
-    void Text(float x, float y, float px, const std::string &s, SDL_Color c, int align = 0); // align 0 left, 1 centre, 2 right; y = top
-    float TextWidth(const std::string &s, float px) const;
+    void Text(float x, float y, float px, std::string_view s, SDL_Color c, int align = 0); // align 0 left, 1 centre, 2 right; y = top
+    float TextWidth(std::string_view s, float px) const;
     void Quad(SDL_FPoint a, SDL_FPoint b, SDL_FPoint c, SDL_FPoint d, SDL_Color ca, SDL_Color cb, SDL_Color cc, SDL_Color cd);
     void Rect(float x, float y, float w, float h, SDL_Color top, SDL_Color bottom);
     void Glass(float x, float y, float w, float h, float cut, SDL_Color tint, SDL_Color edge); // slanted-corner panel

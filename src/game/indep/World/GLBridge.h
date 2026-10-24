@@ -25,4 +25,11 @@ void GenBuffers(GLsizei n, GLuint *buffers);
 void DeleteBuffers(GLsizei n, const GLuint *buffers);
 void BindArrayBuffer(GLuint buffer);
 void ArrayBufferData(ptrdiff_t size, const void *data); // GL_STATIC_DRAW
+void ArrayBufferSubData(ptrdiff_t offset, ptrdiff_t size, const void *data);
+// glMultiDrawArrays (GL 1.4): n ranges of one primitive type in a single call.
+void MultiDrawArrays(GLenum mode, const GLint *first, const GLsizei *count, GLsizei n);
+// A vertex array object: captures the client-state enables and attribute pointers so a frame binds them with one call.
+unsigned GenVertexArray();
+void BindVertexArray(unsigned vao);
+void DeleteVertexArray(unsigned vao);
 } // namespace GLBridge

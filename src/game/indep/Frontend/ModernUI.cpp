@@ -97,7 +97,7 @@ bool ModernUI::Init(SDL_Renderer *r)
     return true;
 }
 
-float ModernUI::TextWidth(const std::string &s, float px) const
+float ModernUI::TextWidth(std::string_view s, float px) const
 {
     float w = 0;
     for (unsigned char c : s)
@@ -106,7 +106,7 @@ float ModernUI::TextWidth(const std::string &s, float px) const
     return w * px / kBakePx;
 }
 
-void ModernUI::Text(float x, float y, float px, const std::string &s, SDL_Color col, int align)
+void ModernUI::Text(float x, float y, float px, std::string_view s, SDL_Color col, int align)
 {
     if (!m_font)
         return;
@@ -300,15 +300,15 @@ void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
     (void)t;
 }
 
-void ModernUI::DrawDialog(int w, int h, const std::string &title, const std::vector<std::string> &items, int selected, bool confirm,
-                          const std::string &question, bool confirmYes, float t)
+void ModernUI::DrawDialog(int w, int h, std::string_view title, const char *const *items, int itemCount, int selected, bool confirm,
+                          std::string_view question, bool confirmYes, float t)
 {
     if (!m_font)
         return;
     const float s = float(h) / 720.0f, W = float(w), H = float(h);
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
     Rect(0, 0, W, H, {2, 6, 16, 150}, {2, 6, 16, 190}); // dim the scene
-    const float pw = 460 * s, ph = (confirm ? 250.0f : 130.0f + 62.0f * float(items.size())) * s;
+    const float pw = 460 * s, ph = (confirm ? 250.0f : 130.0f + 62.0f * float(itemCount)) * s;
     const float px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph * 0.5f;
     Glow(W * 0.5f, H * 0.5f, pw * 1.1f, {20, 80, 170, 60});
     Glass(px, py, pw, ph, 28 * s, {8, 14, 28, 225}, {120, 190, 255, 170});
@@ -317,9 +317,9 @@ void ModernUI::DrawDialog(int w, int h, const std::string &title, const std::vec
     char buf[16];
     (void)buf;
     if (!confirm) {
-        for (size_t i = 0; i < items.size(); ++i) {
+        for (int i = 0; i < itemCount; ++i) {
             const float ry = py + 84 * s + 62 * s * float(i);
-            const bool on = int(i) == selected;
+            const bool on = i == selected;
             if (on) {
                 const float pulse = 0.75f + 0.25f * std::sin(t * 6.0f);
                 Glass(px + 20 * s, ry, pw - 40 * s, 52 * s, 14 * s, {30, 100, 190, Uint8(150 + 50 * pulse)}, {150, 215, 255, 230});
@@ -344,14 +344,13 @@ void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
 {
     if (!m_font || count <= 0)
         return;
-    const float s = float(h) / 720.0f, px = 16 * s, py = 16 * s, lh = 21 * s;
+    const float s = float(h) / 720.0f, panel = 400 * s, px = float(w) - panel - 8 * s, py = 96 * s, lh = 21 * s; // top right, under the timer row
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
-    Rect(px - 8 * s, py - 6 * s, 470 * s, lh * float(count) + 12 * s, {0, 0, 0, 175}, {0, 0, 0, 175});
+    Rect(px - 8 * s, py - 6 * s, panel + 8 * s, lh * float(count) + 12 * s, {0, 0, 0, 175}, {0, 0, 0, 175});
     for (int i = 0; i < count; ++i) {
         SDL_Color c = i == 0 ? SDL_Color{120, 255, 160, 255} : SDL_Color{225, 235, 245, 255};
         if (std::strstr(lines[i], "GPU-bound") || std::strstr(lines[i], "CPU-bound"))
             c = {255, 190, 70, 255};
         Text(px, py + lh * float(i), 17 * s, lines[i], c, 0);
     }
-    (void)w;
 }

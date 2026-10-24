@@ -29,14 +29,14 @@ struct Vertex {
 void TrackWorld::ReleaseGL()
 {
     if (m_glState == 1) {
-        for (auto &[key, cell] : m_glCells)
-            if (cell.buffer)
-                GLBridge::DeleteBuffers(1, &cell.buffer);
+        if (m_arena)
+            GLBridge::DeleteBuffers(1, &m_arena);
+        GLBridge::DeleteVertexArray(m_arenaVao);
         for (auto &[hash, tex] : m_glTextures)
             glDeleteTextures(1, &tex);
-        if (m_glPanorama.buffer)
-            GLBridge::DeleteBuffers(1, &m_glPanorama.buffer);
     }
+    m_arena = m_arenaVao = 0;
+    m_arenaCap = m_arenaUsed = 0;
     m_glCells.clear();
     m_glPanorama = GLCell();
     m_glTextures.clear();
@@ -413,17 +413,20 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glShadeModel(GL_SMOOTH);
 
     static std::vector<Vertex> scratch;
+    if (scratch.capacity() < 400000)
+        scratch.reserve(400000); // the largest cell fits: the upload never reallocates
 
     // The world programs: FULL (theme, photographic materials, wet roads) for cells near the camera, LITE for the far ones.  Uniform
     // locations are looked up once per frame and the per-frame constants are set once; switching only re-uses a program and
     // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
     struct WorldUniforms {
-        int tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
         int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
         float lastFogStart = -1.0f, lastFogEnd = -1.0f;
     };
     WorldUniforms wuFull, wuLite;
     auto queryWorldUniforms = [&](unsigned prog, WorldUniforms &u) {
+        u.glow = GLShader::Uniform(prog, "uGlow");
         u.tex = GLShader::Uniform(prog, "uTex"), u.fogColor = GLShader::Uniform(prog, "uFogColor");
         u.fogStart = GLShader::Uniform(prog, "uFogStart"), u.fogEnd = GLShader::Uniform(prog, "uFogEnd");
         u.grade = GLShader::Uniform(prog, "uGrade"), u.cam = GLShader::Uniform(prog, "uCam"), u.theme = GLShader::Uniform(prog, "uTheme");
@@ -444,6 +447,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Use(prog);
         ++Perf::g.programSwitches;
         GLShader::Set1i(u.tex, 0);
+        GLShader::Set1f(u.glow, 1.0f);
         GLShader::Set3f(u.fogColor, fogColour[0], fogColour[1], fogColour[2]);
         GLShader::Set1f(u.grade, getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(u.cam, cam.x, cam.y, cam.z);
@@ -476,12 +480,14 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     }
     float curFogStart = kFogStart, curFogEnd = kDrawDistance;
     unsigned lastProg = 0;
+    WorldUniforms *curU = &wuFull;
     auto worldProgram = [&](float fogStart, float fogEnd, bool lite) {
         curFogStart = fogStart, curFogEnd = fogEnd;
         if (!m_progWorld)
             return;
         const unsigned prog = lite ? m_progWorldLite : m_progWorld;
         WorldUniforms &u = (lite && m_progWorldLite != m_progWorld) ? wuLite : wuFull;
+        curU = &u;
         if (prog != lastProg) {
             GLShader::Use(prog);
             ++Perf::g.programSwitches;
@@ -512,61 +518,129 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     };
 
     // Upload render triangles once: grouped by texture, one draw range per texture.
+    // The vertex arena: one GL buffer sized for every cell's triangles (known now: the render lists are still on the CPU), plus a VAO
+    // holding the fixed-function array state.  Cells are written into it lazily the first time they are drawn.
+    if (!m_arena) {
+        size_t total = m_panorama.size() * 3;
+        for (const auto &kv : m_cells)
+            total += kv.second.render.size() * 3;
+        m_arenaCap = total + total / 20 + 1024;
+        GLBridge::GenBuffers(1, &m_arena);
+        GLBridge::BindArrayBuffer(m_arena);
+        GLBridge::ArrayBufferData(ptrdiff_t(m_arenaCap * sizeof(Vertex)), nullptr);
+        m_arenaVao = GLBridge::GenVertexArray();
+        GLBridge::BindVertexArray(m_arenaVao);
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_COLOR_ARRAY);
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
+        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
+        glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
+        GLBridge::BindVertexArray(0);
+        printf("[GL] vertex arena %.0f MB for %zu vertices\n", double(m_arenaCap * sizeof(Vertex)) / 1048576.0, m_arenaCap);
+    }
     auto upload = [&](GLCell &cell, std::vector<RTri> &render) {
+        if (render.empty())
+            return;
+        ++Perf::g.bufferBinds; // counts cell uploads (should be 0 in steady state)
+        if (!getenv("NFSU2_NIGHT")) // daylight: the street lamps' light cones are a night effect, they show as glowing shards by day
+            render.erase(std::remove_if(render.begin(), render.end(), [](const RTri &t) { return IsBeamTexture(t.tex); }), render.end());
         if (render.empty())
             return;
         std::stable_sort(render.begin(), render.end(), [](const RTri &a, const RTri &b) { return a.tex < b.tex; });
         scratch.clear();
         cell.ranges.clear();
+        const int base = int(m_arenaUsed);
         for (size_t i = 0; i < render.size(); ++i) {
             if (i == 0 || render[i].tex != render[i - 1].tex) {
                 unsigned tex = GLTexture(render[i].tex);
                 auto mode = m_glTextureMode.find(tex);
-                cell.ranges.push_back({tex, int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second,
+                cell.ranges.push_back({tex, base + int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second,
                                        render[i].tex ? InteriorClassOf(render[i].tex) : 0});
             }
             for (const RVertex &v : render[i].v)
                 scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
             cell.ranges.back().count += 3;
         }
-        if (!cell.buffer)
-            GLBridge::GenBuffers(1, &cell.buffer);
-        GLBridge::BindArrayBuffer(cell.buffer);
-        GLBridge::ArrayBufferData(ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
+        if (m_arenaUsed + scratch.size() > m_arenaCap) { // cannot happen (the arena is sized for everything); skip safely
+            cell.ranges.clear();
+            std::vector<RTri>().swap(render);
+            return;
+        }
+        GLBridge::BindArrayBuffer(m_arena);
+        GLBridge::ArrayBufferSubData(ptrdiff_t(m_arenaUsed * sizeof(Vertex)), ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
+        m_arenaUsed += scratch.size();
+        cell.buffer = m_arena;
         cell.vertices = int(scratch.size());
         std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
     };
-    // One cell's ranges for a pass: pass 0 opaque / punch-through, pass 1 blended / additive.  sweep 0 = ordinary textures, sweep 1 =
-    // the window facades (interior program).  The caller switches programs once per group of cells, not per cell.
-    auto drawCell = [&](const GLCell &cell, int pass, int sweep) {
-        GLBridge::BindArrayBuffer(cell.buffer);
-        ++Perf::g.bufferBinds;
-        glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, x)));
-        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
-        glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
+    // Draw batches: every visible cell's ranges are grouped by (group, texture, mode) and each batch is one glMultiDrawArrays.  The
+    // vectors are static: their capacity survives from frame to frame, so the loop does not allocate.
+    struct Batch {
+        unsigned tex;
+        int mode, interior;
+        std::vector<GLint> first;
+        std::vector<GLsizei> count;
+    };
+    enum { kOpaqueNear, kOpaqueFar, kInterior, kBlendNear, kBlendFar, kGroups };
+    static std::vector<Batch> batches[kGroups];
+    static std::unordered_map<uint64_t, int> batchIndex[kGroups];
+    auto resetBatches = [&] {
+        for (int g = 0; g < kGroups; ++g) {
+            for (Batch &b : batches[g])
+                b.first.clear(), b.count.clear();
+        }
+    };
+    auto addRanges = [&](const GLCell &cell, bool far) {
+        for (const GLRange &r : cell.ranges) {
+            const int g = r.mode != 0 ? (far ? kBlendFar : kBlendNear) : (m_progInterior && r.interior != 0) ? kInterior : (far ? kOpaqueFar : kOpaqueNear);
+            const uint64_t key = (uint64_t(r.texture) << 8) | uint64_t(r.mode << 2) | uint64_t(r.interior);
+            auto it = batchIndex[g].find(key);
+            if (it == batchIndex[g].end()) {
+                batches[g].push_back({r.texture, r.mode, r.interior, {}, {}});
+                it = batchIndex[g].emplace(key, int(batches[g].size()) - 1).first;
+            }
+            Batch &b = batches[g][size_t(it->second)];
+            b.first.push_back(r.first);
+            b.count.push_back(r.count);
+        }
+    };
+    auto drawBatches = [&](int g) {
         unsigned boundTex = ~0u;
-        for (const GLRange &range : cell.ranges) {
-            if ((range.mode != 0) != (pass == 1))
+        for (const Batch &b : batches[g]) {
+            if (b.first.empty())
                 continue;
-            if (pass == 0 && m_progInterior && (range.interior != 0) != (sweep == 1))
-                continue;
-            if (sweep == 1)
-                GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), range.interior == 2 ? 1.0f : 0.0f);
-            if (pass == 1)
-                glBlendFunc(GL_SRC_ALPHA, range.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
-            if (range.texture != boundTex) {
-                glBindTexture(GL_TEXTURE_2D, range.texture);
-                boundTex = range.texture;
+            if (g == kInterior)
+                GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), b.interior == 2 ? 1.0f : 0.0f);
+            if (g == kBlendNear || g == kBlendFar) {
+                glBlendFunc(GL_SRC_ALPHA, b.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+                GLShader::Set1f(curU->glow, b.mode == 2 && day ? 0.2f : 1.0f); // daylight: additive light pools / glows are faint
+            }
+            if (b.tex != boundTex) {
+                glBindTexture(GL_TEXTURE_2D, b.tex);
+                boundTex = b.tex;
                 ++Perf::g.textureBinds;
             }
-            glDrawArrays(GL_TRIANGLES, range.first, range.count);
-            ++Perf::g.drawCalls;
-            Perf::g.triangles += uint32_t(range.count / 3);
+            GLBridge::MultiDrawArrays(GL_TRIANGLES, b.first.data(), b.count.data(), GLsizei(b.first.size()));
+            ++Perf::g.drawCalls, ++Perf::g.multiDraws;
+            for (GLsizei c : b.count)
+                Perf::g.triangles += uint32_t(c / 3);
         }
     };
 
+    // First frame of a loaded world: upload every cell now, during loading, instead of the first time it comes into view.
+    if (m_warmAll && !m_scene) {
+        const unsigned t0 = SDL_GetTicks();
+        for (auto &kv : m_cells)
+            upload(m_glCells[kv.first], kv.second.render);
+        m_warmAll = false;
+        printf("[GL] all %zu cells uploaded in %u ms (%.0f MB of the %.0f MB arena)\n", m_cells.size(), SDL_GetTicks() - t0,
+               double(m_arenaUsed * sizeof(Vertex)) / 1048576.0, double(m_arenaCap * sizeof(Vertex)) / 1048576.0);
+    }
     // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.
     upload(m_glPanorama, m_panorama);
+    GLBridge::BindVertexArray(m_arenaVao);
+    GLBridge::BindArrayBuffer(m_arena);
     if (m_glPanorama.buffer) {
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
@@ -577,7 +651,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDisable(GL_FOG);
         glDisable(GL_DEPTH_TEST);
         worldProgram(1.0e9f, 2.0e9f, true); // no fog on the backdrop; the cheap shader
-        drawCell(m_glPanorama, 0, 0);
+        resetBatches();
+        addRanges(m_glPanorama, true);
+        drawBatches(kOpaqueFar);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_FOG);
         glMatrixMode(GL_PROJECTION);
@@ -610,30 +686,29 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (cell.buffer)
                 (m_scene || dist < kFullShaderRange ? nearCells : farCells).push_back(&cell);
         }
-    // Opaque and punch-through first (plain textures with the full shader near, the lite one far; then the window facades with the
-    // interior program), then blended / additive with depth writes off.
-    for (int pass = 0; pass < 2; ++pass) {
-        if (pass == 1) {
-            glEnable(GL_BLEND);
-            glDepthMask(GL_FALSE);
-        }
-        worldProgram(kFogStart, kDrawDistance, false);
-        for (const GLCell *cell : nearCells)
-            drawCell(*cell, pass, 0);
-        if (!farCells.empty()) {
-            worldProgram(kFogStart, kDrawDistance, true);
-            for (const GLCell *cell : farCells)
-                drawCell(*cell, pass, 0);
-        }
-        if (pass == 0 && m_progInterior) {
-            interiorProgram();
-            for (const GLCell *cell : nearCells)
-                drawCell(*cell, 0, 1);
-            for (const GLCell *cell : farCells)
-                drawCell(*cell, 0, 1);
-            lastProg = 0;
-        }
+    resetBatches();
+    for (const GLCell *cell : nearCells)
+        addRanges(*cell, false);
+    for (const GLCell *cell : farCells)
+        addRanges(*cell, true);
+    // Opaque and punch-through first (the full shader near, the lite one far, then the window facades with the interior program),
+    // then blended / additive with depth writes off.
+    worldProgram(kFogStart, kDrawDistance, false);
+    drawBatches(kOpaqueNear);
+    worldProgram(kFogStart, kDrawDistance, true);
+    drawBatches(kOpaqueFar);
+    if (m_progInterior) {
+        interiorProgram();
+        drawBatches(kInterior);
+        lastProg = 0;
     }
+    glEnable(GL_BLEND);
+    glDepthMask(GL_FALSE);
+    worldProgram(kFogStart, kDrawDistance, false);
+    drawBatches(kBlendNear);
+    worldProgram(kFogStart, kDrawDistance, true);
+    drawBatches(kBlendFar);
+    GLBridge::BindVertexArray(0);
     Perf::g.cellsDrawn = uint32_t(nearCells.size() + farCells.size());
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);

@@ -49,6 +49,7 @@ uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
 uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
+uniform float uGlow;    // multiplier for additive (light) textures: the night-time light pools wash the road out in daylight
 #ifdef FULL
 uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
 uniform sampler2D uMN0, uMN1, uMN2, uMN3, uMN4;                   // normals: asphalt, pavers, stone, concrete, plaster
@@ -235,6 +236,7 @@ void main() {
     float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
     f = f * f * (3.0 - 2.0 * f);
     c.rgb = mix(c.rgb, uFogColor, f);
+    c.rgb *= uGlow;
     gl_FragColor = c;
 }
 )";

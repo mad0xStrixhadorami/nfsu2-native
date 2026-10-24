@@ -91,4 +91,60 @@ void GenBuffers(GLsizei n, GLuint *buffers) { pglGenBuffers(n, buffers); }
 void DeleteBuffers(GLsizei n, const GLuint *buffers) { pglDeleteBuffers(n, buffers); }
 void BindArrayBuffer(GLuint buffer) { pglBindBuffer(kArrayBuffer, buffer); }
 void ArrayBufferData(ptrdiff_t size, const void *data) { pglBufferData(kArrayBuffer, size, data, kStaticDraw); }
+namespace {
+typedef void(APIENTRY *PFNBUFFERSUBDATA)(GLenum, ptrdiff_t, ptrdiff_t, const void *);
+typedef void(APIENTRY *PFNMULTIDRAW)(GLenum, const GLint *, const GLsizei *, GLsizei);
+typedef void(APIENTRY *PFNGENVAO)(GLsizei, GLuint *);
+typedef void(APIENTRY *PFNBINDVAO)(GLuint);
+typedef void(APIENTRY *PFNDELVAO)(GLsizei, const GLuint *);
+PFNBUFFERSUBDATA pSub;
+PFNMULTIDRAW pMulti;
+PFNGENVAO pGenVao;
+PFNBINDVAO pBindVao;
+PFNDELVAO pDelVao;
+void LoadExtra()
+{
+    if (pSub)
+        return;
+    pSub = reinterpret_cast<PFNBUFFERSUBDATA>(SDL_GL_GetProcAddress("glBufferSubData"));
+    pMulti = reinterpret_cast<PFNMULTIDRAW>(SDL_GL_GetProcAddress("glMultiDrawArrays"));
+    pGenVao = reinterpret_cast<PFNGENVAO>(SDL_GL_GetProcAddress("glGenVertexArrays"));
+    pBindVao = reinterpret_cast<PFNBINDVAO>(SDL_GL_GetProcAddress("glBindVertexArray"));
+    pDelVao = reinterpret_cast<PFNDELVAO>(SDL_GL_GetProcAddress("glDeleteVertexArrays"));
+}
+} // namespace
+void ArrayBufferSubData(ptrdiff_t offset, ptrdiff_t size, const void *data)
+{
+    LoadExtra();
+    pSub(kArrayBuffer, offset, size, data);
+}
+void MultiDrawArrays(GLenum mode, const GLint *first, const GLsizei *count, GLsizei n)
+{
+    LoadExtra();
+    if (pMulti)
+        pMulti(mode, first, count, n);
+    else
+        for (GLsizei i = 0; i < n; ++i)
+            glDrawArrays(mode, first[i], count[i]);
+}
+unsigned GenVertexArray()
+{
+    LoadExtra();
+    GLuint v = 0;
+    if (pGenVao)
+        pGenVao(1, &v);
+    return v;
+}
+void BindVertexArray(unsigned vao)
+{
+    LoadExtra();
+    if (pBindVao)
+        pBindVao(vao);
+}
+void DeleteVertexArray(unsigned vao)
+{
+    LoadExtra();
+    if (pDelVao && vao)
+        pDelVao(1, &vao);
+}
 } // namespace GLBridge

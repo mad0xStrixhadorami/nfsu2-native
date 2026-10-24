@@ -327,6 +327,10 @@ private:
     std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode
     unsigned m_glWhite = 0;
     std::unordered_map<int64_t, GLCell> m_glCells;
+    // One vertex arena for every cell (ISSUES #282): cells are sub-allocated lazily, drawn with batched multi-draws under one VAO.
+    unsigned m_arena = 0, m_arenaVao = 0;
+    size_t m_arenaCap = 0, m_arenaUsed = 0; // in vertices
+    bool m_warmAll = true;                   // the next RenderGL uploads every cell once (no streaming hitches while driving)
     GLCell m_glPanorama;
     int m_glState = 0; // 0 unknown, 1 available, -1 unavailable
     // Texture packs (0xb3300000) copied out of the stream; textures resolved by name hash.

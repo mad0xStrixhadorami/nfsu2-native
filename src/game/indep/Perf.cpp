@@ -10,13 +10,37 @@
 #include <cstring>
 #include <new>
 
+#include <link.h>
 namespace {
 std::atomic<uint64_t> g_allocs{0}, g_allocBytes{0}, g_frees{0};
+// NFSU2_ALLOC_TRACE=1: histogram of allocation call sites (return addresses), printed with the 2 s summary
+bool g_trace = false;
+constexpr int kSites = 1024;
+struct Site {
+    void *addr;
+    uint32_t count;
+    uint64_t bytes;
+} g_sites[kSites];
+void Note(void *ra, size_t n)
+{
+    for (int i = 0; i < kSites; ++i) {
+        if (g_sites[i].addr == ra) {
+            ++g_sites[i].count, g_sites[i].bytes += n;
+            return;
+        }
+        if (!g_sites[i].addr) {
+            g_sites[i] = {ra, 1, n};
+            return;
+        }
+    }
+}
 }
 
 // ---- instrumented global allocator: counts every C++ allocation (the per-frame count is what must stay near zero) ----
 void *operator new(size_t n)
 {
+    if (g_trace)
+        Note(__builtin_return_address(0), n);
     g_allocs.fetch_add(1, std::memory_order_relaxed);
     g_allocBytes.fetch_add(n, std::memory_order_relaxed);
     if (void *p = malloc(n ? n : 1))
@@ -76,6 +100,8 @@ void Init()
 {
     g_freq = SDL_GetPerformanceFrequency();
     g_summary = getenv("NFSU2_PERF") != nullptr;
+    g_overlay = getenv("NFSU2_OVERLAY") != nullptr;
+    g_trace = getenv("NFSU2_ALLOC_TRACE") != nullptr;
     pGen = reinterpret_cast<GenQ>(SDL_GL_GetProcAddress("glGenQueries"));
     pBegin = reinterpret_cast<BeginQ>(SDL_GL_GetProcAddress("glBeginQuery"));
     pEnd = reinterpret_cast<EndQ>(SDL_GL_GetProcAddress("glEndQuery"));
@@ -172,6 +198,15 @@ void EndFrame()
                    "draws %u (multi %u) tris %u texbinds %u progsw %u bufbinds %u cells %u | allocs/frame %.1f | rss %.0f MB | spikes %d\n",
                    1000.0f / avg, avg, p99, worst, cpu, sec[kInput] / n, sec[kUpdate] / n, sec[kWorld] / n, sec[kUI] / n, gpu, wait, verdict, g.drawCalls,
                    g.multiDraws, g.triangles, g.textureBinds, g.programSwitches, g.bufferBinds, g.cellsDrawn, double(allocSum) / n, double(Rss()) / 1048576.0, spikes);
+            if (g_trace) {
+                uintptr_t base = 0;
+                dl_iterate_phdr([](dl_phdr_info *info, size_t, void *out) { *static_cast<uintptr_t *>(out) = info->dlpi_addr; return 1; }, &base);
+                printf("[Alloc] call sites (module base %#lx; resolve with addr2line -f -C -e nfsu2 <addr-base>):\n", (unsigned long)base);
+                for (int i = 0; i < kSites && g_sites[i].addr; ++i)
+                    if (g_sites[i].count >= 40)
+                        printf("[Alloc]   %#lx  x%u  %llu bytes\n", (unsigned long)(uintptr_t(g_sites[i].addr) - base), g_sites[i].count, (unsigned long long)g_sites[i].bytes);
+                std::memset(g_sites, 0, sizeof(g_sites));
+            }
             fflush(stdout);
         }
     }

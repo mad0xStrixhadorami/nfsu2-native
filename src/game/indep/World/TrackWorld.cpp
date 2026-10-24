@@ -1393,6 +1393,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     }
     FlushBauhaus();
     AddIsraeliProps();
+    m_warmAll = true;
     return true;
 }
 

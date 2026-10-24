@@ -1612,17 +1612,18 @@ int main(int argc, char **argv)
             // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
             const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
             if (useModernPause) {
+                // the menu entries live in fixed arrays: building a vector of strings every frame allocated
+                static const char *const kFreeItems[] = {"RESUME", "OPTIONS", "MAIN MENU", "QUIT GAME"};
+                static const char *const kRaceItems[] = {"RESUME", "RESTART RACE", "OPTIONS", "MAIN MENU", "QUIT GAME"};
                 const bool restartable = !race.IsFreeRun();
-                std::vector<std::string> items = {"RESUME"};
-                if (restartable)
-                    items.push_back("RESTART RACE");
-                items.insert(items.end(), {"OPTIONS", "MAIN MENU", "QUIT GAME"});
+                const char *const *items = restartable ? kRaceItems : kFreeItems;
+                const int itemCount = restartable ? 5 : 4;
                 if (!modernPause && !pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished && !race.InIntro() &&
                     (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) {
                     modernPause = 1, modernSel = 0, modernYes = false;
                     printf("[Race] paused (dialog)\n");
                 } else if (modernPause) {
-                    const int n = int(items.size());
+                    const int n = itemCount;
                     if (modernPause == 1) {
                         if (pressed & FENativeInterface::kPadUp)
                             modernSel = (modernSel + n - 1) % n;
@@ -1632,10 +1633,10 @@ int main(int argc, char **argv)
                             modernPause = 0;
                             printf("[Race] resumed\n");
                         } else if (pressed & FENativeInterface::kPadAccept) {
-                            const std::string &it = items[size_t(modernSel)];
-                            if (it == "RESUME") {
+                            const char *it = items[modernSel];
+                            if (!strcmp(it, "RESUME")) {
                                 modernPause = 0;
-                            } else if (it == "RESTART RACE") {
+                            } else if (!strcmp(it, "RESTART RACE")) {
                                 modernPause = 0;
                                 if (hud)
                                     engine->UnloadPackage(hud);
@@ -1643,10 +1644,10 @@ int main(int argc, char **argv)
                                 std::string region = currentRegion;
                                 enterWorld(region);
                                 continue;
-                            } else if (it == "OPTIONS") {
+                            } else if (!strcmp(it, "OPTIONS")) {
                                 modernPause = 0;
                                 pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff); // the original pause screen holds the options
-                            } else if (it == "MAIN MENU") {
+                            } else if (!strcmp(it, "MAIN MENU")) {
                                 modernPause = 2, modernYes = false;
                             } else {
                                 modernPause = 3, modernYes = false;
@@ -1770,7 +1771,8 @@ int main(int argc, char **argv)
                 const float inputThrottle = (autoDrive || dragAuto || (pad & FENativeInterface::kPadUp)) ? 1.0f : 0.0f;
                 float throttle = inputThrottle;
                 float brake = (pad & FENativeInterface::kPadDown) ? 1.0f : 0.0f;
-                std::vector<float> rivals;
+                static std::vector<float> rivals; // reused every frame: no heap allocation in the loop (ISSUES #282)
+                rivals.clear();
                 for (size_t i = 0; i < ai.size(); ++i)
                     rivals.push_back(race.RaceDistance(aiStartS[i], ai[i].Progress()));
                 car.SetHold(race.GetPhase() == RaceSession::kCountdown);
@@ -1933,11 +1935,14 @@ int main(int argc, char **argv)
                         opponentCars[i].ScaleSpeed(0.97f);
                 // Car-to-car contact: push overlapping cars apart (2 m radius each); a car running
                 // into the back of another loses a little speed.
-                std::vector<PlayerCar *> cars{&car};
+                static std::vector<PlayerCar *> cars;
+                cars.clear();
+                cars.push_back(&car);
                 for (PlayerCar &o : opponentCars)
                     cars.push_back(&o);
                 if (traffic.Size()) {
-                    std::vector<const PlayerCar *> avoid(cars.begin(), cars.end());
+                    static std::vector<const PlayerCar *> avoid;
+                    avoid.assign(cars.begin(), cars.end());
                     traffic.Update(world, dt, avoid);
                 }
                 for (PlayerCar &t : trafficCars)
@@ -2099,7 +2104,8 @@ int main(int argc, char **argv)
                 const int mode = race.IsFreeRun() ? startup.ExploreMapMode() : startup.RaceMapMode();
                 constexpr uint32_t kMapTex = 0x4d494e49, kMapObj = 0x90fe80f3, kNorthObj = 0xf2a54430;
                 if (mode != 0) {
-                    std::vector<Minimap::Dot> dots;
+                    static std::vector<Minimap::Dot> dots;
+                    dots.clear();
                     for (const PlayerCar &o : opponentCars)
                         dots.push_back({o.X(), o.Y(), 255, 70, 70});
                     const float window = 260.0f + std::min(160.0f, std::fabs(car.Speed()) * 3.0f); // zooms out with speed
@@ -2129,7 +2135,8 @@ int main(int argc, char **argv)
                     constexpr uint32_t kFullTex = 0x4d415046, kMapObj = 0x90fe80f3;
                     static unsigned fullFrame = 0;
                     if (fullFrame++ % 6 == 0) {
-                        std::vector<Minimap::Dot> dots;
+                        static std::vector<Minimap::Dot> dots;
+                        dots.clear();
                         Minimap::Dot marker{0, 0, 255, 255, 255};
                         bool haveMarker = false;
                         float markerYaw = 0.0f;
@@ -2240,11 +2247,9 @@ int main(int argc, char **argv)
             }
             if (modernPause && modernUi.Ready()) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
-                std::vector<std::string> items = {"RESUME"};
-                if (!race.IsFreeRun())
-                    items.push_back("RESTART RACE");
-                items.insert(items.end(), {"OPTIONS", "MAIN MENU", "QUIT GAME"});
-                modernUi.DrawDialog(w, h, "PAUSED", items, modernSel, modernPause != 1,
+                static const char *const kFreeItems[] = {"RESUME", "OPTIONS", "MAIN MENU", "QUIT GAME"};
+                static const char *const kRaceItems[] = {"RESUME", "RESTART RACE", "OPTIONS", "MAIN MENU", "QUIT GAME"};
+                modernUi.DrawDialog(w, h, "PAUSED", race.IsFreeRun() ? kFreeItems : kRaceItems, race.IsFreeRun() ? 4 : 5, modernSel, modernPause != 1,
                                     modernPause == 3 ? "Quit the game?" : "Back to the main menu?", modernYes, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
@@ -2314,6 +2319,14 @@ int main(int argc, char **argv)
                 wash(0, 0, 0, c * 3);
         }
 
+        if (Perf::OverlayOn() && modernUi.Ready()) {
+            char lines[10][96];
+            const int n = Perf::OverlayLines(lines, 10);
+            SDL_RenderSetLogicalSize(ren, 0, 0);
+            int ow, oh;
+            SDL_GetRendererOutputSize(ren, &ow, &oh);
+            modernUi.DrawOverlay(ow, oh, lines, n);
+        }
         // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
         if (const char *shot = getenv("NFSU2_SCREENSHOT")) {
             const char *ms = getenv("NFSU2_SCREENSHOT_MS");
@@ -2330,14 +2343,6 @@ int main(int argc, char **argv)
             }
         }
         Perf::Lap(Perf::kUI);
-        if (Perf::OverlayOn() && modernUi.Ready()) {
-            char lines[10][96];
-            const int n = Perf::OverlayLines(lines, 10);
-            SDL_RenderSetLogicalSize(ren, 0, 0);
-            int ow, oh;
-            SDL_GetRendererOutputSize(ren, &ow, &oh);
-            modernUi.DrawOverlay(ow, oh, lines, n);
-        }
         SDL_RenderPresent(ren);
         Perf::Lap(Perf::kPresent);
         Perf::EndFrame();
