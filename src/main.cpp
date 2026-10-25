@@ -16,6 +16,7 @@
 #include <functional>
 
 #include <algorithm>
+#include <memory>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -719,6 +720,73 @@ int main(int argc, char **argv)
     TrackWorld world;
     TrackWorld::Camera camera;
     PlayerCar car;
+
+    // The menu showroom stage (ISSUES #304): the preview car on a dark studio floor, drawn with the race's car shader.
+    std::unique_ptr<TrackWorld> stageWorld;
+    std::string stageName;
+    std::vector<std::string> stagePacks;
+    size_t stageSig = 0;
+    float stageSwitch = -10.0f; // seconds (frontend clock) of the last car change, for the fade-in
+    auto drawStage = [&](float seconds, bool carScreen) -> bool {
+        FENativeInterface::StageCar sc;
+        if (!fe.PreviewStageCar(sc))
+            return false;
+        if (!stageWorld)
+            stageWorld = std::make_unique<TrackWorld>();
+        // a signature of everything the car is built from: rebuild the stage car when any of it changes
+        auto mix = [](size_t h, size_t v) { return h * 1000003u ^ (v + 0x9e3779b9u + (h << 6) + (h >> 2)); };
+        auto col = [&](size_t h, SDL_Color c) { return mix(h, size_t(c.r) | size_t(c.g) << 8 | size_t(c.b) << 16); };
+        size_t sig = mix(reinterpret_cast<size_t>(sc.model->data()), sc.model->size());
+        for (SDL_Color c : {sc.body, sc.rim, sc.caliper, sc.mirror, sc.spoiler, sc.roof, sc.engine, sc.exhaust})
+            sig = col(sig, c);
+        if (sig != stageSig || sc.name != stageName) {
+            stageWorld->ClearCars();
+            for (const char *shared : {"CARS\\TEXTURES.BIN", "CARS\\WHEELS\\TEXTURES.BIN"})
+                if (std::find(stagePacks.begin(), stagePacks.end(), shared) == stagePacks.end()) {
+                    stageWorld->AddTexturePack(ReadGameFile(*fs, shared));
+                    stagePacks.push_back(shared);
+                }
+            const std::string carPack = "CARS\\" + sc.name + "\\TEXTURES.BIN";
+            if (std::find(stagePacks.begin(), stagePacks.end(), carPack) == stagePacks.end()) {
+                stageWorld->AddTexturePack(ReadGameFile(*fs, carPack.c_str()));
+                stagePacks.push_back(carPack);
+            }
+            const size_t idx = stageWorld->AddCar(sc.model, sc.slots, sc.body, sc.rims, sc.rim, sc.calipers, sc.caliper, sc.mirrors, sc.mirror,
+                                                  sc.spoilers, sc.spoiler, sc.roofs, sc.roof, sc.engines, sc.engine, sc.exhausts, sc.exhaust);
+            // stand the car on z = 0, centred on the origin, nose to +X
+            float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+            for (const SolidMesh::Triangle &t : *sc.model)
+                for (const SolidMesh::Point &pt : t.v) {
+                    const float c3[3] = {pt.x, pt.y, pt.z};
+                    for (int a = 0; a < 3; ++a)
+                        lo[a] = std::min(lo[a], c3[a]), hi[a] = std::max(hi[a], c3[a]);
+                }
+            const float m[12] = {1, 0, 0, -(lo[0] + hi[0]) * 0.5f, 0, 1, 0, -(lo[1] + hi[1]) * 0.5f, 0, 0, 1, -lo[2]};
+            stageWorld->SetCarTransform(idx, m);
+            if (sc.name != stageName)
+                stageSwitch = seconds;
+            stageName = sc.name, stageSig = sig;
+            printf("[Stage] car %s on the showroom stage\n", sc.name.c_str());
+        }
+        TrackWorld::StageParams sp;
+        if (carScreen) { // car select / shops: a slow turn around the car, the car a little right of centre
+            sp.orbit = 0.5f + seconds * 0.18f;
+            sp.shiftX = 0.0f;
+            sp.distance = 9.6f;
+        } else { // main menu: a three-quarter view with a gentle sway, the car on the right
+            sp.orbit = 0.62f + 0.10f * std::sin(seconds * 0.23f);
+            sp.shiftX = 0.36f;
+            sp.distance = 9.0f;
+            sp.lookZ = 1.0f;
+        }
+        sp.time = seconds;
+        SDL_RenderSetLogicalSize(ren, 0, 0);
+        int bw, bh;
+        SDL_GetRendererOutputSize(ren, &bw, &bh);
+        const bool ok = stageWorld->RenderStage(ren, bw, bh, sp);
+        SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+        return ok;
+    };
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
     std::vector<std::vector<uint8_t>> hudTexturePacks; // kept alive: the front end keeps pointers into them
@@ -2718,7 +2786,10 @@ int main(int argc, char **argv)
 
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
-            if (modernUi.Ready()) { // the animated full-window backdrop under the 4:3 FEng box
+            const bool staged = modernUi.Ready() && !getenv("NFSU2_NO_STAGE") && (fe.MainMenuOpen() || fe.PreviewScreenOpen()) &&
+                                drawStage(float(elapsed) * 0.001f, fe.PreviewScreenOpen());
+            fe.SetPreviewSuppressed(staged);
+            if (modernUi.Ready() && !staged) { // the animated full-window backdrop under the 4:3 FEng box
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 int bw, bh;
                 SDL_GetRendererOutputSize(ren, &bw, &bh);

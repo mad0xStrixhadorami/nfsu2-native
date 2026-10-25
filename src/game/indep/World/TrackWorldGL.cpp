@@ -193,6 +193,7 @@ void TrackWorld::InitShaders()
     m_progBlur = GLShader::Build("blur", Shaders::kPostVS, Shaders::kBlurFS);
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
     m_progSky = getenv("NFSU2_CLASSIC_SKY") ? 0 : GLShader::Build("sky", Shaders::kSkyVS, Shaders::kSkyFS);
+    m_progStageBg = GLShader::Build("stage-bg", Shaders::kSkyVS, Shaders::kStageBgFS);
     printf("[GLSL] programs: world %u, interior %u, car %u, post %u / %u / %u\n", m_progWorld, m_progInterior, m_progCar, m_progBright, m_progBlur, m_progComposite);
 }
 
@@ -869,6 +870,25 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDisable(GL_BLEND);
     }
 
+    DrawCarsGL(cam, fogColour, day, kFogStart, kDrawDistance, false);
+    if (!inset)
+        PostProcess(width, height);
+    if (inset)
+        glDisable(GL_SCISSOR_TEST);
+    return true;
+}
+
+// Cars: rebuilt every frame from client memory, one draw per texture run (ISSUES #263 / #284).  `reflect` mirrors them in the
+// floor plane z = 0 for the showroom stage (ISSUES #304): a flipped modelview, no lamp glows.
+void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool day, float kFogStart, float kDrawDistance, bool reflect)
+{
+    static std::vector<Vertex> scratch;
+    if (reflect) {
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glScalef(1.0f, 1.0f, -1.0f);
+        glFrontFace(GL_CW);
+    }
     // Cars: rebuilt every frame from client memory, one draw per texture run. With the car program the paint is lit per
     // pixel (normals and the gloss class travel as vertex attributes); without it the CPU lights the vertices.
     GLBridge::BindArrayBuffer(0);
@@ -893,6 +913,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         const GLint glassLoc = GLShader::Uniform(m_progCar, "uGlass");
         GLShader::Set1f(glassLoc, 0.0f);
         GLShader::Set1f(GLShader::Uniform(m_progCar, "uDay"), day ? 1.0f : 0.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uStage"), m_stageEnv);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uStageA"), m_stageA[0], m_stageA[1], m_stageA[2]);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uStageB"), m_stageB[0], m_stageB[1], m_stageB[2]);
         for (const Car &car : m_cars) {
             if (car.render.empty())
                 continue;
@@ -964,8 +987,10 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::DisableAttrib(2);
         GLShader::DisableAttrib(3);
         GLShader::Use(0);
-        DrawCarLights(cam, day);
-        DrawTyreEffects(cam);
+        if (!reflect) {
+            DrawCarLights(cam, day);
+            DrawTyreEffects(cam);
+        }
     } else {
         for (const Car &car : m_cars) {
             if (car.render.empty())
@@ -1027,10 +1052,145 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             }
         }
     }
-    if (!inset)
-        PostProcess(width, height);
-    if (inset)
-        glDisable(GL_SCISSOR_TEST);
+    if (reflect) {
+        glFrontFace(GL_CCW);
+        glMatrixMode(GL_MODELVIEW);
+        glPopMatrix();
+    }
+}
+
+// The showroom stage (ISSUES #304).
+bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, const StageParams &sp)
+{
+    if (m_glState == 0)
+        m_glState = GLBridge::Available(renderer) ? 1 : -1;
+    if (m_glState != 1 || m_cars.empty())
+        return false;
+    GLBridge::Scope scope(renderer);
+    if (!m_shadersTried)
+        InitShaders();
+    if (!m_progStageBg || !m_progCar)
+        return false;
+    glViewport(0, 0, width, height);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_FOG);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glShadeModel(GL_SMOOTH);
+    glClearColor(0.01f, 0.012f, 0.02f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // the camera orbits the car (car +X = forward; orbit 0 looks at the nose)
+    Camera cam;
+    cam.x = std::cos(sp.orbit) * sp.distance, cam.y = std::sin(sp.orbit) * sp.distance, cam.z = sp.height;
+    cam.yaw = std::atan2(-cam.y, -cam.x);
+    cam.pitch = std::atan2(sp.lookZ - sp.height, sp.distance);
+    cam.fov = sp.fov;
+    const float cy = std::cos(cam.yaw), sy = std::sin(cam.yaw), cp = std::cos(cam.pitch), spch = std::sin(cam.pitch);
+    const float f[3] = {cy * cp, sy * cp, spch};
+    const float r[3] = {sy, -cy, 0.0f};
+    const float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+    const float aspect = float(height) / float(std::max(width, 1));
+    const float tanHalf = std::tan(cam.fov * 0.5f * 3.14159265f / 180.0f) * std::max(1.0f, (1.0f / aspect) * 0.75f);
+    constexpr float kNear = 0.3f, kFar = 200.0f;
+    // where the floor horizon falls on screen (ndc y): the view ray with zero elevation
+    const float horizonNdc = std::clamp(std::tan(cam.pitch) / (tanHalf * aspect), -1.5f, 1.5f);
+
+    // backdrop
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    GLShader::Use(m_progStageBg);
+    GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent"), sp.accent[0], sp.accent[1], sp.accent[2]);
+    GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent2"), sp.accent2[0], sp.accent2[1], sp.accent2[2]);
+    GLShader::Set2f(GLShader::Uniform(m_progStageBg, "uCenter"), sp.shiftX, -0.05f);
+    GLShader::Set1f(GLShader::Uniform(m_progStageBg, "uTime"), sp.time);
+    GLShader::Set1f(GLShader::Uniform(m_progStageBg, "uHorizon"), -horizonNdc * 0.0f - 0.34f);
+    GLShader::Set1f(GLShader::Uniform(m_progStageBg, "uAspect"), 1.0f / aspect);
+    glBegin(GL_QUADS);
+    glVertex2f(-1, 1);
+    glVertex2f(1, 1);
+    glVertex2f(1, -1);
+    glVertex2f(-1, -1);
+    glEnd();
+    GLShader::Use(0);
+
+    // 3D: the car shifted sideways on screen by an off-axis frustum
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    const float shift = -sp.shiftX * kNear * tanHalf;
+    glFrustum(-kNear * tanHalf + shift, kNear * tanHalf + shift, -kNear * tanHalf * aspect, kNear * tanHalf * aspect, kNear, kFar);
+    const float view[16] = {r[0], u[0], -f[0], 0, r[1], u[1], -f[1], 0, r[2], u[2], -f[2], 0,
+                            -(r[0] * cam.x + r[1] * cam.y + r[2] * cam.z), -(u[0] * cam.x + u[1] * cam.y + u[2] * cam.z),
+                            f[0] * cam.x + f[1] * cam.y + f[2] * cam.z, 1};
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(view);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.25f);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    GLBridge::BindArrayBuffer(0);
+    const float fog[4] = {0.01f, 0.012f, 0.02f, 1.0f};
+    m_stageEnv = 1.0f;
+    for (int i = 0; i < 3; ++i)
+        m_stageA[i] = sp.accent[i], m_stageB[i] = sp.accent2[i];
+
+    // 1. the reflection, below the floor plane
+    DrawCarsGL(cam, fog, false, 400.0f, 900.0f, true);
+    // 2. the floor: a dark glossy disc that lets the reflection through near the car and fades into the backdrop
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    {
+        constexpr int kSeg = 48;
+        constexpr float kRing[7][2] = {{0.0f, 0.80f}, {3.0f, 0.84f}, {6.0f, 0.90f}, {10.0f, 0.95f}, {18.0f, 0.98f}, {32.0f, 0.55f}, {60.0f, 0.0f}};
+        for (int ring = 0; ring < 6; ++ring) {
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= kSeg; ++i) {
+                const float a = float(i) * 6.2831853f / kSeg;
+                for (int e = 0; e < 2; ++e) {
+                    const float rr = kRing[ring + e][0];
+                    glColor4f(0.022f, 0.028f, 0.040f, kRing[ring + e][1]);
+                    glVertex3f(std::cos(a) * rr, std::sin(a) * rr, 0.0f);
+                }
+            }
+            glEnd();
+        }
+        // the light pool under the car (accent coloured, additive) and a bright ring just beyond the tyres
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        constexpr float kPool[4][2] = {{0.0f, 0.34f}, {2.2f, 0.20f}, {4.5f, 0.06f}, {7.5f, 0.0f}};
+        for (int ring = 0; ring < 3; ++ring) {
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i <= kSeg; ++i) {
+                const float a = float(i) * 6.2831853f / kSeg;
+                for (int e = 0; e < 2; ++e) {
+                    const float rr = kPool[ring + e][0];
+                    glColor4f(sp.accent[0], sp.accent[1], sp.accent[2], kPool[ring + e][1]);
+                    glVertex3f(std::cos(a) * rr * 1.25f, std::sin(a) * rr * 0.7f, 0.003f);
+                }
+            }
+            glEnd();
+        }
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_ALPHA_TEST);
+    // 3. the car itself
+    DrawCarsGL(cam, fog, false, 400.0f, 900.0f, false);
+    m_stageEnv = 0.0f;
+    PostProcess(width, height);
     return true;
 }
 

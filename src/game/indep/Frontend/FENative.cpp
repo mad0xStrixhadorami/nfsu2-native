@@ -219,6 +219,59 @@ bool FENativeInterface::LoadCarPreview(const char *model)
 }
 
 // Stand-in: the UG2 car-select renderer is not ported yet; draw the decoded model as a point cloud.
+static bool IsPreviewScreen(const char *n)
+{
+    return n && (strcasecmp(n, "UI_QRCarSelect.fng") == 0 || strcasecmp(n, "UI_ChooseCustomizeCategory.fng") == 0 ||
+                 strcasecmp(n, "UI_Paint.fng") == 0 || strcasecmp(n, "UI_ICEMAIN.fng") == 0 ||
+                 strcasecmp(n, "UI_CustomNeonMain.fng") == 0 || strcasecmp(n, "UI_GenericParts_Browser.fng") == 0);
+}
+
+bool FENativeInterface::PreviewScreenOpen() const
+{
+    if (!m_engine)
+        return false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        if (IsPreviewScreen(p->GetName()))
+            return true;
+    return false;
+}
+
+bool FENativeInterface::MainMenuOpen() const
+{
+    if (!m_engine)
+        return false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        if (p->GetName() && strcasecmp(p->GetName(), "UI_Main.fng") == 0)
+            return true;
+    return false;
+}
+
+bool FENativeInterface::PreviewStageCar(StageCar &out)
+{
+    if (!m_carPreviewLoadAttempted) {
+        m_carPreviewLoadAttempted = true;
+        LoadCarPreview("SKYLINE");
+    }
+    if (m_carPreviewModel.empty())
+        return false;
+    const SDL_Color body = ColorForPaint(m_previewPaint, StockPaintColor(m_previewCarName, 0, SDL_Color{60, 110, 210, 255}));
+    out.model = &m_carPreviewModel;
+    out.slots = &m_carPreviewSlots;
+    out.rims = &m_carPreviewRims, out.calipers = &m_carPreviewCalipers, out.mirrors = &m_carPreviewMirrors;
+    out.spoilers = &m_carPreviewSpoilers, out.roofs = &m_carPreviewRoofs, out.engines = &m_carPreviewEngines;
+    out.exhausts = &m_carPreviewExhausts;
+    out.body = body;
+    out.rim = ColorForPaint(m_previewRimSet, m_previewRim, SDL_Color{38, 38, 38, 255});
+    out.caliper = ColorForPaint(m_previewCaliperSet, m_previewCaliper, SDL_Color{128, 128, 128, 255});
+    out.mirror = ColorForPaint(m_previewMirrorSet, m_previewMirror, body);
+    out.spoiler = ColorForPaint(m_previewSpoilerSet, m_previewSpoiler, body);
+    out.roof = ColorForPaint(m_previewRoofSet, m_previewRoof, body);
+    out.engine = ColorForPaint(m_previewEngineSet, m_previewEngine, SDL_Color{128, 64, 48, 255});
+    out.exhaust = ColorForPaint(m_previewExhaustSet, m_previewExhaust, SDL_Color{150, 150, 150, 255});
+    out.name = m_previewCarName;
+    return true;
+}
+
 void FENativeInterface::RenderCarPreviewOverlay()
 {
     FEPackage *pkg = nullptr;
@@ -285,6 +338,11 @@ void FENativeInterface::RenderCarPreviewOverlay()
         if (carSelect)
             UpdateStatBars(pkg);
         UpdatePreviewSkin(body);
+        if (m_previewSuppressed) { // the showroom stage draws the car (ISSUES #304)
+            if (carSelect)
+                DrawCarPreviewLabel(pkg);
+            return;
+        }
         if (DrawModelGL(m_renderer, m_carPreviewModel, area, yaw, body, &m_carPreviewSlots,
                         m_carPreviewWheels, &m_carPreviewRims, rim, &m_carPreviewCalipers, caliper,
                         &m_carPreviewMirrors, mirror, &m_carPreviewSpoilers, spoiler,

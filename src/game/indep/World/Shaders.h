@@ -594,7 +594,23 @@ varying float vDist;
 
 // A procedural environment: night sky with a sodium horizon glow, rows of distant city lights and a couple of soft
 // light boxes, so the clear coat has something to reflect (the original uses an environment-map texture).
+uniform float uStage;       // 1 in the menu showroom (ISSUES #304): studio strip lights instead of the night city
+uniform vec3 uStageA, uStageB;
+vec3 studioEnv(vec3 R) {
+    float h = R.z;
+    vec3 col = mix(vec3(0.018, 0.020, 0.028), vec3(0.075, 0.09, 0.13), smoothstep(-0.2, 0.95, h));
+    col += vec3(1.0, 0.97, 0.92) * smoothstep(0.50, 0.88, h) * exp(-pow(R.y * 4.2, 2.0)) * 2.0;            // overhead strip softbox
+    float a = atan(R.y, R.x);
+    float band = smoothstep(-0.12, 0.22, h) * (1.0 - smoothstep(0.55, 0.92, h));
+    col += uStageA * exp(-pow((a - 1.25) * 4.2, 2.0)) * band * 2.4;                                           // tall panel, one side
+    col += uStageB * exp(-pow((a + 1.25) * 4.2, 2.0)) * band * 2.4;                                           // and the other
+    col += mix(uStageA, vec3(1.0), 0.35) * pow(max(0.0, dot(R, normalize(vec3(-1.0, 0.15, 0.35)))), 24.0) * 1.5; // back light
+    col += vec3(1.0, 0.95, 0.9) * pow(max(0.0, dot(R, normalize(vec3(0.7, -0.1, 0.25)))), 40.0) * 0.8;       // front fill
+    return col;
+}
 vec3 environment(vec3 R) {
+    if (uStage > 0.5)
+        return studioEnv(R);
     float h = R.z;
     vec3 zenith = vec3(0.03, 0.05, 0.13), horizon = vec3(0.30, 0.27, 0.30), ground = vec3(0.045, 0.045, 0.055);
     vec3 col = mix(ground, mix(horizon, zenith, clamp(h * 1.6, 0.0, 1.0)), smoothstep(-0.12, 0.08, h));
@@ -723,10 +739,10 @@ void main() {
     // base lighting: hemisphere + sun, with a wrap term so the shadow side stays rich
     float hemi = 0.26 + 0.30 * (0.5 + 0.5 * N.z);
     float wrap = clamp((dot(N, L) + 0.35) / 1.35, 0.0, 1.0);
-    vec3 lit = base.rgb * (hemi + 0.62 * wrap);
+    vec3 lit = base.rgb * (hemi + 0.62 * wrap) * (1.0 - 0.30 * uStage);
     // clear coat: Fresnel-weighted environment reflection and two specular lobes (tight sun + broad sheen)
     vec3 R = reflect(-V, N);
-    float F0 = glass ? 0.085 : 0.045;
+    float F0 = (glass ? 0.085 : 0.045) + 0.10 * uStage; // the showroom paint is glossier: more of the studio lights shows
     float fres = F0 + (1.0 - F0) * pow(1.0 - NdV, 5.0);
     float reflectivity = glass ? 1.0 : 0.85;
     vec3 env = environment(R);
@@ -735,7 +751,7 @@ void main() {
     float spec = pow(NdH, glass ? 260.0 : 140.0) * 1.1 + pow(NdH, 18.0) * 0.12;
     // a metallic-flake glint that moves with the view (paint only)
     float flake = glass ? 0.0 : pow(max(0.0, sin(dot(vPos, vec3(61.0, 47.0, 53.0)) + NdV * 7.0)), 40.0) * 0.06 * (0.3 + NdL);
-    vec3 col = lit * (1.0 - fres * reflectivity * 0.65) + env * fres * reflectivity + vec3(spec) * (0.4 + 0.6 * NdL) + base.rgb * flake;
+    vec3 col = lit * (1.0 - fres * reflectivity * 0.65) + env * (1.0 + 0.9 * uStage) * fres * reflectivity + vec3(spec) * (0.4 + 0.6 * NdL) + base.rgb * flake;
     if (glass) col = col * 0.55 + env * 0.18; // tinted glass picks up some of the surroundings even head-on
     float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
     col = mix(col, uFogColor, f * f * (3.0 - 2.0 * f));
@@ -842,6 +858,43 @@ void main() {
     col += (h21(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) / 255.0;
     gl_FragColor = vec4(col, 1.0);
     if (uDay > 1.5) gl_FragColor = vec4(d * 0.5 + 0.5, 1.0);
+}
+)";
+
+// The showroom stage backdrop (ISSUES #304): a dark studio with a radial accent glow behind the car, two soft light slabs and a faint
+// horizon line.  Drawn as a full-screen quad before the car; the floor and the reflection are geometry.
+inline const char *kStageBgFS = R"(#version 120
+varying vec2 vNdc;
+uniform vec3 uAccent, uAccent2;
+uniform vec2 uCenter;      // where the car sits on screen (ndc)
+uniform float uTime;
+uniform float uHorizon;    // ndc y of the floor horizon
+uniform float uAspect;
+float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+void main() {
+    vec2 p = vNdc;
+    vec2 q = vec2((p.x - uCenter.x) * uAspect, p.y - uCenter.y);
+    float up = smoothstep(-1.0, 0.8, p.y);
+    vec3 col = mix(vec3(0.012, 0.016, 0.026), vec3(0.050, 0.064, 0.095), up);
+    // a big soft glow behind the car, and a tighter hot core
+    float r = length(q * vec2(0.62, 0.95));
+    col += uAccent * 0.55 * exp(-r * r * 2.6) * (0.85 + 0.15 * sin(uTime * 0.7));
+    col += uAccent * 0.35 * exp(-r * r * 14.0);
+    // two vertical light slabs (softbox panels) either side, brightest mid-height
+    for (int i = 0; i < 2; ++i) {
+        float sx = uCenter.x + (i == 0 ? -1.0 : 1.0) * 0.95 * (1.0 + 0.03 * sin(uTime * 0.4 + float(i)));
+        float dx = (p.x - sx) * uAspect;
+        float slab = exp(-dx * dx * 55.0) * smoothstep(-0.2, 0.25, p.y) * (1.0 - smoothstep(0.55, 1.05, p.y));
+        col += (i == 0 ? uAccent2 : uAccent) * 0.32 * slab;
+    }
+    // the floor: darker below the horizon, with a thin bright seam where it meets the wall
+    float below = 1.0 - smoothstep(uHorizon - 0.02, uHorizon + 0.02, p.y);
+    col = mix(col, col * 0.35 + vec3(0.006, 0.008, 0.012), below);
+    col += mix(uAccent, vec3(1.0), 0.4) * 0.35 * exp(-pow((p.y - uHorizon) * 38.0, 2.0)) * exp(-p.x * p.x * 1.2);
+    // vignette and grain
+    col *= 1.0 - 0.55 * pow(length(p * vec2(0.8, 0.9)), 2.2);
+    col += (h21(gl_FragCoord.xy + fract(uTime) * 71.0) - 0.5) / 120.0;
+    gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
 )";
 

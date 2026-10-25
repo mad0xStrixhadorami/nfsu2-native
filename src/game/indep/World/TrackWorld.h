@@ -37,6 +37,20 @@ public:
     // because triangles resolve their texture at load time.
     void SetExtraPack(std::vector<uint8_t> data) { m_extraPacks.clear(); AddExtraPack(std::move(data)); }
     void AddExtraPack(std::vector<uint8_t> data) { if (!data.empty()) m_extraPacks.push_back(std::move(data)); }
+    // The showroom stage (ISSUES #304): the menus' 3D car on a dark studio floor with a reflection, drawn through the same car shader as the
+    // race.  The car is placed at the origin facing +X on z = 0 (use AddCar / SetCarTransform / ClearCars as for the world).
+    struct StageParams {
+        float orbit = 0.55f;    // camera azimuth around the car (rad, 0 = in front of the car)
+        float distance = 6.6f;  // metres
+        float height = 1.25f;   // camera height
+        float lookZ = 0.55f;    // the point looked at
+        float fov = 34.0f;      // horizontal degrees at 4:3 (Hor+ above)
+        float shiftX = 0.0f;    // shifts the car sideways on screen (fraction of the half width; + = to the right)
+        float time = 0.0f;      // seconds, drives the background animation
+        float accent[3] = {0.10f, 0.45f, 1.00f};
+        float accent2[3] = {1.00f, 0.50f, 0.12f};
+    };
+    bool RenderStage(SDL_Renderer *renderer, int width, int height, const StageParams &p);
     // Progress reports (0..1) from Load, for the loading screen (ISSUES #301).
     void SetProgress(std::function<void(float)> cb) { m_progress = std::move(cb); }
     bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
@@ -381,12 +395,14 @@ private:
     std::unordered_map<uint32_t, int> m_interiorClass; // texture hash -> 0 none / 1 windowed facade / 2 glass wall
     int InteriorClassOf(uint32_t hash);
     unsigned m_progWorldLite = 0; // the cheap world shader for far cells (ISSUES #282)
-    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0;
+    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0;
     unsigned m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
     int m_postW = 0, m_postH = 0;
     bool m_shadersTried = false;
     void InitShaders();
     void PostProcess(int w, int h);
+    float m_stageEnv = 0.0f, m_stageA[3] = {}, m_stageB[3] = {}; // the car shader's studio environment (RenderStage)
+    void DrawCarsGL(const Camera &cam, const float fogColour[4], bool day, float kFogStart, float kDrawDistance, bool reflect);
     float m_fxMotion = 0, m_fxNitro = 0, m_fxCar[4] = {0, 0, 0, 0}, m_fxCenter[2] = {0.5f, 0.6f};
     void ReleasePost();
     unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)

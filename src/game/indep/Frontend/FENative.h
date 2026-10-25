@@ -382,6 +382,20 @@ public:
     void StartTextScroll(FEPackage *pkg, uint32_t objHash, std::vector<std::string> lines, float startY,
                          float lineHeight, float speed, float top, float bottom);
     void RenderCarPreviewOverlay(); // Stand-in overlay for the unported UG2 car renderer.
+    // The menu showroom stage (ISSUES #304) draws the preview car itself: this hands it the assembled car (parts, paints) and the
+    // overlay then only keeps the stat bars and the label up to date.
+    struct StageCar {
+        const std::vector<SolidMesh::Triangle> *model = nullptr;
+        const std::vector<uint32_t> *slots = nullptr;
+        const std::vector<uint8_t> *rims = nullptr, *calipers = nullptr, *mirrors = nullptr, *spoilers = nullptr, *roofs = nullptr,
+                                   *engines = nullptr, *exhausts = nullptr;
+        SDL_Color body{}, rim{}, caliper{}, mirror{}, spoiler{}, roof{}, engine{}, exhaust{};
+        std::string name;
+    };
+    bool PreviewStageCar(StageCar &out); // loads the default preview car on first use; false when none is available
+    void SetPreviewSuppressed(bool on) { m_previewSuppressed = on; }
+    bool PreviewScreenOpen() const; // a screen that shows the preview car is on top
+    bool MainMenuOpen() const;
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
     void RenderObject(FEObject *pObject) override;
@@ -500,6 +514,7 @@ private:
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;
+    bool m_previewSuppressed = false;
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";
     uint32_t m_previewPaint = 0; // 0 = stock; else 1..PaintCatalog::Count(set)
