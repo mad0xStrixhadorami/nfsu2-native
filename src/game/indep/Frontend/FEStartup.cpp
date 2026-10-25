@@ -5046,6 +5046,42 @@ void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
     RefreshCareerWorldMap(pkg);
 }
 
+bool FEStartupSequence::FreeRoamEventAt(uint32_t locator, EngageInfo &out) const
+{
+    if (!m_profile.valid)
+        return false;
+    const Career::EventTable &table = Career::EventTable::Get();
+    const Career::Event *best = nullptr;
+    const RaceInfo *bestRace = nullptr;
+    for (const Career::Event &ev : table.All()) {
+        if (ev.locator != locator || ev.races.empty() || ev.id - 0xdd60e402u < 2u)
+            continue;
+        const RaceInfo *r = nullptr;
+        for (const RaceInfo &ri : m_fe->Races())
+            if (ri.number == ev.races[0])
+                r = &ri;
+        if (!r || (!getenv("NFSU2_UNLOCK_ALL") && !table.EventAvailable(ev, m_profile.completedEvents)))
+            continue;
+        // an event still to win comes before a finished one
+        if (!best || (m_profile.Completed(best->id) && !m_profile.Completed(ev.id)))
+            best = &ev, bestRace = r;
+    }
+    if (!best)
+        return false;
+    out.event = best;
+    out.done = m_profile.Completed(best->id);
+    out.purse = best->purse;
+    char label[32];
+    snprintf(label, sizeof(label), "TRACK_NAME_%d", bestRace->number);
+    out.name = m_fe->LanguageText(bStringHash(label));
+    out.type = m_fe->LanguageText(RaceTypeLabel(CareerRaceType(*best, *bestRace)));
+    char text[48];
+    snprintf(text, sizeof(text), "%.1f Miles", bestRace->length * 0.001f * 0.62137f);
+    out.distance = text;
+    out.status = m_fe->LanguageText(out.done ? 0xb1ee4ca9 : 0xd11ecd79); // Completed / Not Completed
+    return true;
+}
+
 void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
 {
     char text[48];

@@ -755,6 +755,9 @@ int main(int argc, char **argv)
     // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
     FEPackage *cribPkg = nullptr;
     bool shopFromWorld = false;       // the open shop screen was entered from a free-roam hot spot (#269)
+    const Career::Trigger *engageArmed = nullptr; // an event locator stays disarmed until the car leaves its zone (ISSUES #303)
+    FEStartupSequence::EngageInfo engage;
+    int engageSel = 0;
     const Career::Hotspot *hotArmed = nullptr; // a hot spot stays disarmed until the car leaves its circle
 
     int playerSkinIndex = -1;       // the player's car in the world (vinyl skin, ISSUES #223)
@@ -1288,6 +1291,19 @@ int main(int argc, char **argv)
                     }
                     beacons.push_back(b);
                 }
+                // Career event locators (ISSUES #303): a white-gold column where an open event starts.
+                std::vector<uint8_t> hotPaths = ReadGameFile(*fs, hotPath);
+                Career::TriggerTable &trig = Career::TriggerTable::Get();
+                printf("[Triggers] %zu placed in %s\n", trig.Load(globalB.data(), globalB.size(), hotPaths), hotPath);
+                size_t openEvents = 0;
+                for (const Career::Trigger &t : trig.All())
+                    if (t.kind == Career::Trigger::kEvent && startup.FreeRoamEventOpen(t.hash)) {
+                        TrackWorld::Beacon b;
+                        b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 255, b.g = 235, b.b = 170;
+                        beacons.push_back(b);
+                        ++openEvents;
+                    }
+                printf("[Triggers] %zu event locators open\n", openEvents);
             }
             world.SetBeacons(beacons);
         }
@@ -1837,6 +1853,22 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            // Free-roam career events (#303): driving into an event locator offers its event (Accept starts the race).
+            if (!pausePkg && !cribPkg && !modernPause && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
+                const Career::Trigger *inside = nullptr;
+                for (const Career::Trigger &t : Career::TriggerTable::Get().All())
+                    if (t.kind == Career::Trigger::kEvent && t.Contains(car.X(), car.Y()))
+                        inside = &t;
+                if (!inside)
+                    engageArmed = nullptr;
+                else if (inside != engageArmed) {
+                    engageArmed = inside;
+                    if (startup.FreeRoamEventAt(inside->hash, engage)) {
+                        modernPause = 4, engageSel = 0;
+                        printf("[Engage] %s: %s (%s)\n", inside->name.c_str(), engage.name.c_str(), engage.type.c_str());
+                    }
+                }
+            }
             // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
             const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
             if (useModernPause) {
@@ -1850,6 +1882,25 @@ int main(int argc, char **argv)
                     (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) {
                     modernPause = 1, modernSel = 0, modernYes = false;
                     printf("[Race] paused (dialog)\n");
+                } else if (modernPause == 4) { // the event prompt: Left / Right choose, Enter answers, Esc declines
+                    if (pressed & (FENativeInterface::kPadLeft | FENativeInterface::kPadRight | FENativeInterface::kPadUp | FENativeInterface::kPadDown))
+                        engageSel ^= 1;
+                    if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart)) {
+                        modernPause = 0;
+                    } else if (pressed & FENativeInterface::kPadAccept) {
+                        modernPause = 0;
+                        if (engageSel == 0 && engage.event) {
+                            startup.AcceptFreeRoamEvent(*engage.event);
+                            std::string eventRegion;
+                            if (startup.TakeRaceRequest(eventRegion)) {
+                                if (hud)
+                                    engine->UnloadPackage(hud);
+                                hud = nullptr;
+                                enterWorld(eventRegion);
+                                continue;
+                            }
+                        }
+                    }
                 } else if (modernPause) {
                     const int n = itemCount;
                     if (modernPause == 1) {
@@ -2622,7 +2673,19 @@ int main(int argc, char **argv)
                 modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
-            if (modernPause && modernUi.Ready()) {
+            if (modernPause == 4 && modernUi.Ready()) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int w, h;
+                SDL_GetRendererOutputSize(ren, &w, &h);
+                char l0[96], l1[96], l2[96], l3[96];
+                snprintf(l0, sizeof(l0), "Race type|%s", engage.type.c_str());
+                snprintf(l1, sizeof(l1), "Distance|%s", engage.distance.c_str());
+                snprintf(l2, sizeof(l2), "Status|%s", engage.status.c_str());
+                snprintf(l3, sizeof(l3), "Purse|$%u", engage.purse);
+                const char *lines[] = {l0, l1, l2, l3};
+                modernUi.DrawEngage(w, h, "EVENT", engage.name, lines, 4, engageSel, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (modernPause && modernUi.Ready()) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 static const char *const kFreeItems[] = {"RESUME", "OPTIONS", "MAIN MENU", "QUIT GAME"};
                 static const char *const kRaceItems[] = {"RESUME", "RESTART RACE", "OPTIONS", "MAIN MENU", "QUIT GAME"};

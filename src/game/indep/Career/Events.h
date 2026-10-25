@@ -24,6 +24,7 @@ struct Event {
     uint8_t kind = 0;     // +0x34 3 = race series (154 records), 1/2 = the other event types
     bool special = false; // +0x0d
     bool listed = false;  // +0x7f
+    uint32_t locator = 0;       // +0x28 bStringHash of the free-roam locator that starts it (EV_nn, EVENT_LOCATOR_nn; ISSUES #303)
     uint32_t prereq = 0;        // +0x10 (a stage number r-1 for the region-r events, see EventAvailable)
     uint8_t raw[0x88] = {};     // the record as stored (fields not decoded yet)
     std::vector<int16_t> races; // +0x18 race-database numbers (one event runs 1..3 races)

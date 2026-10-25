@@ -114,6 +114,17 @@ public:
     // A free-roam hot spot was entered (ISSUES #269): prepares the shop state like the crib's option does and returns
     // the screen to push (nullptr: nothing to open, e.g. no car to work on).  `kind` is Career::Hotspot::Kind.
     const char *EnterShop(int kind);
+    // Free-roam event locators (ISSUES #303): the first career event that starts at a locator and is open to the player (the
+    // same stage gate as the world map), described for the engage panel.  Returns false when none is open.
+    struct EngageInfo {
+        const Career::Event *event = nullptr;
+        std::string name, type, distance, status;
+        unsigned purse = 0;
+        bool done = false;
+    };
+    bool FreeRoamEventAt(uint32_t locator, EngageInfo &out) const;
+    bool FreeRoamEventOpen(uint32_t locator) const { EngageInfo i; return FreeRoamEventAt(locator, i); }
+    void AcceptFreeRoamEvent(const Career::Event &ev) { StartCareerEvent(ev); }
     bool PeekCareerMenuSwitchIs(const char *name) const { return m_careerMenuSwitch && !strcmp(m_careerMenuSwitch, name); }
     const char *TakeCareerMenuSwitch()
     {

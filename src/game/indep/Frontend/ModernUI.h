@@ -47,6 +47,10 @@ public:
     // Yes / No question replaces the list (confirmYes = the highlighted answer).
     void DrawDialog(int w, int h, std::string_view title, const char *const *items, int itemCount, int selected, bool confirm,
                     std::string_view question, bool confirmYes, float seconds);
+    // The free-roam event prompt (ISSUES #303): a glass panel over the dimmed street with the event's type, track, status and
+    // purse and two buttons (selected 0 = Accept, 1 = Decline).
+    void DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
+                    float seconds);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
     // The loading screen (ISSUES #301): assets/ui/loading.jpg full-window with a slow drift, a stage label, a smooth progress bar with

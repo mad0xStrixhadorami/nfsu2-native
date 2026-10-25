@@ -532,6 +532,38 @@ void ModernUI::DrawDialog(int w, int h, std::string_view title, const char *cons
     }
 }
 
+void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
+                          float t)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, {2, 6, 16, 110}, {2, 6, 16, 170});
+    const float pw = 520 * s, ph = (170.0f + 30.0f * float(lineCount) + 70.0f) * s;
+    const float px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph * 0.5f;
+    Glow(W * 0.5f, H * 0.5f, pw * 1.1f, {20, 80, 170, 60});
+    Glass(px, py, pw, ph, 28 * s, {8, 14, 28, 230}, {120, 190, 255, 170});
+    Quad({px, py}, {px + pw - 28 * s, py}, {px + pw - 28 * s, py + 3 * s}, {px, py + 3 * s}, kAccent, kWarm, kWarm, kAccent);
+    Text(px + 30 * s, py + 18 * s, 17 * s, kicker, Alpha(kWarm, 0.95f), 0);
+    Text(px + 30 * s, py + 38 * s, 44 * s, title, kWhite, 0);
+    for (int i = 0; i < lineCount; ++i) { // "label|value": two columns
+        const char *bar = std::strchr(lines[i], '|');
+        const std::string label = bar ? std::string(lines[i], size_t(bar - lines[i])) : std::string(lines[i]);
+        Text(px + 32 * s, py + 104 * s + 30 * s * float(i), 22 * s, label, {140, 175, 215, 235}, 0);
+        if (bar)
+            Text(px + 190 * s, py + 104 * s + 30 * s * float(i), 22 * s, bar + 1, kWhite, 0);
+    }
+    for (int i = 0; i < 2; ++i) {
+        const bool on = i == selected;
+        const float bw = pw * 0.5f - 45 * s, bx = px + 30 * s + float(i) * (bw + 30 * s), by = py + ph - 78 * s;
+        const float pulse = 0.75f + 0.25f * std::sin(t * 6.0f);
+        Glass(bx, by, bw, 54 * s, 14 * s, on ? SDL_Color{30, 100, 190, Uint8(170 + 50 * pulse)} : SDL_Color{12, 20, 40, 200},
+              on ? SDL_Color{150, 215, 255, 230} : SDL_Color{80, 120, 170, 120});
+        Text(bx + bw * 0.5f, by + 8 * s, 34 * s, i == 0 ? "ACCEPT" : "DECLINE", on ? kWhite : SDL_Color{175, 200, 230, 235}, 1);
+    }
+}
+
 void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
 {
     if (!m_font || count <= 0)

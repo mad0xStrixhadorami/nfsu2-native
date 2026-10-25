@@ -40,4 +40,32 @@ private:
     std::vector<Hotspot> m_shops, m_placed;
 };
 
+// Free-roam triggers (ISSUES #303): the other records of the same chunk 0x3414a.  Type 13 = a named locator with an 8 x 8 m
+// zone (event locators EV_nn / EVENT_LOCATOR_nn where career events start, TRIGGER_START_STAGE_n_SHOW_k car-show spots,
+// ..._PERF_k / ..._VISUAL_k unique-part events), type 18 = the ENGAGE_TIPS_* tutorial spots.  Layout (from the record start):
+// u32 type, float x, y, dir x, dir y, z at +0x10, u32 name hash at +0x30, four corner pairs at +0x44.  The names live in the
+// GLOBALB 0x34a1d string table (hashed with bStringHash) and the career events (0x34a11 +0x28 = the locator's hash).
+struct Trigger {
+    enum Kind { kEvent, kShow, kUniquePerf, kUniqueVisual, kTip, kOther };
+    std::string name;
+    uint32_t hash = 0, type = 0;
+    Kind kind = kOther;
+    int stage = 0, index = 0; // STAGE_<stage>_<SHOW|PERF|VISUAL>_<index>
+    float x = 0, y = 0, z = 0, dx = 0, dy = 1;
+    float zone[4][2] = {};
+    bool hasZone = false;
+    bool Contains(float px, float py) const;
+};
+
+class TriggerTable {
+public:
+    // `bundle` = the decompressed GLOBALB (names), `paths` = a region's PATHSFREEROAM.BIN.
+    size_t Load(const uint8_t *bundle, size_t size, const std::vector<uint8_t> &paths);
+    const std::vector<Trigger> &All() const { return m_placed; }
+    static TriggerTable &Get();
+
+private:
+    std::vector<Trigger> m_placed;
+};
+
 } // namespace Career
