@@ -328,6 +328,8 @@ public:
     // Packages and textures come from loaded bundles (decompressed .BUN/.LZC data).
     void AddBundle(const uint8_t *data, size_t size, const char *label = nullptr);
     void ShowLoadingProgress(const char *stage, float fraction);
+    // A replacement loading screen (ISSUES #301): when set and it returns true, it has drawn and presented the frame itself.
+    void SetLoadingHook(std::function<bool(const char *, float)> hook) { m_loadingHook = std::move(hook); }
     std::vector<std::string> PackageNames() const;
 
     // Object helpers decompiled from UG2:
@@ -479,6 +481,7 @@ private:
     // Layers from the dev environment NFSU2_VINYL_TEST (empty when unset).
     std::vector<CarSkin::Layer> TestVinyls() const;
  private:
+    std::function<bool(const char *, float)> m_loadingHook;
     uint32_t BodySlot() const;
     Tune::Table m_tuneTable;                       // chunk 0x34a1a slider definitions (#207)
     PerfPackages m_perf;                           // performance packages, chunk 0x34a15 (#197)

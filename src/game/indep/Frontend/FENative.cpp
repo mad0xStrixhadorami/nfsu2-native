@@ -1156,6 +1156,8 @@ void FENativeInterface::ShowLoadingProgress(const char *stage, float fraction)
     if (!m_renderer)
         return;
     SDL_PumpEvents();
+    if (m_loadingHook && m_loadingHook(stage, fraction))
+        return;
     SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
     SDL_RenderClear(m_renderer);
     if (m_engine)

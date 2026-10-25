@@ -37,6 +37,8 @@ public:
     // because triangles resolve their texture at load time.
     void SetExtraPack(std::vector<uint8_t> data) { m_extraPacks.clear(); AddExtraPack(std::move(data)); }
     void AddExtraPack(std::vector<uint8_t> data) { if (!data.empty()) m_extraPacks.push_back(std::move(data)); }
+    // Progress reports (0..1) from Load, for the loading screen (ISSUES #301).
+    void SetProgress(std::function<void(float)> cb) { m_progress = std::move(cb); }
     bool Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours = {});
     // Replace the world with a standalone scene file (FRONTEND\\PLATFORMS\\*.BIN: an 0x80134000 solid list plus
     // its own 0xb3300000 texture pack, e.g. the career garage CRIB01.BIN, ISSUES #251). The solids keep their
@@ -272,6 +274,8 @@ public:
     void SetBarrierGroupEnabled(size_t g, bool on) { if (g < m_groupOn.size()) m_groupOn[g] = on; }
     bool GroupEnabled(uint8_t g) const { return g == 0 || (g < m_groupOn.size() && m_groupOn[g]); }
 private:
+    std::function<void(float)> m_progress;
+    void Progress(float f) const { if (m_progress) m_progress(f); }
     bool CollisionGround(float x, float y, float zq, float &z, float *normal) const;
     size_t m_collisionFaces = 0;
     int m_groundSource = 0;

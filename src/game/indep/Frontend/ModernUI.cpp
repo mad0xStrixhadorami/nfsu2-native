@@ -9,6 +9,7 @@
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
+#include "stb_image.h"
 
 namespace {
 constexpr float kPi = 3.14159265f;
@@ -43,6 +44,8 @@ ModernUI::~ModernUI()
 {
     if (m_map)
         SDL_DestroyTexture(m_map);
+    if (m_loadArt)
+        SDL_DestroyTexture(m_loadArt);
     if (m_font)
         SDL_DestroyTexture(m_font);
     if (m_glow)
@@ -95,6 +98,22 @@ bool ModernUI::Init(SDL_Renderer *r)
     m_glow = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, G, G);
     SDL_UpdateTexture(m_glow, nullptr, g.data(), G * 4);
     SDL_SetTextureBlendMode(m_glow, SDL_BLENDMODE_ADD);
+    // the loading-screen art (ISSUES #301), next to the font
+    {
+        std::string art = FontPath();
+        art = art.substr(0, art.rfind('/') + 1) + "loading.jpg";
+        int iw = 0, ih = 0, comp = 0;
+        if (unsigned char *img = stbi_load(art.c_str(), &iw, &ih, &comp, 4)) {
+            m_loadArt = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, iw, ih);
+            SDL_UpdateTexture(m_loadArt, nullptr, img, iw * 4);
+            SDL_SetTextureBlendMode(m_loadArt, SDL_BLENDMODE_NONE);
+            SDL_SetTextureScaleMode(m_loadArt, SDL_ScaleModeLinear);
+            m_loadW = iw, m_loadH = ih;
+            stbi_image_free(img);
+        } else {
+            printf("[ModernUI] loading art not found (%s)\n", art.c_str());
+        }
+    }
     printf("[ModernUI] ready (%s)\n", FontPath().c_str());
     return true;
 }
@@ -526,4 +545,78 @@ void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
             c = {255, 190, 70, 255};
         Text(px, py + lh * float(i), 17 * s, lines[i], c, 0);
     }
+}
+
+bool ModernUI::DrawLoading(int w, int h, const char *stage, float fraction, float t)
+{
+    if (!m_font || !m_loadArt)
+        return false;
+    const float W = float(w), H = float(h);
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+    SDL_SetRenderDrawColor(m_r, 0, 0, 0, 255);
+    SDL_RenderClear(m_r);
+    // the art, "cover" fitted with a slow push-in and a small sideways drift (Ken Burns), so the screen is never static
+    const float zoom = 1.04f + 0.035f * (0.5f - 0.5f * std::cos(t * 0.22f));
+    const float cover = std::max(W / m_loadW, H / m_loadH) * zoom;
+    const float dw = m_loadW * cover, dh = m_loadH * cover;
+    const float ox = (W - dw) * (0.5f + 0.35f * std::sin(t * 0.17f)), oy = (H - dh) * 0.5f;
+    const SDL_FRect dst{ox, oy, dw, dh};
+    SDL_RenderCopyF(m_r, m_loadArt, nullptr, &dst);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    // grading: darker top and a deep floor for the text, soft side vignette
+    Rect(0, 0, W, H * 0.20f, {0, 4, 14, 150}, {0, 4, 14, 0});
+    Rect(0, H * 0.58f, W, H * 0.42f, {0, 4, 14, 0}, {0, 4, 14, 235});
+    Quad({0, 0}, {W * 0.10f, 0}, {W * 0.10f, H}, {0, H}, {0, 0, 0, 120}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 120});
+    Quad({W * 0.90f, 0}, {W, 0}, {W, H}, {W * 0.90f, H}, {0, 0, 0, 0}, {0, 0, 0, 120}, {0, 0, 0, 120}, {0, 0, 0, 0});
+    Quad({0, 0}, {W, 0}, {W, 3}, {0, 3}, kAccent, kWarm, kWarm, kAccent);
+
+    const float u = H / 720.0f; // layout unit: everything scales with the window height
+    const float mx = W * 0.055f;
+    // title block, lower left
+    Text(mx, H - 236 * u, 15 * u, "NEED FOR SPEED", Alpha(kAccent, 0.95f));
+    Text(mx - 2 * u, H - 218 * u, 58 * u, "UNDERGROUND 2", kWhite);
+    Quad({mx, H - 150 * u}, {mx + 70 * u, H - 150 * u}, {mx + 70 * u, H - 147 * u}, {mx, H - 147 * u}, kWarm, kWarm, kWarm, kWarm);
+    // hint (rotates every 6 s, cross-fades)
+    static const char *const kHints[] = {
+        "Pull the handbrake at speed to start a drift - chain them for a bigger multiplier.",
+        "Nitrous is best saved for the straights after a long corner.",
+        "Tel Aviv, Jerusalem, Haifa, Be'er Sheva: every district has its own character.",
+        "Visit a shop to tune your car: Performance, Body, Graphics and Specialties each tune your car differently.",
+        "Fit better tyres before you chase more power - grip wins races.",
+        "Press Esc at any time to pause, restart or change options.",
+    };
+    const int nh = int(sizeof(kHints) / sizeof(kHints[0]));
+    const float hs = t / 6.0f;
+    const int hi = int(hs) % nh;
+    const float ph = hs - std::floor(hs);
+    const float fade = std::min(std::min(ph * 8.0f, (1.0f - ph) * 8.0f), 1.0f);
+    Text(mx, H - 128 * u, 12 * u, "HINT", Alpha(kWarm, 0.9f * fade));
+    Text(mx + 46 * u, H - 132 * u, 18 * u, kHints[hi], Alpha({210, 222, 238, 255}, 0.92f * fade));
+
+    // progress bar along the bottom: a glass track, a gradient fill with a bright head and a sweeping sheen
+    const float bx = mx, bw = W - 2 * mx, by = H - 52 * u, bh = 6 * u;
+    Rect(bx, by, bw, bh, {255, 255, 255, 38}, {255, 255, 255, 22});
+    const float fw = std::max(bh, bw * fraction);
+    Quad({bx, by}, {bx + fw, by}, {bx + fw, by + bh}, {bx, by + bh}, kAccent, Mix(kAccent, kWarm, 0.55f), Mix(kAccent, kWarm, 0.55f), kAccent);
+    const float sheen = std::fmod(t * 0.55f, 1.6f) - 0.3f;
+    {
+        const float sx = bx + fw * sheen, sw = 90 * u;
+        const float x0 = std::clamp(sx, bx, bx + fw), x1 = std::clamp(sx + sw, bx, bx + fw);
+        if (x1 > x0 + 1)
+            Quad({x0, by}, {x1, by}, {x1, by + bh}, {x0, by + bh}, {255, 255, 255, 0}, {255, 255, 255, 120}, {255, 255, 255, 120}, {255, 255, 255, 0});
+    }
+    Glow(bx + fw, by + bh * 0.5f, 34 * u, Alpha(kAccent, 0.85f));
+    // stage label (left) and percentage (right)
+    char pct[16];
+    snprintf(pct, sizeof(pct), "%d%%", int(fraction * 100.0f + 0.5f));
+    Text(bx, by - 34 * u, 20 * u, stage && *stage ? stage : "Loading", Alpha(kWhite, 0.95f));
+    Text(bx + bw, by - 40 * u, 30 * u, pct, kWhite, 2);
+    // spinner next to the stage label's baseline: a short comet orbiting a ring
+    {
+        const float cx = bx + bw - 118 * u, cy = by - 24 * u, r = 9 * u;
+        Ring(cx, cy, r - 1.4f * u, r, Alpha(kWhite, 0.18f));
+        const float a = std::fmod(t * 4.2f, 2 * kPi);
+        Arc(cx, cy, r - 1.8f * u, r + 0.4f * u, a - 1.5f, a, Alpha(kAccent, 0.0f), kAccent);
+    }
+    return true;
 }

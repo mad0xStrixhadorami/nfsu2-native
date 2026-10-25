@@ -49,6 +49,9 @@ public:
                     std::string_view question, bool confirmYes, float seconds);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
+    // The loading screen (ISSUES #301): assets/ui/loading.jpg full-window with a slow drift, a stage label, a smooth progress bar with
+    // a percentage and a rotating hint.  `fraction` is the overall progress 0..1.  Returns false when the art / font is missing.
+    bool DrawLoading(int w, int h, const char *stage, float fraction, float seconds);
     ~ModernUI();
     void DrawMinimap(int w, int h, const Hud &hud, float seconds);
 
@@ -57,7 +60,8 @@ private:
         float x0, y0, x1, y1, xoff, yoff, xadv; // atlas rect and layout (pixels at kBakePx)
     };
     SDL_Renderer *m_r = nullptr;
-    SDL_Texture *m_font = nullptr, *m_glow = nullptr, *m_map = nullptr;
+    SDL_Texture *m_font = nullptr, *m_glow = nullptr, *m_map = nullptr, *m_loadArt = nullptr;
+    int m_loadW = 0, m_loadH = 0;
     int m_mapTexSize = 0;
     Glyph m_glyphs[96] = {};
     int m_atlasW = 0, m_atlasH = 0;

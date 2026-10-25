@@ -415,6 +415,53 @@ int main(int argc, char **argv)
     ModernUI modernUi; // ISSUES #276: NFSU2_CLASSIC_UI=1 keeps the original look
     if (!getenv("NFSU2_CLASSIC_UI"))
         modernUi.Init(ren);
+    // The loading screen (ISSUES #301): ModernUI::DrawLoading over the whole window. The overall bar is monotonic: each load phase owns a
+    // slice [loadBase, loadBase + loadSpan] and reports its own 0..1 progress inside it.
+    const Uint32 loadStart = SDL_GetTicks();
+    float loadBase = 0.0f, loadSpan = 1.0f, loadShown = 0.0f;
+    const char *loadStage = nullptr;
+    auto loadingFrame = [&](const char *label, float f) -> bool {
+        if (!modernUi.Ready() || getenv("NFSU2_CLASSIC_LOADING"))
+            return false;
+        loadShown = std::max(loadShown, loadBase + loadSpan * std::clamp(f, 0.0f, 1.0f));
+        const char *stage = loadStage;
+        if (!stage && label) {
+            static const struct { const char *key, *text; } kNames[] = {
+                {"GLOBALB", "Loading game data"},       {"FRONTB", "Loading menus"},           {"PERFORMANCETUNING", "Loading the tuning shop"},
+                {"INGAMECOMMON", "Loading the race interface"}, {"INGAME", "Loading the race interface"}, {"STREAM", "Streaming the city"},
+            };
+            for (const auto &n : kNames)
+                if (strstr(label, n.key)) {
+                    stage = n.text;
+                    break;
+                }
+        }
+        SDL_RenderSetLogicalSize(ren, 0, 0);
+        int lw, lh;
+        SDL_GetRendererOutputSize(ren, &lw, &lh);
+        const bool ok = modernUi.DrawLoading(lw, lh, stage ? stage : "Loading", loadShown, float(SDL_GetTicks() - loadStart) * 0.001f);
+        // NFSU2_LOADING_SHOT=<prefix>: save the loading screen as <prefix>_<percent>.bmp at 10 % steps (dev aid)
+        if (ok)
+            if (const char *shot = getenv("NFSU2_LOADING_SHOT")) {
+                static int lastStep = -1;
+                const int step = int(loadShown * 10.0f);
+                if (step != lastStep) {
+                    lastStep = step;
+                    if (SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, lw, lh, 32, SDL_PIXELFORMAT_ARGB8888)) {
+                        SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
+                        char name[512];
+                        snprintf(name, sizeof(name), "%s_%02d.bmp", shot, step * 10);
+                        SDL_SaveBMP(surf, name);
+                        SDL_FreeSurface(surf);
+                    }
+                }
+            }
+        if (ok)
+            SDL_RenderPresent(ren);
+        SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+        return ok;
+    };
+    fe.SetLoadingHook(loadingFrame);
     fe.AddBundle(globalA.data(), globalA.size());
     fe.AddBundle(langTextures.data(), langTextures.size());
     fe.AddBundle(english.data(), english.size());
@@ -449,8 +496,10 @@ int main(int argc, char **argv)
         if (bootPkg) {
             FENativeInterface::SetVisible(bootPkg, 0x855f83ba, false);
             engine->Update(16, 0);
-            renderFrame(engine);
+            if (!loadingFrame("GLOBALB", 0.0f))
+                renderFrame(engine);
         }
+        loadBase = 0.0f, loadSpan = 0.45f;
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
@@ -459,13 +508,16 @@ int main(int argc, char **argv)
         Career::CarLotTable::Get().Load(globalB.data(), globalB.size());
         Career::HotspotTable::Get().LoadShops(globalB.data(), globalB.size());
         startup.LoadBootProfile();
+        loadBase = 0.45f, loadSpan = 0.45f;
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
         // The tuning / dyno screens (UI_PerformanceTuning_*, UI_PerformanceDyno_*) ship in the in-game
         // bundle the dyno scene loads (ISSUES #203); the port keeps them resident with the front end.
+        loadBase = 0.9f, loadSpan = 0.1f;
         perfTuningB = ReadGameFile(*fs, "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
         if (!perfTuningB.empty())
             fe.AddBundle(perfTuningB.data(), perfTuningB.size(), "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
+        loadingFrame("", 1.0f);
         if (bootPkg)
             engine->UnloadPackage(bootPkg);
         if (getenv("NFSU2_LIST_PACKAGES")) {
@@ -516,9 +568,11 @@ int main(int argc, char **argv)
         if (bootPkg) {
             FENativeInterface::SetVisible(bootPkg, 0x855f83ba, false);
             engine->Update(16, 0);
-            renderFrame(engine);
+            if (!loadingFrame("GLOBALB", 0.0f))
+                renderFrame(engine);
         }
         // 2. LoadGlobalChunks (0x002df9a0): load GLOBAL\GLOBALB.LZC while loading_boot.fng is shown.
+        loadBase = 0.0f, loadSpan = 0.45f;
         globalB = ReadGameFile(*fs, "GLOBAL\\GLOBALB.LZC");
         fe.AddBundle(globalB.data(), globalB.size(), "GLOBAL\\GLOBALB.LZC");
         Career::EventTable::Get().Load(globalB.data(), globalB.size());
@@ -535,15 +589,19 @@ int main(int argc, char **argv)
         FEPackage *loadPkg = engine->PushPackage("Loading.fng", 0, 0xff);
         if (loadPkg) {
             engine->Update(16, 0);
-            renderFrame(engine);
+            if (!loadingFrame("FRONTB", 0.0f))
+                renderFrame(engine);
         }
+        loadBase = 0.45f, loadSpan = 0.45f;
         frontB = ReadGameFile(*fs, "FRONTEND\\FRONTB.LZC");
         fe.AddBundle(frontB.data(), frontB.size(), "FRONTEND\\FRONTB.LZC");
         // The tuning / dyno screens (UI_PerformanceTuning_*, UI_PerformanceDyno_*) ship in the in-game
         // bundle the dyno scene loads (ISSUES #203); the port keeps them resident with the front end.
+        loadBase = 0.9f, loadSpan = 0.1f;
         perfTuningB = ReadGameFile(*fs, "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
         if (!perfTuningB.empty())
             fe.AddBundle(perfTuningB.data(), perfTuningB.size(), "GLOBAL\\INGAMEPERFORMANCETUNING.BUN");
+        loadingFrame("", 1.0f);
         if (getenv("NFSU2_LIST_PACKAGES")) {
             for (const std::string &n : fe.PackageNames())
                 printf("%s\n", n.c_str());
@@ -779,9 +837,11 @@ int main(int argc, char **argv)
         aiFinish.clear();
         raceClock = finishedFor = 0;
         // LoadingRegion (0x002ddb40): show Loading.fng while the region streams in.
+        loadBase = 0.0f, loadSpan = 0.2f, loadShown = 0.0f, loadStage = "Loading the race interface";
         if (engine->PushPackage("Loading.fng", 0, 0xff)) {
             engine->Update(16, 0);
-            renderFrame(engine);
+            if (!loadingFrame("INGAMECOMMON", 0.0f))
+                renderFrame(engine);
         }
         // RegionLoader stage 1 (0x002ddbc0): the in-game bundles with the HUD packages.
         if (inGameCommon.empty()) {
@@ -810,7 +870,10 @@ int main(int argc, char **argv)
                     printf("[World] package %s\n", n.c_str());
         }
         std::string path = "TRACKS\\STREAM" + region + ".BUN";
+        loadBase = 0.2f, loadSpan = 0.1f, loadStage = "Streaming the city";
+        loadingFrame("", 0.0f);
         std::vector<uint8_t> stream = ReadGameFile(*fs, path.c_str());
+        loadingFrame("", 1.0f);
         printf("[World] %s: %zu bytes\n", path.c_str(), stream.size());
         // Neighbouring regions of the same location: some of this region's scenery names solids
         // that only they contain (ISSUES.md #121). Read for the load only.
@@ -838,7 +901,11 @@ int main(int argc, char **argv)
             world.AddExtraPack(inGameCommon);
             world.AddExtraPack(globalB); // GLOBALB also holds shared object textures (OBJ_*)
         }
+        loadBase = 0.3f, loadSpan = 0.7f, loadStage = "Building the city";
+        world.SetProgress([&](float f) { loadingFrame("", f); });
         const bool loaded = !stream.empty() && world.Load(stream, neighbours);
+        world.SetProgress(nullptr);
+        loadStage = nullptr;
         std::vector<std::vector<uint8_t>>().swap(neighbourData);
         if (!loaded) {
             fprintf(stderr, "[World] could not load %s\n", path.c_str());

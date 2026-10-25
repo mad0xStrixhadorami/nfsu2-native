@@ -1046,6 +1046,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         ForEachChunk(extra->data(), 0, extra->size(), [&](uint32_t id, size_t body, size_t len) {
             indexSolids(extra->data(), extra->size(), id, body, len);
         });
+    Progress(0.12f);
     // Collision mesh (ISSUES #133): section chunk 0x80034130 holds 0x34134 = 32-byte faces
     // {u8 ?, u8 ?, u8 surface, u8 flags, s16 z-high, s16 ?, s16 x[4], s16 y[4], s16 z-low[4]}:
     // x = s / 8, y = s / 8, z = zhigh + zlow / 256 (decoder 0x00335098); flags 0x10 = quad.
@@ -1335,6 +1336,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             }
         }
     }
+    Progress(0.45f);
     // Texture packs of the neighbours that hold textures the borrowed solids use.
     for (const std::vector<uint8_t> *extra : neighbours)
         ForEachChunk(extra->data(), 0, extra->size(), [&](uint32_t id, size_t body, size_t len) {
@@ -1391,6 +1393,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     printf("[World] %zu solids borrowed from neighbouring regions\n", m_borrowedSolids);
     printf("[World] %zu texture packs, %zu textures; strips: %lu exact topology, %lu approximated\n", m_packs.size(),
            m_textures.size(), SolidMesh::g_exactStrips, SolidMesh::g_approxStrips);
+    Progress(0.6f);
     // Dev aid: NFSU2_TEX_SCORE=1 compares the swizzled and the row-by-row decode of every world texture
     // (mean absolute difference of neighbouring pixels: natural images are smooth, a wrong layout is not)
     // and prints, per (bits, width, height) class, how many textures a linear decode would make smoother.
@@ -1448,7 +1451,9 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
         }
     }
     FlushBauhaus();
+    Progress(0.7f);
     AddIsraeliProps();
+    Progress(1.0f);
     m_warmAll = true;
     return true;
 }
