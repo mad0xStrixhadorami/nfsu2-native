@@ -14,10 +14,11 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![commits](https://img.shields.io/badge/commits-350%2B-lightgrey?style=flat-square)
 ![log](https://img.shields.io/badge/ISSUES.md-307%20entries-informational?style=flat-square)
 
-<img src="docs/media/race_drive.gif" width="760" alt="Racing a Skyline through the Israeli-themed city in daylight"/>
+<img src="docs/media/race_drive.gif" width="760" alt="Pre-race cinematic, countdown and launch in the Israeli-themed city"/>
 
-*Live capture of the native build: the player's Skyline against AI rivals, in daylight with the procedural sky,
-the modern HUD with its glass minimap and speed dial, and the original race logic underneath.*
+*Live capture of the native build: the cinematic pre-race camera sweeping round the Skyline, the 3-2-1 countdown
+and the launch with the speed blur, the glass minimap and speed dial, AI rivals alongside — all running from
+decompiled game logic and the disc's own data files.*
 
 </div>
 
