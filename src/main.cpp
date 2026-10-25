@@ -983,7 +983,7 @@ int main(int argc, char **argv)
     int playerSkinIndex = -1;       // the player's car in the world (vinyl skin, ISSUES #223)
     std::string playerSkinKey;
     // Post-race results (UI_PostRaceResults.fng): opponents' finish times on a race clock.
-    FEPackage *resultsPkg = nullptr;
+    FEPackage *resultsPkg = nullptr, *rewardPkg = nullptr;
     std::vector<std::string> oppNames;
     std::vector<float> aiFinish;
     float raceClock = 0, finishedFor = 0;
@@ -1056,6 +1056,7 @@ int main(int argc, char **argv)
         pausePkg = nullptr;
         cribPkg = nullptr;
         resultsPkg = nullptr;
+        rewardPkg = nullptr;
         oppNames.clear();
         aiFinish.clear();
         raceClock = finishedFor = 0;
@@ -1165,6 +1166,8 @@ int main(int argc, char **argv)
             raceNumber = atoi(n);
         raceConfig = RaceSession::Config();
         raceConfig.laps = startup.RaceLaps();
+        if (const char *lp = getenv("NFSU2_LAPS")) // dev aid: override the lap count
+            raceConfig.laps = std::max(1, atoi(lp));
         raceConfig.showGauges = startup.ShowGauges();
         raceConfig.modernHud = !getenv("NFSU2_CLASSIC_HUD");
         raceConfig.showPosition = startup.ShowRacePosition();
@@ -2295,8 +2298,28 @@ int main(int argc, char **argv)
                 startup.Tick(elapsed); // screen ticks for the pause menu / crib icon scroller
             // Quit Race from the pause menu (or Back to Main Menu from the crib) -- or Accept once the
             // race is over.
-            if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) || modernLeave ||
-                (race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept))) {
+            // A career event that paid something shows UI_PostRaceReward.fng (Bank / Reputation won) before the world is left (ISSUES #313).
+            bool finishAccept = race.GetPhase() == RaceSession::kFinished && (pressed & FENativeInterface::kPadAccept);
+            if (finishAccept && resultsPkg && !rewardPkg && startup.HasRaceReward()) {
+                const FEStartupSequence::RaceReward rw = startup.TakeRaceReward();
+                engine->UnloadPackage(resultsPkg);
+                resultsPkg = nullptr;
+                rewardPkg = engine->PushPackage("UI_PostRaceReward.fng", 0, 0xff);
+                if (rewardPkg) {
+                    char text[48];
+                    snprintf(text, sizeof(text), "$%d", rw.money);
+                    FENativeInterface::SetString(rewardPkg, 0x18d97a24, text);
+                    snprintf(text, sizeof(text), "%d", rw.respect);
+                    FENativeInterface::SetString(rewardPkg, 0x18d97a23, text);
+                    FENativeInterface::SetString(rewardPkg, 0xeb406fec, rw.player.c_str());
+                    resultsPkg = rewardPkg; // the screen takes the results' place until Accept
+                    printf("[Reward] %s won $%d and %d reputation (P%d)\n", rw.player.c_str(), rw.money, rw.respect, rw.place);
+                    finishAccept = false;
+                } else {
+                    rewardPkg = nullptr;
+                }
+            }
+            if (((pausePkg || cribPkg) && pauseAction == FEStartupSequence::kPauseQuit) || modernLeave || finishAccept) {
                 if (pausePkg)
                     engine->UnloadPackage(pauseScreen());
                 pausePkg = nullptr;
@@ -2306,6 +2329,7 @@ int main(int argc, char **argv)
                 if (resultsPkg)
                     engine->UnloadPackage(resultsPkg);
                 resultsPkg = nullptr;
+                rewardPkg = nullptr;
                 if (hud)
                     engine->UnloadPackage(hud);
                 hud = nullptr;
@@ -2405,6 +2429,8 @@ int main(int argc, char **argv)
                         if (rows[i].name == "YOU")
                             place = int(i) + 1;
                     const int driftScore = race.IsDrift() ? int(race.DriftTotal()) : 0;
+                    if (const char *forced = getenv("NFSU2_CAREER_TEST")) // dev aid: NFSU2_CAREER_TEST=<place> pays the race as a career event finished there
+                        place = std::max(1, atoi(forced));
                     startup.AwardCareerResult(worldRaceNumber, place, race.BestLap(), driftScore);
                     if (race.IsDrift())
                         startup.RecordQuickRaceScore(worldRaceNumber, worldRaceReverse, driftScore);

@@ -7956,6 +7956,7 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     }
     m_profile.money += money;
     m_profile.respect += respect;
+    m_lastReward = {true, money, respect, place, m_profile.name};
     if (place == 1) {
         m_profile.Complete(ev->id);
         MaybeSignSponsor(*ev);

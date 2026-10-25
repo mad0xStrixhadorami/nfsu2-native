@@ -179,7 +179,7 @@ public:
 
     // A world session started from a career screen (m_raceMode 1 = Resume, 8 = new career's car
     // select); quick race uses 2/4 and never pays career money.
-    bool IsCareerRun() const { return m_raceMode == 1 || m_raceMode == 8; }
+    bool IsCareerRun() const { return m_raceMode == 1 || m_raceMode == 8 || getenv("NFSU2_CAREER_TEST") != nullptr; } // NFSU2_CAREER_TEST=1: a dev aid that pays any race like a career event
     // The career World Map's list and cursor (the main loop marks the events on the live map, #261).
     const std::vector<const Career::Event *> &WorldMapEvents() const { return m_wmEvents; }
     size_t WorldMapSelected() const { return m_wmSel; }
@@ -188,6 +188,15 @@ public:
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
     // its purse/respect, marking it complete on a win. Called from the results screen.
     void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f, int score = 0);
+    // What the last finished career event paid (ISSUES #313), for UI_PostRaceReward.fng: set by AwardCareerResult, taken once.
+    struct RaceReward {
+        bool valid = false;
+        int money = 0, respect = 0, place = 0;
+        std::string player;
+    };
+    RaceReward TakeRaceReward() { RaceReward r = m_lastReward; m_lastReward = RaceReward(); return r; }
+    bool HasRaceReward() const { return m_lastReward.valid; }
+    RaceReward m_lastReward;
     void MaybeSignSponsor(const Career::Event &ev); // ISSUES #165
     uint32_t m_pendingSponsor = 0;                   // set when a win signed a sponsor
 
