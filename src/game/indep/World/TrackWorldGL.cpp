@@ -1139,15 +1139,25 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
         InitShaders();
     if (!m_progStageBg || !m_progCar)
         return false;
-    glViewport(0, 0, width, height);
-    glDisable(GL_SCISSOR_TEST);
+    const int winH = height;
+    if (sp.overlay) {
+        glViewport(sp.vx, winH - sp.vy - sp.vh, sp.vw, sp.vh);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(sp.vx, winH - sp.vy - sp.vh, sp.vw, sp.vh);
+        width = sp.vw, height = sp.vh;
+    } else {
+        glViewport(0, 0, width, height);
+        glDisable(GL_SCISSOR_TEST);
+    }
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_FOG);
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
     glShadeModel(GL_SMOOTH);
-    glClearColor(0.01f, 0.012f, 0.02f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (!sp.overlay) {
+        glClearColor(0.01f, 0.012f, 0.02f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
 
     // the camera orbits the car (car +X = forward; orbit 0 looks at the nose)
     Camera cam;
@@ -1170,6 +1180,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     glLoadIdentity();
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+    if (!sp.overlay) {
     GLShader::Use(m_progStageBg);
     GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent"), sp.accent[0], sp.accent[1], sp.accent[2]);
     GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent2"), sp.accent2[0], sp.accent2[1], sp.accent2[2]);
@@ -1184,6 +1195,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     glVertex2f(-1, -1);
     glEnd();
     GLShader::Use(0);
+    }
 
     // 3D: the car shifted sideways on screen by an off-axis frustum
     glMatrixMode(GL_PROJECTION);
@@ -1213,14 +1225,15 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
         m_stageA[i] = sp.accent[i], m_stageB[i] = sp.accent2[i];
 
     // 1. the reflection, below the floor plane
-    DrawCarsGL(cam, fog, false, 400.0f, 900.0f, true);
+    if (!sp.overlay)
+        DrawCarsGL(cam, fog, false, 400.0f, 900.0f, true);
     // 2. the floor: a dark glossy disc that lets the reflection through near the car and fades into the backdrop
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_ALPHA_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
-    {
+    if (!sp.overlay) {
         constexpr int kSeg = 48;
         constexpr float kRing[7][2] = {{0.0f, 0.80f}, {3.0f, 0.84f}, {6.0f, 0.90f}, {10.0f, 0.95f}, {18.0f, 0.98f}, {32.0f, 0.55f}, {60.0f, 0.0f}};
         for (int ring = 0; ring < 6; ++ring) {
@@ -1259,7 +1272,10 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     DrawCarsGL(cam, fog, false, 400.0f, 900.0f, false);
     m_stageEnv = 0.0f;
     m_raysK = 0.0f;
-    PostProcess(width, height);
+    if (sp.overlay)
+        glDisable(GL_SCISSOR_TEST);
+    else
+        PostProcess(width, height);
     return true;
 }
 

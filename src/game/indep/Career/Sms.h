@@ -76,6 +76,9 @@ int SmsOnEventComplete(Profile &p, const Event &ev);
 // A DVD cover with star threshold `threshold` was won (0x0026ac88 -> 0x0026e5c8).
 int SmsOnDvdCover(Profile &p, int threshold);
 
+// The ordinary events done in an area (the count that opens the car shows, 0x0026ee90).
+int SmsOrdinaryDone(const Profile &p, int area);
+
 // The language keys of an entry's subject and body (0x0026d718 / 0x0026d820). `fmtArg` is the language hash of
 // the string substituted into the key's %s (0 = none).
 struct SmsText {

@@ -16,6 +16,7 @@
 #include <functional>
 
 #include <algorithm>
+#include <sys/stat.h>
 #include <memory>
 #include <cmath>
 #include <string>
@@ -34,6 +35,7 @@
 #include "game/indep/Career/Events.h"
 #include "game/indep/Career/CarLot.h"
 #include "game/indep/Career/Hotspots.h"
+#include "game/indep/Frontend/Magazines.h"
 #include "game/indep/Frontend/ModernUI.h"
 #include "game/indep/Perf.h"
 #include "game/indep/Career/Sms.h"
@@ -277,6 +279,29 @@ int main(int argc, char **argv)
     printf("File system self-test: %s\n", failures ? "FAILED" : "passed");
     if (argc > 1 && strcmp(argv[1], "--test") == 0)
         return failures ? 1 : 0;
+    if (argc > 3 && strcmp(argv[1], "--texpack") == 0) { // dev aid: --texpack <game file path> <out dir>: every texture of a 0xb3300000 pack as BMP
+        std::vector<uint8_t> data = ReadGameFile(*fs, argv[2]);
+        TexturePack pack;
+        if (data.empty() || !pack.Parse(data.data(), data.size())) {
+            fprintf(stderr, "no texture pack in %s\n", argv[2]);
+            return 1;
+        }
+        std::string dir = argv[3];
+        mkdir(dir.c_str(), 0755);
+        for (size_t i = 0; i < pack.Count(); ++i) {
+            DecodedTexture t;
+            if (!pack.Decode(pack.At(i), t))
+                continue;
+            if (SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(t.rgba.data(), t.width, t.height, 32, t.width * 4, SDL_PIXELFORMAT_ABGR8888)) {
+                char name[600];
+                snprintf(name, sizeof name, "%s/%03zu_%08x_%dx%d.bmp", dir.c_str(), i, pack.At(i).nameHash, t.width, t.height);
+                SDL_SaveBMP(surf, name);
+                SDL_FreeSurface(surf);
+            }
+            printf("%03zu %08x %-40s %dx%d bpp %d\n", i, pack.At(i).nameHash, pack.At(i).name.c_str(), pack.At(i).width, pack.At(i).height, pack.At(i).bitsPerPixel);
+        }
+        return 0;
+    }
     if (argc > 2 && strcmp(argv[1], "--export-shikun") == 0) // dev aid: --export-shikun <base> [floors W D seed]  (ISSUES #306)
         return TrackWorld::ExportShikun(argv[2], argc > 3 ? atoi(argv[3]) : 5, argc > 4 ? float(atof(argv[4])) : 24.0f,
                                         argc > 5 ? float(atof(argv[5])) : 11.0f, argc > 6 ? unsigned(atoi(argv[6])) : 3u) ? 0 : 1;
@@ -730,7 +755,19 @@ int main(int argc, char **argv)
     std::vector<std::string> stagePacks;
     size_t stageSig = 0;
     float stageSwitch = -10.0f; // seconds (frontend clock) of the last car change, for the fade-in
-    auto drawStage = [&](float seconds, bool carScreen) -> bool {
+    // The magazine covers (ISSUES #309), loaded on first use.
+    Magazines magazines;
+    bool magazinesTried = false;
+    auto magazinesReady = [&]() {
+        if (!magazinesTried) {
+            magazinesTried = true;
+            magazines.Load(ReadGameFile(*fs, "FRONTEND\\MAGAZINES_FRONTEND.BIN"), ReadGameFile(*fs, "FRONTEND\\MAGAZINES_SHOWCASE.BIN"),
+                           ReadGameFile(*fs, "FRONTEND\\MAGAZINES_STREAMING_HIGH.BIN"), ReadGameFile(*fs, "FRONTEND\\MAGAZINES_STREAMING_LOW.BIN"));
+        }
+        return magazines.Ready();
+    };
+    // Builds / refreshes the stage car (the front end's assembled preview car); false when there is none.
+    auto syncStageCar = [&](float seconds) -> bool {
         FENativeInterface::StageCar sc;
         if (!fe.PreviewStageCar(sc))
             return false;
@@ -771,6 +808,11 @@ int main(int argc, char **argv)
             stageName = sc.name, stageSig = sig;
             printf("[Stage] car %s on the showroom stage\n", sc.name.c_str());
         }
+        return true;
+    };
+    auto drawStage = [&](float seconds, bool carScreen) -> bool {
+        if (!syncStageCar(seconds))
+            return false;
         TrackWorld::StageParams sp;
         if (carScreen) { // car select / shops: a slow turn around the car, the car a little right of centre
             sp.orbit = 0.5f + seconds * 0.18f;
@@ -789,6 +831,62 @@ int main(int argc, char **argv)
         const bool ok = stageWorld->RenderStage(ren, bw, bh, sp);
         SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
         return ok;
+    };
+    // The magazine cover screen (ISSUES #309): a freshly won picture (modernPause 5) or the collection (6).
+    std::vector<FEStartupSequence::ShowInfo> coverList;
+    size_t coverSel = 0;
+    auto drawCoverScreen = [&](int w, int h, float seconds, bool reveal) {
+        if (coverList.empty()) {
+            modernUi.DrawCoverFrame(w, h, SDL_Rect{w / 2 - 150, h / 2 - 150, 300, 300}, "MAGAZINES", "No covers yet",
+                                    "Attend the car shows marked on the map to get your car into print.", "ESC  back", seconds);
+            return;
+        }
+        const FEStartupSequence::ShowInfo &si = coverList[coverSel % coverList.size()];
+        const Magazines::Cover *cv = nullptr;
+        if (magazinesReady())
+            cv = magazines.ForCode(si.code) ? magazines.ForCode(si.code) : magazines.ForLabel(si.label);
+        if (!cv && magazinesReady()) { // a magazine without layers of its own wears one of the full covers
+            std::vector<const Magazines::Cover *> full;
+            for (const Magazines::Cover &c : magazines.Covers())
+                if (c.full)
+                    full.push_back(&c);
+            if (!full.empty())
+                cv = full[(si.media ? si.media->id : 0u) % full.size()];
+        }
+        const int sz = int(float(h) * 0.84f);
+        const SDL_Rect area{(w - int(float(sz) * 0.655f)) / 2, (h - sz) / 2, sz, sz};
+        char detail[160];
+        snprintf(detail, sizeof(detail), "%s", si.media ? si.media->name : "");
+        for (char *c = detail; *c; ++c)
+            if (*c == '_')
+                *c = ' ';
+        char hint[96];
+        if (reveal)
+            snprintf(hint, sizeof(hint), "ENTER  continue");
+        else
+            snprintf(hint, sizeof(hint), "LEFT / RIGHT  browse   (%zu of %zu)     ESC  back", coverSel % coverList.size() + 1, coverList.size());
+        modernUi.DrawCoverFrame(w, h, Magazines::PageOf(area), reveal ? "YOU MADE THE COVER" : "YOUR MAGAZINE COVERS", si.code, detail, hint, seconds);
+        if (!cv)
+            return;
+        const unsigned variant = si.media ? si.media->id * 2654435761u >> 7 : 0;
+        magazines.Draw(ren, *cv, area, variant, [&](const SDL_Rect &page) {
+            if (!syncStageCar(seconds) || !stageWorld)
+                return;
+            TrackWorld::StageParams sp;
+            sp.overlay = true;
+            if (cv && !cv->full) { // a masthead-only magazine: the car fills the middle of the page
+                sp.vx = page.x + int(float(page.w) * 0.02f), sp.vy = page.y + int(float(page.h) * 0.22f);
+                sp.vw = int(float(page.w) * 0.96f), sp.vh = int(float(page.h) * 0.50f);
+            } else { // a full cover: lower right, between the model and the headlines
+                sp.vx = page.x + int(float(page.w) * 0.10f), sp.vy = page.y + int(float(page.h) * 0.50f);
+                sp.vw = int(float(page.w) * 0.92f), sp.vh = int(float(page.h) * 0.42f);
+            }
+            sp.orbit = 0.95f + 0.12f * std::sin(seconds * 0.5f), sp.distance = 7.6f, sp.lookZ = 0.55f, sp.height = 1.15f, sp.fov = 34.0f;
+            sp.time = seconds;
+            int ow, oh;
+            SDL_GetRendererOutputSize(ren, &ow, &oh);
+            stageWorld->RenderStage(ren, ow, oh, sp);
+        });
     };
     RaceRoute route;
     std::vector<PlayerCar> opponentCars;
@@ -1378,6 +1476,17 @@ int main(int argc, char **argv)
                         ++openEvents;
                     }
                 printf("[Triggers] %zu event locators open\n", openEvents);
+                size_t openShows = 0;
+                for (const Career::Trigger &t : trig.All()) {
+                    FEStartupSequence::ShowInfo si;
+                    if (t.kind == Career::Trigger::kShow && startup.ShowFor(t.name, si) && si.open && !si.won) {
+                        TrackWorld::Beacon b;
+                        b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 190, b.g = 90, b.b = 255;
+                        beacons.push_back(b);
+                        ++openShows;
+                    }
+                }
+                printf("[Triggers] %zu car shows open\n", openShows);
             }
             world.SetBeacons(beacons);
         }
@@ -1957,19 +2066,51 @@ int main(int argc, char **argv)
                         tipStart = now;
                 }
             }
+            // Car-show spots (#309): attending an open show you have not won yet wins its magazine picture and reveals the cover.
+            {
+                static const Career::Trigger *showArmed = nullptr;
+                if (!pausePkg && !cribPkg && !modernPause && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
+                    const Career::Trigger *inside = nullptr;
+                    for (const Career::Trigger &t : Career::TriggerTable::Get().All())
+                        if (t.kind == Career::Trigger::kShow && t.Contains(car.X(), car.Y()))
+                            inside = &t;
+                    if (!inside)
+                        showArmed = nullptr;
+                    else if (inside != showArmed) {
+                        showArmed = inside;
+                        FEStartupSequence::ShowInfo si;
+                        if (startup.ShowFor(inside->name, si) && si.open && !si.won) {
+                            startup.WinShow(si);
+                            si.won = true;
+                            coverList.assign(1, si);
+                            coverSel = 0;
+                            modernPause = 5;
+                        }
+                    }
+                }
+            }
             // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
             const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
             if (useModernPause) {
                 // the menu entries live in fixed arrays: building a vector of strings every frame allocated
-                static const char *const kFreeItems[] = {"RESUME", "OPTIONS", "MAIN MENU", "QUIT GAME"};
+                static const char *const kFreeItems[] = {"RESUME", "MAGAZINES", "OPTIONS", "MAIN MENU", "QUIT GAME"};
                 static const char *const kRaceItems[] = {"RESUME", "RESTART RACE", "OPTIONS", "MAIN MENU", "QUIT GAME"};
                 const bool restartable = !race.IsFreeRun();
                 const char *const *items = restartable ? kRaceItems : kFreeItems;
-                const int itemCount = restartable ? 5 : 4;
+                const int itemCount = 5;
                 if (!modernPause && !pausePkg && !cribPkg && race.GetPhase() != RaceSession::kFinished && !race.InIntro() &&
                     (pressed & (FENativeInterface::kPadStart | FENativeInterface::kPadBack))) {
                     modernPause = 1, modernSel = 0, modernYes = false;
                     printf("[Race] paused (dialog)\n");
+                } else if (modernPause == 5 || modernPause == 6) { // a cover: Enter / Esc close it, Left / Right browse the collection
+                    if (modernPause == 6 && !coverList.empty()) {
+                        if (pressed & FENativeInterface::kPadRight)
+                            coverSel = (coverSel + 1) % coverList.size();
+                        if (pressed & FENativeInterface::kPadLeft)
+                            coverSel = (coverSel + coverList.size() - 1) % coverList.size();
+                    }
+                    if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart | (modernPause == 5 ? FENativeInterface::kPadAccept : 0u)))
+                        modernPause = modernPause == 6 ? 1 : 0;
                 } else if (modernPause == 4) { // the event prompt: Left / Right choose, Enter answers, Esc declines
                     if (pressed & (FENativeInterface::kPadLeft | FENativeInterface::kPadRight | FENativeInterface::kPadUp | FENativeInterface::kPadDown))
                         engageSel ^= 1;
@@ -2011,6 +2152,10 @@ int main(int argc, char **argv)
                                 std::string region = currentRegion;
                                 enterWorld(region);
                                 continue;
+                            } else if (!strcmp(it, "MAGAZINES")) {
+                                coverList = startup.WonShows();
+                                coverSel = 0;
+                                modernPause = 6;
                             } else if (!strcmp(it, "OPTIONS")) {
                                 modernPause = 0;
                                 pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff); // the original pause screen holds the options
@@ -2783,7 +2928,13 @@ int main(int argc, char **argv)
                 modernUi.DrawToast(tw, th, "NEW TIP  -  SAVED TO YOUR INBOX", tipTitle, tipBody, float(now - tipStart) * 0.001f, 12.0f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
-            if (modernPause == 4 && modernUi.Ready()) {
+            if ((modernPause == 5 || modernPause == 6) && modernUi.Ready()) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int cw, ch;
+                SDL_GetRendererOutputSize(ren, &cw, &ch);
+                drawCoverScreen(cw, ch, float(now) * 0.001f, modernPause == 5);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (modernPause == 4 && modernUi.Ready()) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 int w, h;
                 SDL_GetRendererOutputSize(ren, &w, &h);
@@ -2797,9 +2948,9 @@ int main(int argc, char **argv)
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             } else if (modernPause && modernUi.Ready()) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
-                static const char *const kFreeItems[] = {"RESUME", "OPTIONS", "MAIN MENU", "QUIT GAME"};
+                static const char *const kFreeItems[] = {"RESUME", "MAGAZINES", "OPTIONS", "MAIN MENU", "QUIT GAME"};
                 static const char *const kRaceItems[] = {"RESUME", "RESTART RACE", "OPTIONS", "MAIN MENU", "QUIT GAME"};
-                modernUi.DrawDialog(w, h, "PAUSED", race.IsFreeRun() ? kFreeItems : kRaceItems, race.IsFreeRun() ? 4 : 5, modernSel, modernPause != 1,
+                modernUi.DrawDialog(w, h, "PAUSED", race.IsFreeRun() ? kFreeItems : kRaceItems, 5, modernSel, modernPause != 1,
                                     modernPause == 3 ? "Quit the game?" : "Back to the main menu?", modernYes, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }

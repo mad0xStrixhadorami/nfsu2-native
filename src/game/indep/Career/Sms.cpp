@@ -214,6 +214,11 @@ int SmsOnEventComplete(Profile &p, const Event &ev)
     return sent;
 }
 
+int SmsOrdinaryDone(const Profile &p, int area)
+{
+    return DoneCount(p, area, 3);
+}
+
 int SmsOnDvdCover(Profile &p, int threshold)
 {
     int sent = 0;

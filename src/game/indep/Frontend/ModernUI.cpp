@@ -613,6 +613,29 @@ void ModernUI::DrawToast(int w, int h, std::string_view kicker, std::string_view
          Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease));
 }
 
+void ModernUI::DrawCoverFrame(int w, int h, const SDL_Rect &page, std::string_view kicker, std::string_view title, std::string_view detail,
+                              std::string_view hint, float t)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, {2, 6, 16, 175}, {2, 6, 16, 215});
+    Glow(page.x + page.w * 0.5f, page.y + page.h * 0.5f, page.h * 0.95f, {30, 100, 210, Uint8(70 + 15 * std::sin(t * 1.5f))});
+    // a soft shadow and a thin lit edge around the page
+    for (int i = 5; i >= 1; --i) {
+        const float g = float(i) * 5.0f * s;
+        Rect(page.x - g + 8 * s, page.y - g + 10 * s, page.w + 2 * g, page.h + 2 * g, {0, 0, 0, Uint8(14)}, {0, 0, 0, Uint8(14)});
+    }
+    // captions on the left of the page
+    const float lx = std::max(24.0f * s, float(page.x) - 360.0f * s);
+    Text(lx, page.y + 40 * s, 17 * s, kicker, Alpha(kWarm, 0.95f), 0);
+    Text(lx, page.y + 62 * s, 46 * s, title, kWhite, 0);
+    Quad({lx, page.y + 122 * s}, {lx + 70 * s, page.y + 122 * s}, {lx + 70 * s, page.y + 125 * s}, {lx, page.y + 125 * s}, kWarm, kWarm, kWarm, kWarm);
+    Text(lx, page.y + 142 * s, 22 * s, detail, {190, 212, 238, 240}, 0);
+    Text(W * 0.5f, H - 40 * s, 18 * s, hint, {140, 175, 215, 220}, 1);
+}
+
 void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
 {
     if (!m_font || count <= 0)

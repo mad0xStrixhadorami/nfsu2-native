@@ -5046,6 +5046,61 @@ void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
     RefreshCareerWorldMap(pkg);
 }
 
+int FEStartupSequence::OrdinaryDone(int area) const
+{
+    return Career::SmsOrdinaryDone(m_profile, area);
+}
+
+static std::string MagazineCodeOf(const std::string &labelText)
+{
+    static const char kPrefix[] = "MAGAZINE_SETUP_";
+    return labelText.compare(0, sizeof(kPrefix) - 1, kPrefix) == 0 ? labelText.substr(sizeof(kPrefix) - 1) : labelText;
+}
+
+bool FEStartupSequence::ShowFor(const std::string &triggerName, ShowInfo &out) const
+{
+    static const char kPrefix[] = "TRIGGER_START_";
+    if (!m_profile.valid || triggerName.compare(0, sizeof(kPrefix) - 1, kPrefix) != 0)
+        return false;
+    const std::string name = triggerName.substr(sizeof(kPrefix) - 1); // STAGE_3_SHOW_1
+    for (const Career::SmsTrigger &t : Career::SmsTable::Get().Triggers()) {
+        if (t.kind != 0 || t.name != name)
+            continue;
+        for (const Career::MediaRecord &m : Career::EventTable::Get().Media())
+            if (m.id == t.media) {
+                out.media = &m;
+                out.label = m.nameHash;
+                out.code = MagazineCodeOf(m_fe->LanguageText(m.nameHash));
+                out.won = m_profile.Completed(m.id);
+                out.open = getenv("NFSU2_UNLOCK_ALL") || Career::SmsOrdinaryDone(m_profile, t.area) >= int(t.value);
+                return true;
+            }
+    }
+    return false;
+}
+
+void FEStartupSequence::WinShow(const ShowInfo &info)
+{
+    if (!info.media || m_profile.Completed(info.media->id))
+        return;
+    m_profile.Complete(info.media->id);
+    Career::SaveCareer(m_profile);
+    printf("[Magazine] %s picture won (%s)\n", info.media->name, info.code.c_str());
+}
+
+std::vector<FEStartupSequence::ShowInfo> FEStartupSequence::WonShows() const
+{
+    std::vector<ShowInfo> out;
+    for (const Career::MediaRecord &m : Career::EventTable::Get().Media())
+        if (!m.dvd && m_profile.Completed(m.id)) {
+            ShowInfo i;
+            i.media = &m, i.label = m.nameHash, i.won = true, i.open = true;
+            i.code = MagazineCodeOf(m_fe->LanguageText(m.nameHash));
+            out.push_back(i);
+        }
+    return out;
+}
+
 bool FEStartupSequence::DeliverTip(uint32_t nameHash, std::string &subject, std::string &body)
 {
     if (!m_profile.valid)

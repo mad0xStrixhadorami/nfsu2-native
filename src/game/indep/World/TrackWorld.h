@@ -49,6 +49,10 @@ public:
         float time = 0.0f;      // seconds, drives the background animation
         float accent[3] = {0.10f, 0.45f, 1.00f};
         float accent2[3] = {1.00f, 0.50f, 0.12f};
+        // overlay mode (ISSUES #309): only the car, drawn into a window rectangle (pixels, y down) over whatever is already on screen, lit by the
+        // studio environment, with no backdrop, floor, reflection or post-processing
+        bool overlay = false;
+        int vx = 0, vy = 0, vw = 0, vh = 0;
     };
     // Writes the procedural old Israeli apartment block (ISSUES #306) as a coloured .obj / .ply pair (vertex colours), for use outside the game.
     static bool ExportShikun(const char *basePath, int floors, float width, float depth, unsigned seed);

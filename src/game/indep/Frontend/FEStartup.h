@@ -128,6 +128,18 @@ public:
     // A tutorial-tip spot was entered (ISSUES #308): the Game Tips message of that name (hash = bStringHash of ENGAGE_TIPS_*) goes into the
     // SMS inbox once; returns true with its subject and body text when it is new.
     bool DeliverTip(uint32_t nameHash, std::string &subject, std::string &body);
+    // Car shows (ISSUES #309): TRIGGER_START_STAGE_n_SHOW_k.  A show opens when the area's ordinary events done reach the trigger's value (0x0026ee90);
+    // attending one that is not won yet wins its magazine picture.
+    struct ShowInfo {
+        const Career::MediaRecord *media = nullptr;
+        std::string code;     // the magazine, e.g. "CAE"
+        uint32_t label = 0;   // the media record's language label (+0x28)
+        bool open = false, won = false;
+    };
+    bool ShowFor(const std::string &triggerName, ShowInfo &out) const;
+    void WinShow(const ShowInfo &info); // files the picture in the profile and saves
+    std::vector<ShowInfo> WonShows() const; // every magazine picture won so far, in table order
+    int OrdinaryDone(int area) const;
     bool PeekCareerMenuSwitchIs(const char *name) const { return m_careerMenuSwitch && !strcmp(m_careerMenuSwitch, name); }
     const char *TakeCareerMenuSwitch()
     {
