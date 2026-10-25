@@ -2112,6 +2112,21 @@ int main(int argc, char **argv)
                     camera.z -= speed * 0.5f;
                 if (pad & FENativeInterface::kPadRTrigger)
                     camera.z += speed * 0.5f;
+                // Dev aids for scripted captures: NFSU2_FLY_SPIN=<rad/s> turns the camera on the spot, NFSU2_FLY_ORBIT="cx,cy,radius,zLook,rad/s"
+                // circles a point (the camera keeps its own height and looks at (cx, cy, zLook)); an optional sixth value is the start angle.
+                if (const char *spin = getenv("NFSU2_FLY_SPIN"))
+                    camera.yaw += float(atof(spin)) * dt;
+                if (const char *orb = getenv("NFSU2_FLY_ORBIT")) {
+                    float ocx = 0, ocy = 0, orad = 30, olook = 0, ospd = 0.3f;
+                    float oa0 = 0.0f;
+                    if (sscanf(orb, "%f,%f,%f,%f,%f,%f", &ocx, &ocy, &orad, &olook, &ospd, &oa0) >= 5) {
+                        static float orbitA = oa0;
+                        orbitA += ospd * dt;
+                        camera.x = ocx + std::cos(orbitA) * orad, camera.y = ocy + std::sin(orbitA) * orad;
+                        camera.yaw = std::atan2(ocy - camera.y, ocx - camera.x);
+                        camera.pitch = std::atan2(olook - camera.z, orad);
+                    }
+                }
             } else {
                 // Drive: Up throttle, Down brake/reverse, Left/Right steer (eased for digital input).
                 float target = (pad & FENativeInterface::kPadLeft) ? 1.0f : (pad & FENativeInterface::kPadRight) ? -1.0f : 0.0f;

@@ -11,12 +11,13 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![language](https://img.shields.io/badge/C%2B%2B17-SDL2%20%2B%20OpenGL-blue?style=flat-square)
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
-![commits](https://img.shields.io/badge/commits-320%2B-lightgrey?style=flat-square)
+![commits](https://img.shields.io/badge/commits-350%2B-lightgrey?style=flat-square)
+![log](https://img.shields.io/badge/ISSUES.md-307%20entries-informational?style=flat-square)
 
-<img src="docs/media/race_drive.gif" width="720" alt="Driving a Skyline through the decompiled city"/>
+<img src="docs/media/race_drive.gif" width="760" alt="Racing a Skyline through the Israeli-themed city in daylight"/>
 
-*Live capture of the native build: the player's Skyline, three AI rivals, the generated minimap and the
-original tachometer — all running from decompiled game logic and the disc's own data files.*
+*Live capture of the native build: the player's Skyline against AI rivals, in daylight with the procedural sky,
+the modern HUD with its glass minimap and speed dial, and the original race logic underneath.*
 
 </div>
 
@@ -31,7 +32,7 @@ executable and rewritten as ordinary C++:
 | PS2 hardware | Linux replacement |
 |---|---|
 | EE CPU + VU0/VU1 microcode | Native C++ (VU strip data decoded into plain triangles) |
-| GS rasteriser | OpenGL 2.x-style pipeline with custom GLSL shaders |
+| GS rasteriser | OpenGL pipeline with custom GLSL shaders |
 | SPU2 / IOP audio | SDL2 audio mixer fed from the game's own sound banks |
 | DVD + `ZDIR.BIN` archive | A native reader for the disc's `ZDIR.BIN` + `ZZDATA*.BIN` |
 | Memory card | A save layer writing profile files (versioned, currently v21) |
@@ -39,74 +40,91 @@ executable and rewritten as ordinary C++:
 It is a **bring-your-own-disc** project. The repository contains **no game code and no game assets** — you
 supply your own legally obtained copy of the game and the program reads it at run time.
 
+On top of the faithful port sits a deliberately **modern presentation layer** — shader sky, god rays, a 3D
+showroom for the menus, a new loading screen, a rebuilt HUD and a re-skinned, Israeli-themed city — all
+switchable off with environment variables (see the table at the bottom) if you want the original look.
+
 ## See it running
 
 <table>
 <tr>
-<td width="50%"><img src="docs/media/intro.gif" alt="Cinematic pre-race camera"/><br/><sub><b>Cinematic pre-race camera</b> — constant-speed dolly and orbit, then a sweep round the car into the chase cam (letterbox bars).</sub></td>
-<td width="50%"><img src="docs/media/garage_parts.gif" alt="Garage camera following the part"/><br/><sub><b>Garage camera follows the part</b> — scroll Front Bumpers → Rear → Side Skirts → Spoilers → Hoods and the camera glides to that side of the car, Most Wanted style.</sub></td>
+<td width="50%"><img src="docs/media/loading.gif" alt="Loading screen"/><br/><sub><b>Loading screen</b> — full-window artwork with a slow push-in, a glass progress bar that only moves forward across every load phase (menus, race interface, streaming and building the city), stage names and rotating hints.</sub></td>
+<td width="50%"><img src="docs/media/menu_stage.gif" alt="Main menu showroom"/><br/><sub><b>Main-menu showroom</b> — the real 3D car on a dark studio floor with a mirrored reflection, softbox light panels and a gentle camera sway, behind the original menu.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/media/night_lights.gif" alt="Night driving with working lights"/><br/><sub><b>Night driving</b> — emissive headlights and tail lights, glass covers, headlight pools on the road, and a chase camera that widens its lens with speed.</sub></td>
-<td width="50%"><img src="docs/media/crib.gif" alt="Career garage"/><br/><sub><b>Career garage</b> — the real <code>CRIB01</code> room with display discs and your other cars.</sub></td>
+<td width="50%"><img src="docs/media/carselect_stage.gif" alt="Car select"/><br/><sub><b>Car select</b> — the car under studio strip lights turns slowly; changing car, paint or parts updates it live, through the same car shader the race uses.</sub></td>
+<td width="50%"><img src="docs/media/engage_event.gif" alt="Free-roam event prompt"/><br/><sub><b>Free-roam events</b> — a light column marks every open career event; drive into it and the event is offered with its real name, type, distance and purse.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/media/carselect.gif" alt="Quick Race car select"/><br/><sub><b>Quick Race car select</b> — real car database, live stat bars from the decompiled rating formulas.</sub></td>
-<td width="50%"><img src="docs/media/beacon_shop.jpg" alt="Free-roam shop hot spot"/><br/><sub><b>Free-roam hot spots</b> — shop locations decoded from the region data; roll in and the shop opens.</sub></td>
+<td width="50%"><img src="docs/media/sky_rays.gif" alt="Sky, clouds, god rays and lens reflections"/><br/><sub><b>Sky, god rays and lens reflections</b> — a per-pixel procedural sky with drifting cumulus and cirrus, shafts of sun cut out by the buildings, and lens ghosts, a halo and a streak while the sun is in view.</sub></td>
+<td width="50%"><img src="docs/media/shikun_orbit.gif" alt="Old Israeli apartment block"/><br/><sub><b>Old apartment blocks</b> — generated "shikun" buildings with slatted plastic shutters, wall air-conditioners, balconies and a roof of solar water heaters, in Jerusalem stone.</sub></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><img src="docs/media/night_race.gif" width="50%" alt="Night racing"/><br/><sub><b>Night racing</b> (<code>NFSU2_NIGHT=1</code>) — emissive headlights and tail lights, glass covers, light pools on the road, dusk sky with stars.</sub></td>
 </tr>
 </table>
 
-### Lights and wheels
+## A modern presentation layer
+
+| Piece | What it does | Log |
+|---|---|---|
+| **Loading screen** | `ModernUI::DrawLoading`: your artwork cover-fitted with a Ken-Burns drift, grading, hints, a single monotonic progress bar fed by every loader (`FENativeInterface::SetLoadingHook`, `TrackWorld::SetProgress`) | #301 |
+| **Menu showroom** | `TrackWorld::RenderStage`: dark studio backdrop shader, the car drawn by the race's car shader in a *studio* environment (overhead strip box, tall coloured panels), mirrored reflection pass, glossy fading floor, light pool, bloom | #304 |
+| **Modern HUD** | Glass minimap rendered from the live road mesh, speed dial with nitrous gauge, drift counter, wind streaks and a radial speed blur (references: NFS Unbound) | #276, #295–#298 |
+| **Hybrid UI theme** | The original FEng menus keep their layout but are recoloured to the HUD palette | #290 |
+| **Pause dialog** | Glass panel on Esc: resume, restart, options, main menu, quit | #281 |
+| **Built-in profiler** | `F3`: frame time, CPU sections, GPU timer queries, a bound-ness verdict; draw-call batching and a single vertex arena took the city from 27 to a locked 60 fps | #282, #283 |
+
+## Atmosphere
 
 <div align="center">
-<img src="docs/media/lights_wheels.jpg" width="820" alt="Headlights, night headlights, brake lights and wheels"/><br/>
-<sub>Top left: headlight cluster, a translucent cover over the lit lamp. Top right: night headlights. Bottom left: brake lights on, with the centre third light. Bottom right: alloy rim, rubber tyre and a <b>round</b> brake disc.</sub>
+<img src="docs/media/shikun_front.png" width="49%" alt="Exported apartment block, front"/>
+<img src="docs/media/shikun_roof.png" width="49%" alt="Exported apartment block, roof"/><br/>
+<sub>The exported <code>shikun</code> asset (5 floors, ~26,000 triangles, rendered here by the project's own tiny software rasteriser — flat vertex colours, no lighting).</sub>
 </div>
 
-Two details that took real digging (both in [`ISSUES.md`](ISSUES.md)):
+- **Procedural shader sky (#302)** — a per-pixel view ray through a scattering-style gradient, a sun with disc, glare and warm low-sun band, perspective-projected cumulus with self-shadowed bases and silver rims, a high cirrus veil, and at night stars and a moon.
+- **God rays and lens reflections (#305)** — the post pass keeps the frame's depth (far = sky) and marches 48 jittered samples from every pixel towards the sun, so shafts only appear through real gaps; five ghosts, a halo ring and an anamorphic streak appear while the sun disc is visible; the sun is also mirrored in the interior-mapped window glass. Costs about 1.7 ms of GPU time.
+- **Weathered ground (#299, #300)** — a worn asphalt with repaired patches, fine cracks, stains and sheen; Israeli interlocking paving ("Eckerstein") with per-block tones, pale worn edges, sandy joints, dry leaves and litter; painted kerbs that are sun-bleached, chipped and grimy at the foot.
+- **An Israeli city (#272–#280, #306)** — four districts blended by the world shader (Tel Aviv Bauhaus, Jerusalem stone, Haifa terraces, Be'er Sheva brutalist concrete) with CC0 photographic materials, Hebrew signage, ~2 million triangles of street life (palms and pines, bus stops, scooters, cafés, dumpsters with cats, EV chargers, utility poles and cables, balconies, roller shutters, awnings) and generated buildings: Bauhaus "White City" blocks in Tel Aviv, old **shikun** apartment blocks elsewhere.
+- **Wet roads, interior-mapped offices, bloom, MSAA 4×, anisotropic filtering, widescreen Hor+** from the earlier shader work.
 
-- **The square behind the rims (#284)** was the brake disc: a square quad whose round outline lives in the texture's alpha channel. The car shader forced alpha to 1.0 for brake parts, so the corners drew opaque.
-- **The painted-over headlights (#286):** every lamp cluster has a clear cover whose material slot (`HEADLIGHT_GLASS_LEFT`, `BRAKELIGHT_GLASS_*`, `BRAKELIGHT_CENTRE`) ships **no texture**, so it fell back to body paint. The slot names were recovered by hashing candidate strings against the geometry files; the covers now render as translucent glass in their own pass.
+### The apartment-block asset
+
+`./build/nfsu2 --export-shikun <base> [floors width depth seed]` writes the building as `<base>.obj` (vertex colours after `x y z`) and `<base>.ply`. Two ready-made blocks are in [`assets/israel/shikun/`](assets/israel/shikun). It has weathered plaster panels, sliding aluminium windows with sills and lintels, **plastic roller shutters in every state** (each slat is geometry in the export), wall-mounted air-conditioner condensers with drain pipes and damp streaks, balconies with laundry, a glass-block stair tower, a yellow gas riser, patches of peeled plaster and rust, and a flat roof crowded with **solar water heaters (white tank on a flat black panel)**, black tanks, dishes and aerials. Honest limits: flat vertex colours rather than UV textures, no open ground floor, no interior.
 
 ## Custom shaders
 
 The PS2 had no programmable pixel pipeline, so the original look is baked into textures and vertex colours.
-This port keeps the original assets but renders them through a set of **custom GLSL programs** (GLSL 1.20, so
-they also work on older drivers; automatic fallback to fixed-function with `NFSU2_NO_SHADERS=1`).
-
-<div align="center">
-<img src="docs/media/shader_split.jpg" width="820" alt="Fixed-function vs custom GLSL"/><br/>
-<sub>Left: fixed-function path. Right: custom shader path. (Two different instants of the same scene.)</sub>
-</div>
+This port keeps the original assets but renders them through **custom GLSL programs** (GLSL 1.20, so they work on older drivers; automatic fallback to fixed-function with `NFSU2_NO_SHADERS=1`).
 
 | Shader | What it does |
 |---|---|
-| **World grade + fog** | Colour grading and distance fog on the whole city (`World/Shaders.h`) |
-| **Car clear coat** | Per-pixel lit paint with Fresnel and a procedural sky reflection; vertex normals and gloss are rebuilt from the model |
-| **Wheel materials** | Separate alloy-rim, rubber-tyre and brake-disc shading, hub-relative normals, spoke blur at speed |
-| **Interior-mapped windows** | Tall office facades fake whole rooms behind the glass with a ray/box test — zero extra geometry |
-| **Wet-road look** | Puddle mask from two noise octaves, sheen on road-like surfaces, streaked lamp reflections |
-| **Post-process** | Bright-pass → two-pass blur bloom, vignette and exposure, composited before the HUD |
-| **Lamps and glass** | Emissive headlight / tail-light / third-brake-light lenses that react to the brake pedal, a translucent Fresnel pass for the clear covers, soft additive glows and (at night) headlight and brake pools laid on the sampled road height |
-| **Hot-spot beacons** | Additive light columns marking shops, car lots and the crib |
+| **World grade + fog + district theme** | Colour grading, distance fog, four-district facade re-skinning and photographic materials (`World/Shaders.h`) |
+| **Road and pavement** | Worn asphalt, paver pattern, painted kerbs, wet-road puddles and sheen |
+| **Sky** | Procedural atmosphere, sun, two cloud layers, night stars and moon |
+| **Car clear coat** | Per-pixel lit paint with Fresnel and a procedural environment (night city, or the studio in the menus) |
+| **Wheel materials** | Alloy rim, rubber tyre and brake-disc shading, hub-relative normals, spoke blur at speed |
+| **Interior-mapped windows** | Tall office facades fake whole rooms behind the glass with a ray/box test, plus a sun glint — zero extra geometry |
+| **Post-process** | Bloom, filmic curve, vignette, radial speed blur, **god rays** and **lens reflections** from the frame's depth |
+| **Studio stage** | Backdrop with accent glow, light slabs and horizon seam for the menu showroom |
+| **Lamps and glass** | Emissive lenses that react to the brake pedal, translucent clear covers, soft glows, night light pools |
+| **Hot-spot and event beacons** | Additive light columns marking shops, car lots, the crib and open career events |
 
-<div align="center">
-<img src="docs/media/garage_car.jpg" width="49%" alt="Garage"/>
-<img src="docs/media/s_intro.jpg" width="49%" alt="Skyline close-up"/>
-</div>
+## Free-roam career layer
+
+The region data hides a whole trigger layer (#303): named locators in `PATHSFREEROAM.BIN`. Every career event record names the locator it starts at, so the 221 events now have real places on the map — drive into the marker and the event is offered; Accept starts the race. The same layer holds the car-show spots, the unique-part events and the tutorial-tip spots (decoded, not yet ported).
 
 ## Camera
 
-The original game's cameras were rebuilt on a small spring-based rig (`World/CameraRig.h`) so every move is
-frame-rate independent and nothing ever pops:
+The original game's cameras were rebuilt on a small spring-based rig (`World/CameraRig.h`) so every move is frame-rate independent and nothing ever pops:
 
 | Camera | What it does |
 |---|---|
-| **Chase** | Spring heading, distance and height; leans into the car's *real* direction of travel in a slide; lens widens 70° → ~81° with speed (+7° with nitrous); noses down under braking; subtle shake at speed; stays out of walls (snaps in, eases out). Bumper and hood views stay rigid. |
-| **Pre-race cinematic** | Three constant-speed shots, then an orbit round the car (never through it) into the chase view, with letterbox bars. The old version stuttered because its wall-avoid filter was a no-op that stepped the zoom every frame. |
-| **Garage** | `GarageShotNow()` maps the open shop screen to a pose: front/rear bumper, skirts, spoiler, hood, roof, headlight, taillight, exhaust, rims → wheel close-up, paint/vinyl → side profile, neon → low side. Every pose parameter is a critically damped spring, so shots glide and can be interrupted. |
-
-Measured with `NFSU2_CAM_LOG=1`: in a drive test the chase yaw never changed by more than 0.07° per frame from one frame to the next.
+| **Chase** | Spring heading, distance and height; leans into the car's *real* direction of travel in a slide; lens widens 70° → ~81° with speed (+7° with nitrous); noses down under braking; subtle shake at speed |
+| **Pre-race cinematic** | Three constant-speed shots, then an orbit round the car (never through it) into the chase view, with letterbox bars |
+| **Garage** | The open shop screen maps to a pose: bumpers, skirts, spoiler, hood, roof, lights, exhaust, rims, paint, neon |
+| **Showroom** | Menu orbit and sway around the staged car |
 
 ## How much of the game is done?
 
@@ -115,10 +133,13 @@ Honest numbers first, because "percent complete" means different things for a de
 | Measure | Result |
 |---|---|
 | Functions in the PS2 executable (Ghidra) | **16,897** |
-| Functions individually traced to an address in our source/notes | **≈ 787 (4.7 %)** — about **7 %** of the code by size |
-| UI screens (`.fng` packages) ported | **≈ 60 of 150** — and roughly **58 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **286 entries** in [`ISSUES.md`](ISSUES.md) |
-| C++ written | ~31,000 lines (plus the vendored CC0 engine core) |
+| Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
+| UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
+| Findings, decodes and design notes logged | **307 entries** in [`ISSUES.md`](ISSUES.md) |
+| Commits | **350+** |
+| C++ written | **≈ 38,600 lines in 114 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
+| Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
+| Triangles in view in the city | ≈ 1.1 million per frame, ≈ 560 draw calls |
 
 > **Why the function percentage is low:** the executable holds a huge amount of code this project deliberately
 > does **not** port one-for-one — online lobbies (~35 screens), the Sony/IOP/network SDKs, PS2 DMA/VU upload
@@ -130,19 +151,19 @@ Honest numbers first, because "percent complete" means different things for a de
 
 | Area | Status | Notes |
 |---|---|---|
-| Boot, EA logos, movies | ✅ working | Boot order mirrors `0x2dbd88` |
-| Front end / menus | 🟢 ~60 % of the screens | Main menu, Options (persisted), Quick Race flow, profiles, virtual keyboard |
+| Boot, EA logos, movies | ✅ working | Boot order mirrors `0x2dbd88`; the loading screens are replaced by the new one |
+| Front end / menus | 🟢 ~62 % of the screens | Main menu, Options, Quick Race flow, profiles, keyboard, 3D showroom background |
 | Quick Race | ✅ playable | Real car DB, tracks, 3-2-1 start, laps, finish, results, best times |
-| Free roam / city | ✅ working | Whole city streams in, collision mesh, ambient traffic, minimap, full map |
-| Driving physics | 🟢 solid | UG2 vehicle model from the car records, drivetrain, tuning, manual gearbox |
-| AI opponents | 🟢 working | Route followers with skill scaling and vinyls |
-| Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules decoded |
+| Free roam / city | ✅ working | Whole city streams in, collision mesh, traffic, minimap, full map, shop and event locators |
+| Driving physics | 🟢 solid | UG2 vehicle model from the car records, drivetrain, tuning, drift layer, regression benchmark |
+| AI opponents | 🟢 working | Route followers with skill scaling |
+| Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules, events started from the street |
 | Car customisation | 🟡 mostly | Parts, performance packages, tuning sliders, dyno, vinyls, decals, paint, rims, spinners, neon |
-| Garage / shops (3D) | 🟡 partial | Garage room renders with a part-following camera; shop hot spots placed; per-shop filtering not done |
-| Graphics | 🟢 beyond original | Custom shaders, MSAA, anisotropic filtering, widescreen Hor+, working car lights and glass |
-| Audio | 🟡 partial | Engine, skid, turbo and UI sounds; music streams; full mix not final |
+| Garage / shops (3D) | 🟡 partial | Garage room renders with a part-following camera; per-shop filtering not done |
+| Graphics | 🟢 beyond original | Custom shaders, shader sky, god rays, MSAA, widescreen Hor+, working car lights and glass |
+| Audio | 🟡 partial | Engine, skid, turbo, wind and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
-| Stock paint colours, magazine/showcase screens, NOS graph, reverse lamps / turn signals | 🔴 open | Documented in `ISSUES.md` |
+| Car-show / magazine screens, Uniques shop, tutorial pop-ups, reverse lamps | 🔴 open | Documented in `ISSUES.md` (#247, #303) |
 
 If you want **one number** for "can I play the game": roughly **half of the single-player game is reachable
 and playable natively today** (menus → Quick Race → free roam → career flow → customisation), with the long
@@ -168,8 +189,9 @@ NFSU2_DATA=/path/to/your/disc ./build/nfsu2           # play
 | Arrows / WASD | Steer and menu navigation |
 | Enter / Space | Accept |
 | **Esc** | Back in menus, **pause** while driving |
-| X | Pad square (Customize / Repaint) |
+| X / Left Shift | Handbrake while driving (starts a drift); pad square in menus |
 | Q / E | L1 / R1 |
+| F3 | Performance overlay |
 | F10 | Quit |
 
 The window is 16:9 by default and resizable. The 3D world widens with the window (no stretching), while the
@@ -183,16 +205,20 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `NFSU2_WORLD=L4RA` | Jump straight into a region |
 | `NFSU2_RACE=4012` | Start a specific race |
 | `NFSU2_RACETYPE=9` | Free roam |
+| `NFSU2_AUTODRIVE=1` | The AI drives the player's car |
 | `NFSU2_DRIVE="3500-9000:up,..."` | Hold buttons for a time window (hand-driven tests) |
 | `NFSU2_SPAWN=x,y,yaw` | Teleport the player (dev aid) |
-| `NFSU2_HOTSPOTS=1` | Show shop beacons outside career free roam |
-| `NFSU2_SCENE=CRIB01` | Load a shop/garage scene |
+| `NFSU2_WORLD_FLY=1` + `NFSU2_WORLD_CAM=x,y,z,yaw,pitch` | Free camera; `NFSU2_FLY_SPIN=<rad/s>` turns it, `NFSU2_FLY_ORBIT="cx,cy,r,zLook,rad/s"` circles a point |
+| `NFSU2_NIGHT=1` | Night / dusk look instead of Israeli daylight |
 | `NFSU2_NO_SHADERS=1` | Fixed-function fallback |
+| `NFSU2_CLASSIC_SKY=1` / `NFSU2_NO_RAYS=1` | Old sky gradient / no god rays and lens reflections (`NFSU2_RAYS=<k>` sets the strength) |
+| `NFSU2_NO_STAGE=1` / `NFSU2_CLASSIC_LOADING=1` / `NFSU2_CLASSIC_UI=1` | Original menu backdrop and car preview / original loading screens / original UI look |
+| `NFSU2_NO_THEME=1` / `NFSU2_NO_PROPS=1` / `NFSU2_NO_SHIKUN=1` | Turn the Israeli theme, street props or generated apartment blocks off |
 | `NFSU2_MSAA=0/2/4/8` | Multisampling |
+| `NFSU2_PERF=1` | Print the profiler every 2 s (`F3` shows it on screen) |
 | `NFSU2_SCREENSHOT=f.bmp` | Save the whole window and quit |
 | `NFSU2_MEMCARD=dir` | Use a scratch save directory |
-| `NFSU2_NIGHT=1` | Night / dusk look (headlight pools, hot lamps) instead of Israeli daylight |
-| `NFSU2_CAM_LOG=1` / `NFSU2_GARAGE_SHOT=n` | Log the camera every frame / force a garage camera shot |
+| `NFSU2_PACKAGE=UI_Main.fng` | Open a front-end screen directly |
 
 </details>
 
@@ -207,7 +233,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
    collision mesh, road/traffic graphs, the car database, part database, GLOBALB career tables, FNG UI
    packages and the audio banks.
 4. **Rewrite, don't emulate.** Each decoded behaviour becomes normal C++ with a `// 0xADDRESS` comment to
-   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (286 entries so far — read it,
+   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (307 entries so far — read it,
    it is the real project diary).
 5. **Reuse where legal and sensible.** The engine core shared with the CC0 *Most Wanted* decompilation
    ([`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw)) is vendored in `third_party/nfsmw`.
@@ -219,8 +245,9 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `src/game/bWare/` | EA Black Box engine core |
 | `src/game/indep/` | Platform-independent game code: `Career/`, `Frontend/`, `Physics/`, `Sound/`, `World/`, `Texture/`, `FEng/` |
 | `src/platform/linux/` | Linux replacements for PS2 hardware and SDK calls |
-| `tools/` | Archive, chunk, VU-strip, audio and hot-spot analysis scripts; `record_gif.sh` captures the game window to a GIF for the README |
+| `tools/` | Archive, chunk, VU-strip, audio and hot-spot analysis scripts; `record_gif.sh` captures the game window to a GIF for the README; `obj_preview.py` is a tiny software rasteriser for the exported building asset |
 | `docs/` | Function map, UI screen registry, physics notes, media |
+| `assets/` | Open-licence material the theme uses: CC0 ambientCG photo materials, the Rajdhani / Alef typefaces (SIL OFL), the loading-screen artwork and the exported apartment-block asset (`assets/israel/shikun/`) |
 | `third_party/nfsmw/` | Vendored CC0 engine code, local changes in `PATCHES.md` |
 | `ISSUES.md` | Numbered log of every decode, fix and open question |
 
@@ -260,6 +287,7 @@ roadmap (all **planned**, none of it is done yet):
 - Built by reverse-engineering a personally owned copy of the game for **interoperability, preservation and
   education**. All game code and art remain the property of Electronic Arts.
 - **This repository contains no EA code, executables, textures, models, music or other assets.** The
+  loading-screen artwork and the apartment-block asset are original to this project; the photo materials are CC0. The
   screenshots and GIFs under `docs/media` are captures of the running program, included to document the
   project; if a rights holder objects, they will be removed.
 - Not affiliated with or endorsed by Electronic Arts or Black Box.

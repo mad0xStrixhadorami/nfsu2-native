@@ -892,19 +892,22 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Use(0);
         glDisable(GL_TEXTURE_2D);
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_SRC_ALPHA, day ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE); // additive light at night, a tinted haze in daylight (it blew out to white)
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         constexpr int kSides = 20;
         constexpr float kHeight = 38.0f;
         for (const Beacon &b : m_beacons) {
-            if (std::hypot(b.x - cam.x, b.y - cam.y) > 700.0f)
+            const float bd = std::hypot(b.x - cam.x, b.y - cam.y);
+            if (bd > 700.0f)
                 continue;
+            // the camera that stands inside the column (the car on a marker) must not be flooded: it fades out as you close in
+            const float near = std::clamp((bd - b.radius * 0.8f) / (b.radius * 2.5f), 0.10f, 1.0f) * (day ? 0.75f : 1.0f);
             glBegin(GL_QUAD_STRIP);
             for (int i = 0; i <= kSides; ++i) {
                 const float a = float(i % kSides) * 6.2831853f / kSides;
                 const float px = b.x + std::cos(a) * b.radius, py = b.y + std::sin(a) * b.radius;
-                glColor4ub(b.r, b.g, b.b, 110);
+                glColor4ub(b.r, b.g, b.b, uint8_t(110.0f * near));
                 glVertex3f(px, py, b.z);
                 glColor4ub(b.r, b.g, b.b, 0);
                 glVertex3f(px, py, b.z + kHeight);

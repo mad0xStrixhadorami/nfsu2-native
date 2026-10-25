@@ -8,7 +8,7 @@ export DISPLAY=${DISPLAY:-:0.0} SDL_AUDIODRIVER=dummy NFSU2_DATA=${NFSU2_DATA:-$
 tmp=$(mktemp -d)
 "$(dirname "$0")/../build/nfsu2" >"$tmp/game.log" 2>&1 &
 game=$!
-sleep 3
+for _ in $(seq 1 80); do xwininfo -name "Need for Speed Underground 2 (native)" >/dev/null 2>&1 && break; sleep 0.25; done # wait for the window
 sleep "$delay"
 info=$(xwininfo -name "Need for Speed Underground 2 (native)")
 X=$(echo "$info" | awk '/Absolute upper-left X/{print $4}'); Y=$(echo "$info" | awk '/Absolute upper-left Y/{print $4}')
