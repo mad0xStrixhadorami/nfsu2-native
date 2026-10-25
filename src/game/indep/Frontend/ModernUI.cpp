@@ -868,3 +868,98 @@ bool ModernUI::DrawLoading(int w, int h, const char *stage, float fraction, floa
     }
     return true;
 }
+
+// ---- The police pursuit HUD (ISSUES #318) -------------------------------------------------------------------------------------------------
+void ModernUI::DrawPursuit(int w, int h, const PursuitHud &p, float t)
+{
+    if (!m_font || p.state == 0)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    const SDL_Color red{255, 52, 48, 255}, blue{60, 120, 255, 255};
+    const bool result = p.state >= 3;
+    // red / blue flashing at the edges while the law is close
+    if (!result && p.nearest < 140.0f) {
+        const float k = std::clamp(1.0f - p.nearest / 140.0f, 0.0f, 1.0f);
+        const float ph = std::fmod(t * 2.6f, 1.0f);
+        const float lf = (ph < 0.5f ? std::sin(ph * 12.566f) : 0.0f), rf = (ph >= 0.5f ? std::sin((ph - 0.5f) * 12.566f) : 0.0f);
+        const float ew = 150.0f * s * (0.6f + k);
+        Quad({0, 0}, {ew, 0}, {ew, H}, {0, H}, Alpha(blue, 0.50f * k * std::max(0.0f, lf)), Alpha(blue, 0.0f), Alpha(blue, 0.0f), Alpha(blue, 0.50f * k * std::max(0.0f, lf)));
+        Quad({W - ew, 0}, {W, 0}, {W, H}, {W - ew, H}, Alpha(red, 0.0f), Alpha(red, 0.50f * k * std::max(0.0f, rf)), Alpha(red, 0.50f * k * std::max(0.0f, rf)), Alpha(red, 0.0f));
+    }
+    if (!result) {
+        // top: the heat panel
+        const float pw = 430 * s, ph2 = 78 * s, px = W * 0.5f - pw * 0.5f, py = 16 * s;
+        const bool cool = p.state == 2;
+        Glass(px, py, pw, ph2, 20 * s, {6, 10, 22, 205}, cool ? SDL_Color{90, 220, 190, 190} : SDL_Color{255, 90, 80, 190});
+        Quad({px, py}, {px + pw - 20 * s, py}, {px + pw - 20 * s, py + 3 * s}, {px, py + 3 * s}, blue, red, red, blue);
+        for (int i = 0; i < 5; ++i) { // heat pips: badges that flash blue / red
+            const float cx = px + 32 * s + float(i) * 30 * s, cy = py + 24 * s, r = 11 * s;
+            const bool on = i < p.heat;
+            const float fl = 0.6f + 0.4f * std::sin(t * 9.0f + float(i));
+            const SDL_Color c = on ? ((i + int(t * 4.0f)) % 2 == 0 ? red : blue) : SDL_Color{50, 60, 80, 200};
+            Quad({cx, cy - r}, {cx + r, cy}, {cx, cy + r}, {cx - r, cy}, Alpha(c, on ? fl : 0.8f), Alpha(c, on ? fl : 0.8f), Alpha(c, on ? fl : 0.8f), Alpha(c, on ? fl : 0.8f));
+        }
+        Text(px + 20 * s, py + 40 * s, 22 * s, cool ? "COOLING DOWN" : (p.nearest < 60.0f ? "PURSUIT  -  CLOSE" : "PURSUIT"), cool ? SDL_Color{120, 240, 205, 255} : kWhite, 0);
+        const int secs = int(p.chaseTime);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
+        Text(px + pw - 24 * s, py + 12 * s, 26 * s, buf, kWhite, 2);
+        snprintf(buf, sizeof(buf), "UNITS %d", p.units);
+        Text(px + pw - 24 * s, py + 44 * s, 18 * s, buf, {170, 195, 235, 235}, 2);
+        snprintf(buf, sizeof(buf), "BOUNTY  $%d", int(p.bounty));
+        Text(px + 190 * s, py + 12 * s, 24 * s, buf, kWarm, 0);
+        snprintf(buf, sizeof(buf), "HEAT %d", p.heat);
+        Text(px + 190 * s, py + 44 * s, 18 * s, buf, {170, 195, 235, 235}, 0);
+        // bottom: the bars
+        auto bar = [&](float y, const char *label, float v, SDL_Color c) {
+            const float bw = 340 * s, bx = W * 0.5f - bw * 0.5f, bh = 12 * s;
+            Glass(bx - 8 * s, y - 24 * s, bw + 16 * s, 40 * s, 10 * s, {6, 10, 22, 190}, Alpha(c, 0.7f));
+            Rect(bx, y, bw, bh, {20, 26, 40, 230}, {12, 16, 28, 230});
+            const float k = std::clamp(v, 0.0f, 1.0f);
+            Rect(bx, y, bw * k, bh, Alpha(c, 1.0f), Alpha(c, 0.7f));
+            Text(bx, y - 22 * s, 17 * s, label, Alpha(c, 1.0f), 0);
+        };
+        if (p.bust > 0.02f)
+            bar(H - 150 * s, "BUSTED", p.bust, red);
+        if (p.cooldown > 0.02f)
+            bar(H - (p.bust > 0.02f ? 205.0f : 150.0f) * s, "COOLDOWN", p.cooldown, {90, 235, 190, 255});
+    }
+    // banner
+    if (p.banner > 0.0f && !result) {
+        const float a = std::clamp(std::min(p.banner / 0.25f, (3.2f - p.banner) / 0.5f), 0.0f, 1.0f);
+        const float sc = 1.0f + (1.0f - std::clamp(p.banner / 0.3f, 0.0f, 1.0f)) * 0.5f;
+        const float cy = H * 0.30f;
+        Quad({0, cy - 46 * s}, {W, cy - 46 * s}, {W, cy + 52 * s}, {0, cy + 52 * s}, Alpha({10, 14, 28, 255}, 0.0f), Alpha({10, 14, 28, 255}, 0.0f), Alpha({10, 14, 28, 255}, 0.0f),
+             Alpha({10, 14, 28, 255}, 0.0f));
+        Rect(0, cy - 40 * s, W, 84 * s, Alpha({8, 12, 26, 255}, 0.72f * a), Alpha({8, 12, 26, 255}, 0.72f * a));
+        Rect(0, cy - 40 * s, W, 3 * s, Alpha(red, a), Alpha(blue, a));
+        Rect(0, cy + 41 * s, W, 3 * s, Alpha(blue, a), Alpha(red, a));
+        Text(W * 0.5f, cy - 30 * s, 50 * s * sc, p.bannerText, Alpha(kWhite, a), 1);
+        Text(W * 0.5f, cy + 20 * s, 20 * s, p.bannerSub, Alpha({170, 205, 255, 255}, a), 1);
+    }
+    // result
+    if (result) {
+        const float a = std::clamp(p.resultTimer / 0.5f, 0.0f, 1.0f);
+        const bool busted = p.state == 3;
+        const SDL_Color c = busted ? red : SDL_Color{90, 235, 150, 255};
+        Rect(0, 0, W, H, Alpha({2, 4, 12, 255}, 0.55f * a), Alpha({2, 4, 12, 255}, 0.78f * a));
+        const float pw = 560 * s, ph2 = 330 * s, px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph2 * 0.5f;
+        Glow(W * 0.5f, H * 0.5f, pw * 0.9f, Alpha(c, 0.22f * a));
+        Glass(px, py, pw, ph2, 30 * s, {8, 12, 26, Uint8(235 * a)}, Alpha(c, 0.8f * a));
+        Text(W * 0.5f, py + 24 * s, 80 * s, busted ? "BUSTED" : "ESCAPED", Alpha(c, a), 1);
+        char buf[96];
+        const int secs = int(p.chaseTime);
+        const float ly = py + 130 * s;
+        snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
+        Text(px + 50 * s, ly, 24 * s, "PURSUIT TIME", {140, 175, 215, 235}, 0), Text(px + pw - 50 * s, ly, 24 * s, buf, kWhite, 2);
+        snprintf(buf, sizeof(buf), "%d", p.heat);
+        Text(px + 50 * s, ly + 34 * s, 24 * s, "HEAT LEVEL", {140, 175, 215, 235}, 0), Text(px + pw - 50 * s, ly + 34 * s, 24 * s, buf, kWhite, 2);
+        snprintf(buf, sizeof(buf), "$%d", int(p.bounty));
+        Text(px + 50 * s, ly + 68 * s, 24 * s, "BOUNTY", {140, 175, 215, 235}, 0), Text(px + pw - 50 * s, ly + 68 * s, 24 * s, buf, kWarm, 2);
+        snprintf(buf, sizeof(buf), busted ? "-$%d" : "+$%d", int(p.amount));
+        Text(px + 50 * s, ly + 104 * s, 30 * s, busted ? "FINE" : "REWARD", Alpha(c, 1.0f), 0), Text(px + pw - 50 * s, ly + 104 * s, 30 * s, buf, Alpha(c, 1.0f), 2);
+        const float pulse = 0.65f + 0.35f * std::sin(t * 5.0f);
+        Text(W * 0.5f, py + ph2 - 36 * s, 18 * s, "PRESS ENTER", Alpha(kWhite, pulse * a), 1);
+    }
+}

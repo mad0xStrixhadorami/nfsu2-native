@@ -504,11 +504,33 @@ void TrackWorld::AddTexturePack(std::vector<uint8_t> data)
 
 // Fixed slots (windows, lights) get stand-in colours; slots with a texture in a loaded pack
 // (badging, tires, misc) are textured; the paint skin and anything unresolved use the paint.
+void TrackWorld::AddCustomTexture(uint32_t hash, int w, int h, std::vector<uint32_t> rgba, uint8_t gloss)
+{
+    CustomTex t;
+    t.w = w, t.h = h, t.rgba = std::move(rgba), t.gloss = gloss;
+    m_customTex[hash] = std::move(t);
+}
+
+void TrackWorld::SetCarNormals(size_t index, std::vector<float> normals)
+{
+    if (index >= m_cars.size() || normals.size() != m_cars[index].model->size() * 9)
+        return;
+    Car &car = m_cars[index];
+    car.modelNormals = std::move(normals);
+    car.modelAO.assign(car.model->size() * 3, 1.0f);
+    car.fixedNormals = true;
+    float lx = 0, ly = 0;
+    for (const SolidMesh::Triangle &t : *car.model)
+        for (const SolidMesh::Point &p : t.v)
+            lx = std::max(lx, std::fabs(p.x)), ly = std::max(ly, std::fabs(p.y));
+    car.halfLen = std::max(1.0f, lx), car.halfWid = std::max(0.6f, ly);
+}
+
 uint32_t TrackWorld::CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const
 {
     if (CarMaterial::SlotColour(hash, rgb))
         return 0;
-    if (hash && m_textures.count(hash)) {
+    if (hash && (m_textures.count(hash) || m_customTex.count(hash))) {
         rgb[0] = rgb[1] = rgb[2] = 1.0f;
         return hash;
     }
@@ -609,9 +631,11 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
     Car &car = m_cars[index];
     car.tris.clear();
     car.render.clear();
+    if (car.hidden)
+        return;
     car.tris.reserve(car.model->size());
     car.render.reserve(car.model->size());
-    if (car.modelNormals.size() != car.model->size() * 9 || car.normalsHadWheels != (car.wheelOf != nullptr)) {
+    if (!car.fixedNormals && (car.modelNormals.size() != car.model->size() * 9 || car.normalsHadWheels != (car.wheelOf != nullptr))) {
         BuildSmoothNormals(*car.model, car.modelNormals, car.modelAO, car.wheelOf, car.brakeOf, car.hub);
         car.normalsHadWheels = car.wheelOf != nullptr;
         float lx = 0, ly = 0;
@@ -724,6 +748,11 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             tex = car.skinHash;
             skinned = true;
             gloss = 1;
+        }
+        if (!m_customTex.empty() && textured) { // imported car: the gloss class comes with the texture
+            auto ct = m_customTex.find((*car.textures)[i]);
+            if (ct != m_customTex.end())
+                gloss = ct->second.gloss;
         }
         // Wheel materials (#264): the rim face is metal (3), the tyre rubber (4), a brake disc metal (5); calipers stay paint.
         if (wheel >= 0)

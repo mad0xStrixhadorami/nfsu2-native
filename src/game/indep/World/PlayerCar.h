@@ -142,6 +142,10 @@ public:
     // parts (optional): aftermarket parts to mount on top of the stock body (ISSUES.md #178).
     bool LoadModel(const std::vector<uint8_t> &geometry, const Wheel *wheels = nullptr,
                    const InstalledParts *parts = nullptr);
+    // An imported body (the police car, ISSUES #318): the model with its per-triangle texture hashes, wheel assignment (0..3 FL FR RR RL,
+    // -1 none), rim flags and the four hubs; the car stands with its tyres' lowest point at the road.
+    void SetCustomModel(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &tex, const std::vector<int8_t> &wheelOf,
+                        const std::vector<uint8_t> &rims, const float hubs[12], float wheelRadius);
     // Height of the car origin above the ground (wheel radius - centre height; 0 if unknown).
     float RideHeight() const { return m_rideHeight; }
     const std::vector<SolidMesh::Triangle> &Model() const { return m_model; }

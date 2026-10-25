@@ -183,6 +183,8 @@ public:
     // The career World Map's list and cursor (the main loop marks the events on the live map, #261).
     const std::vector<const Career::Event *> &WorldMapEvents() const { return m_wmEvents; }
     size_t WorldMapSelected() const { return m_wmSel; }
+    // Money from / for the free-roam police (ISSUES #318): the fine of a bust, the bounty of an escape.  Returns the new balance (-1 without a career).
+    int AdjustMoney(int delta);
     const Career::Profile &CareerProfile() const { return m_profile; } // the garage room shows its cars (#252)
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay

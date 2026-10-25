@@ -52,6 +52,15 @@ public:
     // purse and two buttons (selected 0 = Accept, 1 = Decline).
     void DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                     float seconds);
+    // The police pursuit (ISSUES #318): heat, units, bounty and clock at the top, the BUSTED and COOLDOWN bars at the bottom, a flashing red / blue
+    // glow at the screen edges while the cops are close, and a banner (PURSUIT / HEAT LEVEL n / ROADBLOCK).  state: 1 chase, 2 cooldown,
+    // 3 busted, 4 escaped.
+    struct PursuitHud {
+        int state = 0, heat = 0, units = 0;
+        float bounty = 0, chaseTime = 0, bust = 0, cooldown = 0, nearest = 1e9f, banner = 0, resultTimer = 0, amount = 0;
+        const char *bannerText = "", *bannerSub = "";
+    };
+    void DrawPursuit(int w, int h, const PursuitHud &p, float seconds);
     // A message toast (ISSUES #308): a glass card sliding in from the top with a kicker, a title and a wrapped body; `age` is seconds since it
     // appeared, `life` how long it stays.
     void DrawToast(int w, int h, std::string_view kicker, std::string_view title, std::string_view body, float age, float life);

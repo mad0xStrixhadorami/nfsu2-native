@@ -7900,6 +7900,15 @@ bool FEStartupSequence::LoadCareerProfile()
 // 0x00268bd8 test on the record's +0x08 id that the world map (0x001ee590) puts at item index 7.
 // UG2 pays the purse for winning; the port pays a podium share (2nd 1/2, 3rd 1/4) and only completes
 // the event on a win.
+int FEStartupSequence::AdjustMoney(int delta)
+{
+    if (!m_profile.valid)
+        return -1;
+    m_profile.money = std::max(0, m_profile.money + delta);
+    Career::SaveCareer(m_profile);
+    return m_profile.money;
+}
+
 void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds, int score)
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)

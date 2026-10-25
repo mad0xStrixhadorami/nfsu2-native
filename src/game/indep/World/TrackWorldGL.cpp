@@ -91,6 +91,23 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     auto it = m_glTextures.find(hash);
     if (it != m_glTextures.end())
         return it->second;
+    if (auto custom = m_customTex.find(hash); custom != m_customTex.end()) { // imported car textures (#318)
+        unsigned cid = 0;
+        glGenTextures(1, &cid);
+        glBindTexture(GL_TEXTURE_2D, cid);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, custom->second.w, custom->second.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, custom->second.rgba.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameterf(GL_TEXTURE_2D, 0x84FE, 8.0f);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        m_glTextureMode[cid] = 0;
+        m_glTextures[hash] = cid;
+        return cid;
+    }
     unsigned id = m_glWhite;
     if (IsBeamTexture(hash) && m_textures.find(hash) == m_textures.end()) {
         // Procedural light beam: the solids map V = 1 at the lamp and V = 0 at the far end, U across the cone.
@@ -1148,6 +1165,7 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
         if (!reflect) {
             DrawCarLights(cam, day);
             DrawCarFlames(cam, day);
+            DrawCarSirens(cam, day);
             DrawTyreEffects(cam);
         }
     } else {
@@ -1755,6 +1773,110 @@ void TrackWorld::DrawCarFlames(const Camera &cam, bool day) const
         const float len = std::min(0.45f, 0.03f + sl * 0.016f);
         sprite(f.x - sx / sl * len * 0.0f, f.y, f.z, f.size, len / f.size, sx / sl, sy / sl, sz / sl, 1.0f, 0.58f - 0.3f * u, 0.18f - 0.1f * u,
                (1.0f - u) * 1.3f * dayK);
+    }
+    GLShader::Use(0);
+    glPopAttrib();
+}
+
+
+// ---- Police sirens (ISSUES #318): the light bar flashes red and blue in double bursts; every flash glows on the lens, throws a coloured
+// pool on the road and shows at the grille and the rear deck as well.
+void TrackWorld::DrawCarSirens(const Camera &cam, bool day) const
+{
+    if (!m_progFlame || getenv("NFSU2_NO_SIRENS"))
+        return;
+    bool any = false;
+    for (const Car &car : m_cars)
+        any = any || (car.siren && !car.hidden && !car.render.empty());
+    if (!any)
+        return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT | GL_TEXTURE_BIT);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_FOG);
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, m_glWhite);
+    GLShader::Use(m_progFlame);
+    GLShader::Set1f(GLShader::Uniform(m_progFlame, "uMode"), 3.0f);
+    GLShader::Set1f(GLShader::Uniform(m_progFlame, "uTime"), m_flameClock);
+    GLShader::Set1i(GLShader::Uniform(m_progFlame, "uTex"), 0);
+    const float dayK = day ? 0.55f : 1.0f;
+    auto glow = [&](float px, float py, float pz, float radius, float r, float g, float b, float a) {
+        float dx = px - cam.x, dy = py - cam.y, dz = pz - cam.z;
+        const float dl = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        dx /= dl, dy /= dl, dz /= dl;
+        float rx = dy, ry = -dx;
+        const float rl = std::max(1e-4f, std::sqrt(rx * rx + ry * ry));
+        rx /= rl, ry /= rl;
+        const float ux = ry * dz, uy = -rx * dz, uz = rx * dy - ry * dx;
+        const float R = radius + dl * 0.0035f; // far lights keep a visible size
+        glColor4f(r, g, b, a);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0), glVertex3f(px - (rx + ux) * R, py - (ry + uy) * R, pz - uz * R - 0.0f);
+        glTexCoord2f(1, 0), glVertex3f(px + (rx - ux) * R, py + (ry - uy) * R, pz - uz * R);
+        glTexCoord2f(1, 1), glVertex3f(px + (rx + ux) * R, py + (ry + uy) * R, pz + uz * R);
+        glTexCoord2f(0, 1), glVertex3f(px - (rx - ux) * R, py - (ry - uy) * R, pz + uz * R);
+        glEnd();
+    };
+    auto pool = [&](float px, float py, float pz, float R, float r, float g, float b, float a) {
+        glColor4f(r, g, b, a);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0), glVertex3f(px - R, py - R, pz);
+        glTexCoord2f(1, 0), glVertex3f(px + R, py - R, pz);
+        glTexCoord2f(1, 1), glVertex3f(px + R, py + R, pz);
+        glTexCoord2f(0, 1), glVertex3f(px - R, py + R, pz);
+        glEnd();
+    };
+    for (size_t ci = 0; ci < m_cars.size(); ++ci) {
+        const Car &car = m_cars[ci];
+        if (!car.siren || car.hidden || car.render.empty())
+            continue;
+        const float *m = car.xf;
+        auto world = [&](float lx, float ly, float lz, float out[3]) {
+            for (int a = 0; a < 3; ++a)
+                out[a] = lx * m[a] + ly * m[4 + a] + lz * m[8 + a] + m[3 + 4 * a];
+        };
+        // two bursts of three flashes on the left (blue), then on the right (red), a cycle of 1.2 s; each car on its own phase
+        const float cyc = std::fmod(m_flameClock * 0.83f + float(ci) * 0.37f, 1.0f);
+        auto strobe = [&](float start) { // 3 flashes of 55 ms from `start` (0..1 of the cycle)
+            const float t = std::fmod(cyc - start + 1.0f, 1.0f) * 1.2f;
+            if (t > 0.5f)
+                return 0.0f;
+            const float k = std::fmod(t, 0.17f);
+            return k < 0.075f ? 1.0f : 0.0f;
+        };
+        const float blue = std::max(strobe(0.0f), 0.0f), red = std::max(strobe(0.5f), 0.0f);
+        const float lo[3] = {car.sirenBar[0], car.sirenBar[1], car.sirenBar[2]}, hi[3] = {car.sirenBar[3], car.sirenBar[4], car.sirenBar[5]};
+        const float cx = 0.5f * (lo[0] + hi[0]), cz = hi[2] - 0.02f;
+        // the bar: left (+y) blue, right red; a glow at each end and one in the middle of each half
+        float p[3];
+        const float yl = hi[1] * 0.62f, yr = lo[1] * 0.62f;
+        world(cx, yl, cz, p);
+        glow(p[0], p[1], p[2], 0.55f, 0.15f, 0.35f, 1.0f, blue * 1.0f * dayK);
+        glow(p[0], p[1], p[2], 2.2f, 0.10f, 0.22f, 1.0f, blue * 0.28f * dayK);
+        float bluePos[3] = {p[0], p[1], p[2]};
+        world(cx, yr, cz, p);
+        glow(p[0], p[1], p[2], 0.55f, 1.0f, 0.12f, 0.10f, red * 1.0f * dayK);
+        glow(p[0], p[1], p[2], 2.2f, 1.0f, 0.10f, 0.08f, red * 0.28f * dayK);
+        float redPos[3] = {p[0], p[1], p[2]};
+        // grille and rear deck flashers
+        world(2.33f, 0.28f, -0.12f, p);
+        glow(p[0], p[1], p[2], 0.32f, 0.2f, 0.4f, 1.0f, blue * 0.9f * dayK);
+        world(2.33f, -0.28f, -0.12f, p);
+        glow(p[0], p[1], p[2], 0.32f, 1.0f, 0.15f, 0.1f, red * 0.9f * dayK);
+        world(-1.28f, 0.38f, 0.64f, p);
+        glow(p[0], p[1], p[2], 0.30f, 0.2f, 0.4f, 1.0f, blue * 0.9f * dayK);
+        world(-1.28f, -0.38f, 0.64f, p);
+        glow(p[0], p[1], p[2], 0.30f, 1.0f, 0.15f, 0.1f, red * 0.9f * dayK);
+        // the road and the walls lit in the flash
+        const float gz = car.groundZ + 0.05f;
+        pool(bluePos[0], bluePos[1], gz, 7.5f, 0.05f, 0.12f, 0.55f, blue * 0.55f * dayK);
+        pool(redPos[0], redPos[1], gz, 7.5f, 0.55f, 0.05f, 0.04f, red * 0.55f * dayK);
     }
     GLShader::Use(0);
     glPopAttrib();

@@ -90,6 +90,7 @@ public:
     float WarmFraction() const { return m_warmKeys.empty() ? 0.0f : float(m_warmIdx) / float(m_warmKeys.size()); }
     void DrawCarLights(const Camera &cam, bool day) const;
     void DrawCarFlames(const Camera &cam, bool day) const;
+    void DrawCarSirens(const Camera &cam, bool day) const;
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
@@ -127,6 +128,10 @@ public:
     // `index`; an empty vector removes it.  The car's triangles of that slot are then textured by the
     // planar side projection.
     void SetCarSkin(size_t index, uint32_t bodySlot, std::vector<uint32_t> rgba);
+    // Imported car (the police car, ISSUES #318): an RGBA texture by hash with the gloss class its triangles take in the car shader,
+    // and smooth normals for a car's model (9 floats per triangle, car space; replaces the built ones).
+    void AddCustomTexture(uint32_t hash, int w, int h, std::vector<uint32_t> rgba, uint8_t gloss);
+    void SetCarNormals(size_t index, std::vector<float> normals);
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
     void AddTexturePack(std::vector<uint8_t> data);
@@ -171,6 +176,26 @@ public:
         m_fxMotion = motion, m_fxNitro = nitro, m_fxCar[0] = carX, m_fxCar[1] = carY, m_fxCar[2] = carRx, m_fxCar[3] = carRy;
     }
     // Nitrous flames (ISSUES #317): the car's exhaust jet, embers and glare while the nitrous burns. Call once per frame before UpdateEffects.
+    // Hidden cars cost nothing: no per-frame transform, shading or drawing (the police pool, ISSUES #318).
+    void SetCarHidden(size_t car, bool hidden)
+    {
+        if (car < m_cars.size()) {
+            m_cars[car].hidden = hidden;
+            if (hidden)
+                m_cars[car].tris.clear(), m_cars[car].render.clear();
+        }
+    }
+    // The siren's light bar (box in car space: min xyz, max xyz) flashes red and blue while `on`.
+    void SetCarSiren(size_t car, bool on, const float *bar)
+    {
+        if (car >= m_cars.size())
+            return;
+        Car &c = m_cars[car];
+        c.siren = on;
+        if (bar)
+            for (int i = 0; i < 6; ++i)
+                c.sirenBar[i] = bar[i];
+    }
     void SetCarNitrous(size_t car, bool active)
     {
         if (car >= m_cars.size())
@@ -384,6 +409,9 @@ private:
         float lampHead = 0, lampBrake = 0, lampReverse = 0;
         float headPos[2][3] = {}, tailPos[2][3] = {}, fwd[3] = {1, 0, 0};
         bool haveHead[2] = {}, haveTail[2] = {};
+        bool hidden = false, siren = false;
+        float sirenBar[6] = {};
+        bool fixedNormals = false; // modelNormals were supplied (SetCarNormals)
         // Nitrous flames (#317): the exhaust tips in world space (the installed muffler tips, else below the tail lamps), the jet direction,
         // the smoothed burn 0..1, the ignition burst and the car's velocity from frame to frame.
         float exhPos[2][3] = {}, nos = 0, burst = 0, prevPos[3] = {}, vel[3] = {}, emitAcc[2] = {};
@@ -453,6 +481,8 @@ private:
     unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)
     unsigned GLTexture(uint32_t hash); // decode + upload on first use (TrackWorldGL.cpp)
     std::vector<uint32_t> m_glTextureStale; // skin hashes whose GL texture must be rebuilt
+    struct CustomTex { int w = 0, h = 0; std::vector<uint32_t> rgba; uint8_t gloss = 0; };
+    std::map<uint32_t, CustomTex> m_customTex;
     std::map<uint32_t, std::vector<uint32_t>> m_skinPixels; // composed 512 x 512 skins by texture hash
     void ReleaseGL();
     std::unordered_map<uint32_t, unsigned> m_glTextures;

@@ -896,6 +896,21 @@ PlayerCar::RunTimes PlayerCar::SimulateRun(const Performance &p, float wheelRadi
     return run;
 }
 
+void PlayerCar::SetCustomModel(const std::vector<SolidMesh::Triangle> &model, const std::vector<uint32_t> &tex, const std::vector<int8_t> &wheelOf,
+                               const std::vector<uint8_t> &rims, const float hubs[12], float wheelRadius)
+{
+    m_model = model, m_triTex = tex, m_triWheel = wheelOf, m_triRim = rims;
+    const size_t n = m_model.size();
+    m_triCaliper.assign(n, 0), m_triMirror.assign(n, 0), m_triSpoiler.assign(n, 0), m_triRoof.assign(n, 0), m_triEngine.assign(n, 0),
+        m_triExhaust.assign(n, 0);
+    m_triBrake.assign(n, -1);
+    for (int i = 0; i < 12; ++i)
+        m_hub[size_t(i)] = hubs[i];
+    m_wheelRadius = wheelRadius;
+    m_rideHeight = std::max(0.0f, wheelRadius - hubs[2]);
+    m_wheelStart = n;
+}
+
 void PlayerCar::Place(float x, float y, float z, float yaw)
 {
     m_x = x, m_y = y, m_z = z, m_yaw = yaw;

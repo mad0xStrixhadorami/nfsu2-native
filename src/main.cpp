@@ -48,6 +48,8 @@
 #include "game/indep/Sound/MusicStream.h"
 #include "game/indep/Sound/UiSound.h"
 #include "game/indep/World/AiDriver.h"
+#include "game/indep/World/Pursuit.h"
+#include "game/indep/Sound/SirenSound.h"
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/CarCollision.h"
 #include "game/indep/World/CameraRig.h"
@@ -951,6 +953,13 @@ int main(int argc, char **argv)
     std::vector<PlayerCar> garageCars; // the career's other cars on the garage room's discs (#252)
     std::vector<AiDriver> ai;
     TrafficNet trafficNet;
+    // The free-roam police (ISSUES #318): the imported car, the pursuit and the siren.
+    PoliceMesh policeMesh, policeLodMesh;
+    bool policeLodOk = false;
+    bool policeMeshTried = false, policeMeshOk = false, sirenOpen = false;
+    Pursuit pursuit;
+    Uint32 pursuitResultStart = 0;
+    SirenSound sirenSound;
     std::vector<PlayerCar> trafficCars;
     Traffic traffic;
     std::vector<bool> aiOut; // URL knockout (ISSUES #117): opponents eliminated this race
@@ -1600,6 +1609,54 @@ int main(int argc, char **argv)
                 printf("[World] traffic: %zu cars, %zu lane links\n", trafficCars.size(), trafficNet.Links().size());
             }
         }
+        // The police (ISSUES #318): the Skoda converted by tools/convert_police.py into <data>/police/police.pcar, on the lane network.
+        pursuit = Pursuit();
+        if (!flyCamera && raceConfig.type == 9 && !getenv("NFSU2_NO_POLICE")) {
+            if (!policeMeshTried) {
+                policeMeshTried = true;
+                const char *dir = getenv("NFSU2_DATA");
+                const std::string path = std::string(dir ? dir : ".") + "/police/police.pcar";
+                if (FILE *pf = fopen(path.c_str(), "rb")) {
+                    std::vector<uint8_t> bytes;
+                    fseek(pf, 0, SEEK_END);
+                    bytes.resize(size_t(ftell(pf)));
+                    fseek(pf, 0, SEEK_SET);
+                    if (fread(bytes.data(), 1, bytes.size(), pf) != bytes.size())
+                        bytes.clear();
+                    fclose(pf);
+                    policeMeshOk = policeMesh.Load(bytes);
+                    if (policeMeshOk) { // the far model beside it
+                        const std::string lodPath = std::string(dir ? dir : ".") + "/police/police_lo.pcar";
+                        if (FILE *lf = fopen(lodPath.c_str(), "rb")) {
+                            std::vector<uint8_t> lb;
+                            fseek(lf, 0, SEEK_END);
+                            lb.resize(size_t(ftell(lf)));
+                            fseek(lf, 0, SEEK_SET);
+                            if (fread(lb.data(), 1, lb.size(), lf) != lb.size())
+                                lb.clear();
+                            fclose(lf);
+                            policeLodOk = policeLodMesh.Load(lb);
+                        }
+                    }
+                    printf("[Police] %s: %s (%zu triangles)\n", path.c_str(), policeMeshOk ? "loaded" : "unreadable", policeMesh.model.size());
+                } else {
+                    printf("[Police] no %s (run tools/convert_police.py); the police stay off\n", path.c_str());
+                }
+            }
+            if (policeMeshOk) {
+                if (!trafficNet.Valid())
+                    trafficNet.Load(ReadGameFile(*fs, pathsPath));
+                std::string baseName = fe.PreviewCarName();
+                for (const std::string &n : fe.RaceableCars())
+                    if (n == "SKYLINE" || n == "LANCER" || n == "350Z") {
+                        baseName = n;
+                        break;
+                    }
+                const uint8_t *rec = fe.CarRecordData(baseName);
+                if (rec && pursuit.Init(world, policeMesh, policeLodOk ? &policeLodMesh : nullptr, rec, &trafficNet, getenv("NFSU2_POLICE_MAX") ? atoi(getenv("NFSU2_POLICE_MAX")) : 7))
+                    printf("[Police] ready (physics of %s)\n", baseName.c_str());
+            }
+        }
         raceConfig.racers = 1 + int(ai.size());
         if (const char *cam = getenv("NFSU2_WORLD_CAM"))
             sscanf(cam, "%f,%f,%f,%f,%f", &camera.x, &camera.y, &camera.z, &camera.yaw, &camera.pitch);
@@ -2204,6 +2261,11 @@ int main(int argc, char **argv)
                     }
                     if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart | (modernPause == 5 ? FENativeInterface::kPadAccept : 0u)))
                         modernPause = modernPause == 6 ? 1 : 0;
+                } else if (modernPause == 7) { // BUSTED / ESCAPED: Enter closes the result
+                    if (pressed & (FENativeInterface::kPadAccept | FENativeInterface::kPadStart | FENativeInterface::kPadBack)) {
+                        pursuit.Dismiss();
+                        modernPause = 0;
+                    }
                 } else if (modernPause == 4) { // the event prompt: Left / Right choose, Enter answers, Esc declines
                     if (pressed & (FENativeInterface::kPadLeft | FENativeInterface::kPadRight | FENativeInterface::kPadUp | FENativeInterface::kPadDown))
                         engageSel ^= 1;
@@ -2582,6 +2644,28 @@ int main(int argc, char **argv)
                         opponentCars[i].ScaleSpeed(0.97f);
                 // Car-to-car contact: push overlapping cars apart (2 m radius each); a car running
                 // into the back of another loses a little speed.
+                // The police and the pursuit (ISSUES #318).
+                if (pursuit.Ready()) {
+                    static bool roadPlaced = false;
+                    if (!roadPlaced && getenv("NFSU2_PURSUIT_ROAD")) { // dev aid: start on a lane of the road network
+                        roadPlaced = true;
+                        pursuit.DevPlacePlayer(world, car, atoi(getenv("NFSU2_PURSUIT_ROAD")));
+                    }
+                    pursuit.Update(world, dt, car, race.IsFreeRun() && !flyCamera && !sceneMode && !cribPkg);
+                    bool bustedNow;
+                    float amount;
+                    if (pursuit.TakeResult(bustedNow, amount)) {
+                        const int bal = startup.AdjustMoney(bustedNow ? -int(amount) : int(amount));
+                        printf("[Pursuit] %s %.0f -> balance %d\n", bustedNow ? "fine" : "reward", amount, bal);
+                        modernPause = 7;
+                        pursuitResultStart = SDL_GetTicks();
+                    }
+                    if (!sirenOpen) {
+                        sirenOpen = true;
+                        sirenSound.Open();
+                    }
+                    sirenSound.SetState(dt > 0.0f ? pursuit.NearestSiren() : -1.0f, pursuit.GetHud().heat >= 3, 1.0f);
+                }
                 static std::vector<PlayerCar *> cars;
                 cars.clear();
                 cars.push_back(&car);
@@ -2594,6 +2678,8 @@ int main(int argc, char **argv)
                 }
                 for (PlayerCar &t : trafficCars)
                     cars.push_back(&t);
+                for (PlayerCar *p : pursuit.Cars())
+                    cars.push_back(p);
                 if (getenv("NFSU2_WORLD_DEBUG") && !trafficCars.empty())
                 {
                     static int dbgFrame = 0;
@@ -2670,6 +2756,19 @@ int main(int argc, char **argv)
                     world.SetCarWheels(i, &cars[i]->TriangleWheels(), &cars[i]->TriangleBrakes(), cars[i]->WheelHubs(), cars[i]->WheelAngle(),
                                       cars[i]->WheelSteer(), cars[i]->WheelRate());
                     world.SetCarLamps(i, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
+                    if (pursuit.Ready() && i >= pursuit.FirstWorldIndex() && i < pursuit.FirstWorldIndex() + pursuit.Count())
+                        world.SetCarSiren(i, pursuit.UnitSiren(i - pursuit.FirstWorldIndex()), pursuit.Mesh()->bar);
+                    // the far model follows the same pose
+                    if (pursuit.Ready() && pursuit.HasLod() && i >= pursuit.FirstWorldIndex() && i < pursuit.FirstWorldIndex() + pursuit.Count()) {
+                        const size_t k = i - pursuit.FirstWorldIndex(), lo = pursuit.LodWorldIndex(k);
+                        PlayerCar *lc = pursuit.LodCar(k);
+                        world.SetCarWheels(lo, &lc->TriangleWheels(), &lc->TriangleBrakes(), lc->WheelHubs(), cars[i]->WheelAngle(), cars[i]->WheelSteer(), cars[i]->WheelRate());
+                        world.SetCarLamps(lo, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
+                        world.SetCarSiren(lo, pursuit.UnitSiren(k), pursuit.Mesh()->bar);
+                        float lm[12];
+                        cars[i]->Transform(lm);
+                        world.SetCarTransform(lo, lm);
+                    }
                     world.SetCarNitrous(i, (cars[i]->NitrousActive() && std::fabs(cars[i]->Speed()) > 1.0f) || (i == 0 && getenv("NFSU2_FORCE_FLAMES"))); // the env is a dev aid: flames without a tank
                     // Tyre smoke and skid marks from the sliding tyres of the UG2-physics cars (ISSUES #294).
                     if (i == 0 && cars[i]->UsingUG2Physics() && dt > 0.0f && !sceneMode) {
@@ -3039,6 +3138,17 @@ int main(int argc, char **argv)
                 modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
+            if (pursuit.Ready() && modernUi.Ready() && !flyCamera && !pausePkg && !cribPkg && pursuit.GetHud().state != Pursuit::kIdle) { // (ISSUES #318)
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                const Pursuit::Hud &ph = pursuit.GetHud();
+                ModernUI::PursuitHud pu;
+                pu.state = ph.state == Pursuit::kChase ? 1 : ph.state == Pursuit::kCooldown ? 2 : ph.state == Pursuit::kBusted ? 3 : 4;
+                pu.heat = ph.heat, pu.units = ph.units, pu.bounty = ph.bounty, pu.chaseTime = ph.chaseTime, pu.bust = ph.bust, pu.cooldown = ph.cooldown;
+                pu.nearest = ph.nearest, pu.banner = ph.banner, pu.resultTimer = float(now - pursuitResultStart) * 0.001f, pu.amount = ph.state == Pursuit::kBusted ? ph.fine : ph.reward;
+                pu.bannerText = ph.bannerText.c_str(), pu.bannerSub = ph.bannerSub.c_str();
+                modernUi.DrawPursuit(w, h, pu, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
             if (tipStart && modernUi.Ready() && !pausePkg && !cribPkg && now - tipStart < 12000) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 int tw, th;
@@ -3064,6 +3174,8 @@ int main(int argc, char **argv)
                 const char *lines[] = {l0, l1, l2, l3};
                 modernUi.DrawEngage(w, h, "EVENT", engage.name, lines, 4, engageSel, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (modernPause == 7) {
+                // the pursuit result is drawn with the pursuit HUD above
             } else if (modernPause && modernUi.Ready()) {
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 static const char *const kFreeItems[] = {"RESUME", "MAGAZINES", "OPTIONS", "MAIN MENU", "QUIT GAME"};
