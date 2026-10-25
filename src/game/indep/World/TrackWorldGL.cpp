@@ -500,13 +500,15 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     // locations are looked up once per frame and the per-frame constants are set once; switching only re-uses a program and
     // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
     struct WorldUniforms {
-        int dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int spotPos0 = -1, spotPos1 = -1, spotDir = -1, spotOn = -1, dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
         int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
         float lastFogStart = -1.0f, lastFogEnd = -1.0f;
     };
     WorldUniforms wuFull, wuLite;
     auto queryWorldUniforms = [&](unsigned prog, WorldUniforms &u) {
         u.glow = GLShader::Uniform(prog, "uGlow");
+        u.spotPos0 = GLShader::Uniform(prog, "uSpotPos0"), u.spotPos1 = GLShader::Uniform(prog, "uSpotPos1");
+        u.spotDir = GLShader::Uniform(prog, "uSpotDir"), u.spotOn = GLShader::Uniform(prog, "uSpotOn");
         u.tex = GLShader::Uniform(prog, "uTex"), u.fogColor = GLShader::Uniform(prog, "uFogColor");
         u.fogStart = GLShader::Uniform(prog, "uFogStart"), u.fogEnd = GLShader::Uniform(prog, "uFogEnd");
         u.grade = GLShader::Uniform(prog, "uGrade"), u.cam = GLShader::Uniform(prog, "uCam"), u.theme = GLShader::Uniform(prog, "uTheme");
@@ -540,6 +542,23 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             GLShader::Set1i(u.mn[i], 10 + i);
         GLShader::Set1f(u.wet, getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (day ? 0.0f : 0.8f)));
         GLShader::Set1f(u.dbgPave, getenv("NFSU2_DEBUG_PAVE") ? 1.0f : 0.0f);
+        // the first car with its headlights on throws two cones down the road (lamp centres, forward axis tipped 3 degrees down)
+        float on = 0.0f, p0[3] = {0, 0, 0}, p1[3] = {0, 0, 0}, dir[3] = {1, 0, 0};
+        for (const Car &car : m_cars)
+            if (car.haveHead[0] && car.haveHead[1] && car.lampHead > 0.02f) {
+                on = car.lampHead * (day ? 0.10f : 1.0f);
+                for (int k = 0; k < 3; ++k)
+                    p0[k] = car.headPos[0][k], p1[k] = car.headPos[1][k];
+                const float fl = std::sqrt(car.fwd[0] * car.fwd[0] + car.fwd[1] * car.fwd[1] + 1e-6f);
+                dir[0] = car.fwd[0] / fl * 0.998f, dir[1] = car.fwd[1] / fl * 0.998f, dir[2] = -0.06f;
+                break;
+            }
+        if (getenv("NFSU2_SPOT_DEBUG"))
+            printf("[Spot] on %.2f p0 %.1f %.1f %.1f dir %.2f %.2f %.2f loc %d %d\n", on, p0[0], p0[1], p0[2], dir[0], dir[1], dir[2], u.spotOn, u.spotPos0);
+        GLShader::Set3f(u.spotPos0, p0[0], p0[1], p0[2]);
+        GLShader::Set3f(u.spotPos1, p1[0], p1[1], p1[2]);
+        GLShader::Set3f(u.spotDir, dir[0], dir[1], dir[2]);
+        GLShader::Set1f(u.spotOn, getenv("NFSU2_NO_SPOT") ? 0.0f : (getenv("NFSU2_SPOT_GAIN") && on > 0.0f ? float(atof(getenv("NFSU2_SPOT_GAIN"))) : on));
     };
     if (m_progWorld) {
         queryWorldUniforms(m_progWorld, wuFull);
@@ -893,6 +912,34 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &q[0].u);
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &q[0].r);
             glDrawArrays(GL_TRIANGLES, 0, GLsizei(q.size()));
+            // A car-shaped blob helper: a quad aligned with the car, half extents hx (forward) and hy (left), drawn with the soft blob texture.
+            auto blob = [&](float px, float py, float pz, float hx, float hy, uint8_t a) {
+                std::vector<Vertex> v;
+                auto put = [&](float sx, float sy, float u, float vv) {
+                    v.push_back({px + fx * hx * sx + lx * hy * sy, py + fy * hx * sx + ly * hy * sy, pz, u, vv, 0, 0, 0, a});
+                };
+                put(-1, -1, 0, 0), put(1, -1, 1, 0), put(1, 1, 1, 1), put(-1, -1, 0, 0), put(1, 1, 1, 1), put(-1, 1, 0, 1);
+                glVertexPointer(3, GL_FLOAT, sizeof(Vertex), &v[0].x);
+                glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), &v[0].u);
+                glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &v[0].r);
+                glDrawArrays(GL_TRIANGLES, 0, 6);
+            };
+            if (day) { // the sun's shadow: the car's silhouette thrown away from the sun (the sun is ~40 degrees up, so a 1 m body falls ~1.3 m)
+                constexpr float kSunX = 0.62f, kSunY = 0.45f, kSunZ = 0.64f;
+                const float reach = 1.0f / kSunZ;
+                blob(cx - kSunX * reach * 0.95f, cy - kSunY * reach * 0.95f, centreGround + 0.05f, car.halfLen * 1.02f, car.halfWid * 1.08f, uint8_t(alpha * 0.58f));
+            }
+            // dark contact patches where the tyres meet the road: the weight of the car
+            if (car.wheelOf) {
+                for (int w = 0; w < 4; ++w) {
+                    const float hx = car.hub[w * 3], hy = car.hub[w * 3 + 1];
+                    const float wx = m[3] + hx * m[0] + hy * m[4], wy = m[7] + hx * m[1] + hy * m[5]; // rows 0 / 1 are the car's forward / left axes
+                    float z;
+                    if (!GroundHeight(wx, wy, m[11] + 0.6f, z) || std::fabs(z - centreGround) > 1.0f)
+                        z = centreGround;
+                    blob(wx, wy, z + 0.07f, 0.34f, 0.17f, uint8_t(alpha * 0.9f));
+                }
+            }
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glDepthMask(GL_TRUE);
@@ -989,6 +1036,9 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
         GLShader::EnableAttrib(2);
         GLShader::EnableAttrib(3);
         const GLint blurLoc = GLShader::Uniform(m_progCar, "uBlur");
+        const GLint baseLoc = GLShader::Uniform(m_progCar, "uBase"), fwdLoc = GLShader::Uniform(m_progCar, "uFwdC");
+        const GLint head0Loc = GLShader::Uniform(m_progCar, "uHead0"), head1Loc = GLShader::Uniform(m_progCar, "uHead1");
+        const GLint tail0Loc = GLShader::Uniform(m_progCar, "uTail0"), tail1Loc = GLShader::Uniform(m_progCar, "uTail1");
         const GLint lampLoc = GLShader::Uniform(m_progCar, "uLamp");
         const GLint glassLoc = GLShader::Uniform(m_progCar, "uGlass");
         GLShader::Set1f(glassLoc, 0.0f);
@@ -1005,6 +1055,12 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
             GLShader::Set1f(blurLoc, std::clamp((std::fabs(car.spinRate) - 25.0f) / 55.0f, 0.0f, 1.0f));
             if (lampLoc >= 0)
                 GLShader::Set3f(lampLoc, car.lampHead, car.lampBrake, car.lampReverse);
+            // grounding and the lamp internals (ISSUES #312)
+            GLShader::Set1f(baseLoc, car.groundZ < 1e8f ? car.groundZ : 0.0f);
+            GLShader::Set3f(fwdLoc, car.fwd[0], car.fwd[1], car.fwd[2]);
+            auto lampPos = [](GLint loc, const float *p, bool have) { GLShader::Set3f(loc, have ? p[0] : 1e6f, have ? p[1] : 1e6f, have ? p[2] : 1e6f); };
+            lampPos(head0Loc, car.headPos[0], car.haveHead[0]), lampPos(head1Loc, car.headPos[1], car.haveHead[1]);
+            lampPos(tail0Loc, car.tailPos[0], car.haveTail[0]), lampPos(tail1Loc, car.tailPos[1], car.haveTail[1]);
             for (size_t ti = 0; ti < car.render.size(); ++ti) {
                 const RTri &t = car.render[ti];
                 const uint8_t g = lit ? car.gloss[ti] : 0;
@@ -1396,11 +1452,54 @@ void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
         };
         for (int side = 0; side < 2; ++side) {
             if (car.haveHead[side] && car.lampHead > 0.02f)
-                pool(car.headPos[side], fx, fy, 26.0f, 0.5f, 4.2f, 1.0f, 0.93f, 0.72f, 0.34f * car.lampHead);
+                pool(car.headPos[side], fx, fy, 26.0f, 0.5f, 4.2f, 1.0f, 0.93f, 0.72f, 0.14f * car.lampHead);
             if (car.haveTail[side] && car.lampBrake > 0.02f)
                 pool(car.tailPos[side], -fx, -fy, 4.5f, 0.4f, 1.8f, 1.0f, 0.08f, 0.04f, 0.30f * car.lampBrake);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
+        // Volumetric beams (ISSUES #312): the dust in the night air catches the headlights - two soft nested cones, brightest at the lamp, fading with
+        // distance and towards their silhouette (so they have no visible edge), occluded by the buildings through the depth test.
+        if (car.lampHead > 0.02f) {
+            glDisable(GL_CULL_FACE);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            for (int side = 0; side < 2; ++side) {
+                if (!car.haveHead[side])
+                    continue;
+                const float *p = car.headPos[side];
+                const float dx = fx, dy = fy, dz = -0.045f;
+                const float nl = std::sqrt(dx * dx + dy * dy + dz * dz);
+                const float ax = dx / nl, ay = dy / nl, az = dz / nl;
+                // a frame perpendicular to the axis
+                float sx = -ay, sy = ax, sz = 0.0f; // sideways (horizontal)
+                float ux = ay * sz - az * sy, uy = az * sx - ax * sz, uz = ax * sy - ay * sx; // up = axis x side
+                constexpr int kSides = 14, kRings = 9;
+                constexpr float kLen = 24.0f, kRad = 3.3f;
+                for (int layer = 0; layer < 2; ++layer) {
+                    const float rs = layer == 0 ? 1.0f : 0.5f, la = (layer == 0 ? 0.115f : 0.17f) * car.lampHead;
+                    for (int j = 0; j < kRings - 1; ++j) {
+                        glBegin(GL_TRIANGLE_STRIP);
+                        for (int i = 0; i <= kSides; ++i) {
+                            const float a = float(i % kSides) * 6.2831853f / kSides, ca = std::cos(a), sa = std::sin(a);
+                            for (int e = 0; e < 2; ++e) {
+                                const float t = float(j + e) / float(kRings - 1);
+                                const float rad = (0.10f + (kRad - 0.10f) * std::pow(t, 0.9f)) * rs;
+                                const float px = p[0] + ax * kLen * t + (sx * ca + ux * sa) * rad, py = p[1] + ay * kLen * t + (sy * ca + uy * sa) * rad,
+                                            pz = p[2] + az * kLen * t + (sz * ca + uz * sa) * rad;
+                                // silhouette fade: the radial direction against the view direction
+                                float vx = cam.x - px, vy = cam.y - py, vz = cam.z - pz;
+                                const float vl = std::max(1e-4f, std::sqrt(vx * vx + vy * vy + vz * vz));
+                                const float rx = sx * ca + ux * sa, ry = sy * ca + uy * sa, rz = sz * ca + uz * sa;
+                                const float facing = std::fabs((rx * vx + ry * vy + rz * vz) / vl);
+                                const float fade = std::pow(1.0f - t, 1.5f) * std::pow(facing, 0.8f);
+                                glColor4f(1.0f, 0.95f, 0.80f, la * fade * (0.35f + 0.65f * std::min(1.0f, t * 6.0f)));
+                                glVertex3f(px, py, pz);
+                            }
+                        }
+                        glEnd();
+                    }
+                }
+            }
+        }
     }
     glPopAttrib();
 }

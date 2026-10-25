@@ -40,6 +40,8 @@ void main() {
 
 inline const char *kWorldFSBase = R"(#version 120
 uniform sampler2D uTex;
+uniform vec3 uSpotPos0, uSpotPos1, uSpotDir; // the player's headlights lighting the street (ISSUES #312)
+uniform float uSpotOn;
 uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
@@ -342,6 +344,26 @@ void main() {
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
     c.rgb = mix(vec3(l), c.rgb, 1.0 + 0.16 * uGrade);
     c.rgb += (1.0 - l) * 0.018 * uGrade * vec3(0.55, 0.7, 1.0);
+    if (uSpotOn > 0.01) {
+        // the headlights: two cones thrown down the road, bright where they meet a surface that faces the lamp, fading with the square of the distance
+        vec3 Ns = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        vec3 add = vec3(0.0);
+        for (int i = 0; i < 2; ++i) {
+            vec3 p = i == 0 ? uSpotPos0 : uSpotPos1;
+            vec3 d = vWorld - p;
+            float dist = length(d);
+            vec3 dir = d / max(dist, 0.01);
+            float cd = dot(dir, uSpotDir);
+            float cone = smoothstep(0.80, 0.965, cd);
+            float core = pow(max((cd - 0.90) / 0.10, 0.0), 2.0);
+            float atten = 1.0 / (1.0 + 0.0065 * dist * dist);
+            float ndl = 0.45 + 0.55 * clamp(dot(Ns, -dir), 0.0, 1.0); // a road is lit at a glancing angle, but headlights are strong
+            add += vec3(1.0, 0.92, 0.76) * (cone * 0.65 + core * 1.3) * atten * ndl;
+        }
+        // soft-clipped so a surface close to the lamp brightens but never burns out to white
+        float lk = 1.0 - exp(-dot(add, vec3(0.333)) * 2.0 * uSpotOn);
+        c.rgb = c.rgb * (1.0 + 0.85 * lk) + vec3(1.0, 0.92, 0.76) * 0.15 * lk;
+    }
     // distance fog towards the horizon colour (smooth, then a slow exponential tail)
     float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
     f = f * f * (3.0 - 2.0 * f);
@@ -585,9 +607,15 @@ uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uTime;
 uniform float uBlur;
-uniform vec3 uLamp; // x headlights, y brake pedal, z reverse (0..1)
+uniform vec3 uLamp;   // x headlights, y brake pedal, z reverse (0..1)
 uniform float uGlass; // 1 while the translucent lamp covers are drawn
 uniform float uDay;   // 1 in daylight: the lamps burn less hot against the bright scene
+uniform float uStage; // 1 in the menu showroom (ISSUES #304): studio strip lights instead of the city
+uniform vec3 uStageA, uStageB;
+// Per-car data for grounding and the lamp internals (ISSUES #312): the lowest point of the car, the lamp centres (left / right head, left /
+// right tail; far away when the car has none) and the car's forward axis.
+uniform float uBase;
+uniform vec3 uHead0, uHead1, uTail0, uTail1, uFwdC;
 varying float vAO;
 varying vec4 vColor;
 varying vec2 vUV;
@@ -596,35 +624,90 @@ varying vec3 vPos;
 varying float vGloss;
 varying float vDist;
 
-// A procedural environment: night sky with a sodium horizon glow, rows of distant city lights and a couple of soft
-// light boxes, so the clear coat has something to reflect (the original uses an environment-map texture).
-uniform float uStage;       // 1 in the menu showroom (ISSUES #304): studio strip lights instead of the night city
-uniform vec3 uStageA, uStageB;
+const vec3 kSun = vec3(0.6228, 0.4521, 0.6430); // the same sun as the sky shader, normalised
+float h13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float vn2(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = h13(vec3(i, 1.0)), b = h13(vec3(i + vec2(1, 0), 1.0)), c = h13(vec3(i + vec2(0, 1), 1.0)), d = h13(vec3(i + vec2(1, 1), 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float fbm2(vec2 p) {
+    float s = 0.0, a = 0.5;
+    for (int i = 0; i < 4; ++i) {
+        s += a * vn2(p);
+        p = p * 2.03 + vec2(17.1, 9.2);
+        a *= 0.5;
+    }
+    return s;
+}
+
+// Studio: strip lights for the menu showroom.
 vec3 studioEnv(vec3 R) {
     float h = R.z;
     vec3 col = mix(vec3(0.018, 0.020, 0.028), vec3(0.075, 0.09, 0.13), smoothstep(-0.2, 0.95, h));
-    col += vec3(1.0, 0.97, 0.92) * smoothstep(0.50, 0.88, h) * exp(-pow(R.y * 4.2, 2.0)) * 2.0;            // overhead strip softbox
+    col += vec3(1.0, 0.97, 0.92) * smoothstep(0.50, 0.88, h) * exp(-pow(R.y * 4.2, 2.0)) * 2.0;
     float a = atan(R.y, R.x);
     float band = smoothstep(-0.12, 0.22, h) * (1.0 - smoothstep(0.55, 0.92, h));
-    col += uStageA * exp(-pow((a - 1.25) * 4.2, 2.0)) * band * 2.4;                                           // tall panel, one side
-    col += uStageB * exp(-pow((a + 1.25) * 4.2, 2.0)) * band * 2.4;                                           // and the other
-    col += mix(uStageA, vec3(1.0), 0.35) * pow(max(0.0, dot(R, normalize(vec3(-1.0, 0.15, 0.35)))), 24.0) * 1.5; // back light
-    col += vec3(1.0, 0.95, 0.9) * pow(max(0.0, dot(R, normalize(vec3(0.7, -0.1, 0.25)))), 40.0) * 0.8;       // front fill
+    col += uStageA * exp(-pow((a - 1.25) * 4.2, 2.0)) * band * 2.4;
+    col += uStageB * exp(-pow((a + 1.25) * 4.2, 2.0)) * band * 2.4;
+    col += mix(uStageA, vec3(1.0), 0.35) * pow(max(0.0, dot(R, normalize(vec3(-1.0, 0.15, 0.35)))), 24.0) * 1.5;
+    col += vec3(1.0, 0.95, 0.9) * pow(max(0.0, dot(R, normalize(vec3(0.7, -0.1, 0.25)))), 40.0) * 0.8;
+    return col;
+}
+// Daylight: what a clear coat really reflects in the street - the blue sky with drifting clouds and a hot sun, a skyline of buildings along the
+// horizon, and the dark, warm road below.
+vec3 dayEnv(vec3 R) {
+    float h = R.z;
+    vec3 haze = vec3(0.80, 0.85, 0.92), mid = vec3(0.30, 0.56, 0.92), zen = vec3(0.09, 0.26, 0.66);
+    vec3 sky = mix(haze, mid, smoothstep(0.0, 0.28, h));
+    sky = mix(sky, zen, smoothstep(0.18, 0.95, h));
+    float cl = fbm2(R.xy / (h + 0.32) * 1.5 + vec2(uTime * 0.01, 0.0));
+    sky = mix(sky, vec3(1.0, 1.0, 1.0), smoothstep(0.50, 0.78, cl) * smoothstep(0.02, 0.30, h) * 0.9);
+    float sd = max(dot(R, kSun), 0.0);
+    sky += vec3(1.0, 0.93, 0.78) * (pow(sd, 48.0) * 0.55 + pow(sd, 700.0) * 14.0);
+    float a = atan(R.y, R.x);
+    float skyline = 0.07 + 0.11 * vn2(vec2(a * 4.0, 1.0)) + 0.07 * vn2(vec2(a * 13.0, 5.0)) + 0.04 * vn2(vec2(a * 41.0, 9.0));
+    float bld = smoothstep(skyline, skyline - 0.025, h) * step(0.0, h);
+    vec3 wall = mix(vec3(0.32, 0.31, 0.32), vec3(0.62, 0.58, 0.52), vn2(vec2(a * 9.0, h * 22.0)));
+    wall *= 0.55 + 0.45 * smoothstep(0.0, skyline, h); // window bands get brighter towards the roofs
+    vec3 road = mix(vec3(0.17, 0.165, 0.165), vec3(0.055, 0.055, 0.06), smoothstep(0.0, -0.7, h));
+    return h < 0.0 ? road : mix(sky, wall, bld * 0.9);
+}
+// Night: a sodium horizon glow, rows of distant city lights and a couple of soft light boxes.
+vec3 nightEnv(vec3 R) {
+    float h = R.z;
+    vec3 zenith = vec3(0.03, 0.05, 0.13), horizon = vec3(0.30, 0.27, 0.30), ground = vec3(0.045, 0.045, 0.055);
+    vec3 col = mix(ground, mix(horizon, zenith, clamp(h * 1.6, 0.0, 1.0)), smoothstep(-0.12, 0.08, h));
+    col += vec3(0.75, 0.45, 0.22) * exp(-abs(h - 0.02) * 12.0) * 0.55;
+    float a = atan(R.y, R.x);
+    float lights = pow(max(0.0, sin(a * 41.0 + 0.7)), 36.0) * pow(max(0.0, sin(a * 13.0)), 4.0);
+    col += vec3(1.0, 0.85, 0.55) * lights * exp(-abs(h - 0.07) * 34.0) * 1.3;
+    col += vec3(0.55, 0.72, 1.0) * pow(max(0.0, dot(R, normalize(vec3(0.35, 0.45, 0.82)))), 70.0) * 1.35;
+    col += vec3(1.0, 0.8, 0.6) * pow(max(0.0, dot(R, normalize(vec3(-0.6, -0.2, 0.77)))), 60.0) * 1.2;
     return col;
 }
 vec3 environment(vec3 R) {
     if (uStage > 0.5)
         return studioEnv(R);
-    float h = R.z;
-    vec3 zenith = vec3(0.03, 0.05, 0.13), horizon = vec3(0.30, 0.27, 0.30), ground = vec3(0.045, 0.045, 0.055);
-    vec3 col = mix(ground, mix(horizon, zenith, clamp(h * 1.6, 0.0, 1.0)), smoothstep(-0.12, 0.08, h));
-    col += vec3(0.75, 0.45, 0.22) * exp(-abs(h - 0.02) * 12.0) * 0.55;               // sodium glow on the horizon
-    float a = atan(R.y, R.x);
-    float lights = pow(max(0.0, sin(a * 41.0 + 0.7)), 36.0) * pow(max(0.0, sin(a * 13.0)), 4.0);
-    col += vec3(1.0, 0.85, 0.55) * lights * exp(-abs(h - 0.07) * 34.0) * 1.3;        // window / street lights
-    col += vec3(0.55, 0.72, 1.0) * pow(max(0.0, dot(R, normalize(vec3(0.35, 0.45, 0.82)))), 70.0) * 1.35; // key light box
-    col += vec3(1.0, 0.8, 0.6) * pow(max(0.0, dot(R, normalize(vec3(-0.6, -0.2, 0.77)))), 60.0) * 1.2;   // fill
-    return col;
+    return uDay > 0.5 ? dayEnv(R) : nightEnv(R);
+}
+
+// The nearer of the two lamps of a pair and the offset from its centre, split into forward-perpendicular components: x across the car, y up.
+void lampFrame(vec3 pos, vec3 a, vec3 b, out vec2 q, out float near) {
+    vec3 c = distance(pos, a) < distance(pos, b) ? a : b;
+    vec3 d = pos - c;
+    vec3 side = normalize(vec3(uFwdC.y, -uFwdC.x, 0.0) + vec3(1e-5));
+    q = vec2(dot(d, side), d.z);
+    near = length(d);
+}
+float fogOf(float dist) {
+    float f = clamp((dist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
+    return f * f * (3.0 - 2.0 * f);
 }
 
 void main() {
@@ -643,60 +726,77 @@ void main() {
         vec3 colG;
         float aG;
         if (vGloss < 8.5) {
-            colG = refl * (0.35 + 0.65 * fr) + tint * 0.10 + vec3(1.0, 0.96, 0.82) * uLamp.x * 0.35;
-            aG = clamp(0.16 + 0.55 * fr + 0.10 * uLamp.x, 0.0, 0.8);
+            colG = refl * (0.40 + 0.80 * fr) + tint * 0.08 + vec3(1.0, 0.96, 0.82) * uLamp.x * 0.30;
+            aG = clamp(0.14 + 0.60 * fr + 0.10 * uLamp.x, 0.0, 0.82);
         } else {
-            colG = tint * (0.30 + 1.1 * uLamp.y) + refl * fr * 0.8;
-            aG = clamp(0.50 + 0.30 * fr, 0.0, 0.9);
+            colG = tint * (0.30 + 1.1 * uLamp.y) + refl * fr * 0.9;
+            aG = clamp(0.48 + 0.30 * fr, 0.0, 0.9);
         }
-        float fg = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(colG, uFogColor, fg * fg * (3.0 - 2.0 * fg)), aG);
+        gl_FragColor = vec4(mix(colG, uFogColor, fogOf(vDist)), aG);
         return;
     }
     if (vGloss > 9.5 && vGloss < 10.5) {
-        // the centre brake light: the tail lens treatment
+        // the centre brake light: a red LED bar
         vec3 Nc = normalize(vNormal);
         vec3 Vc = normalize(uCam - vPos);
         float core = pow(max(dot(Nc, Vc), 0.0), 1.5);
-        vec3 hotc = mix(vec3(0.85, 0.05, 0.03), vec3(1.0, 0.11, 0.06), uLamp.y) * (1.0 + 0.45 * uLamp.y) * (0.65 + 0.55 * core);
+        vec2 led = fract(vPos.xy * 90.0 + vPos.z * 40.0) - 0.5;
+        float dots = smoothstep(0.42, 0.22, length(led));
+        vec3 hotc = mix(vec3(0.85, 0.05, 0.03), vec3(1.0, 0.11, 0.06), uLamp.y) * (1.0 + 0.55 * uLamp.y) * (0.55 + 0.45 * core) * (0.55 + 0.6 * dots);
         vec3 colc = mix(clamp(vColor.rgb, 0.0, 1.0) * 0.30, hotc, clamp(0.30 + 0.70 * uLamp.y, 0.0, 1.0));
-        float fc = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(colc, uFogColor, fc * fc * (3.0 - 2.0 * fc)), 1.0);
+        gl_FragColor = vec4(mix(colc, uFogColor, fogOf(vDist)), 1.0);
         return;
     }
     if (vGloss > 5.5) {
-        // ---- lamp lenses (ISSUES #284): 6 headlight, 7 tail / brake light. Emissive; the brake pedal drives the tail lamp
-        // from a dim red to a hot lens, headlights burn white-warm; a clear-coat glint keeps the glass look. -----------------
+        // ---- lamp lenses (ISSUES #284, #312): 6 headlight, 7 tail / brake light. Emissive with real internals: the headlight is a projector
+        // (a hot bulb core, a lens ring, reflector facets and a thin LED daytime-running strip), the tail light a grid of red LEDs inside a
+        // reflector ring that burns hotter with the brake pedal. -----------------------------------------------------------------------------
         vec3 Nl = normalize(vNormal);
         vec3 Vl = normalize(uCam - vPos);
         float NdVl = max(dot(Nl, Vl), 0.0);
         vec3 lens = clamp(vColor.rgb, 0.0, 1.0);
         vec3 col;
+        vec2 q;
+        float nearD;
         if (vGloss < 6.5) {
+            lampFrame(vPos, uHead0, uHead1, q, nearD);
+            float rr = length(q);
+            float core = exp(-pow(rr / 0.045, 2.0));
+            float ring = exp(-pow((rr - 0.105) / 0.016, 2.0));
+            float facet = 0.75 + 0.25 * cos(atan(q.y, q.x) * 14.0);
+            float bowl = smoothstep(0.17, 0.02, rr) * (0.45 + 0.55 * facet);
+            float drl = exp(-pow((q.y - 0.085) / 0.011, 2.0)) * smoothstep(0.17, 0.10, abs(q.x));
             float on = uLamp.x;
-            vec3 hot = vec3(1.0, 0.96, 0.80) * mix(1.9 + 0.5 * NdVl, 0.62 + 0.42 * NdVl, uDay);
-            col = mix(lens * (0.35 + 0.35 * NdVl), hot, on);
+            float bright = mix(2.1, 0.80, uDay);
+            vec3 beam = vec3(1.0, 0.96, 0.82) * (core * 1.6 + bowl * 0.55 + ring * 0.9) * bright;
+            vec3 strip = vec3(0.88, 0.95, 1.0) * drl * mix(1.2, 2.0, uDay);
+            col = lens * (0.28 + 0.30 * NdVl) + (beam * on + strip * clamp(0.35 + 0.65 * on, 0.0, 1.0)) * (0.55 + 0.45 * NdVl);
         } else {
-            float on = clamp(0.30 + 0.70 * uLamp.y, 0.0, 1.0); // tail lamps always burn, the brake pedal drives them hard
-            float core = pow(NdVl, 1.5);
-            vec3 hot = mix(vec3(0.85, 0.05, 0.03), vec3(1.0, 0.11, 0.06), uLamp.y) * (1.0 + 0.45 * uLamp.y) * (0.65 + 0.55 * core);
-            hot += vec3(0.0, 0.10, 0.04) * uLamp.y * pow(core, 3.0); // a hotter centre
+            lampFrame(vPos, uTail0, uTail1, q, nearD);
+            vec2 g = fract(q / 0.026) - 0.5;
+            float dots = smoothstep(0.40, 0.20, length(g));
+            float rimGlow = exp(-pow((length(q * vec2(0.55, 1.2)) - 0.10) / 0.03, 2.0));
+            float brake = uLamp.y;
+            float on = clamp(0.30 + 0.70 * brake, 0.0, 1.0);
+            vec3 red = mix(vec3(0.80, 0.04, 0.02), vec3(1.0, 0.10, 0.05), brake);
+            vec3 hot = red * (0.45 + 0.85 * dots + 0.5 * rimGlow) * (0.9 + 0.8 * brake) * (0.7 + 0.5 * pow(NdVl, 1.5));
+            hot += vec3(0.0, 0.10, 0.04) * brake * dots * pow(NdVl, 3.0);
+            // the reverse lamp: a white LED block
+            hot += vec3(1.0, 0.95, 0.85) * uLamp.z * exp(-pow((q.x - 0.10) / 0.06, 2.0)) * 1.4;
             col = mix(lens * 0.30, hot, on);
         }
-        col += vec3(pow(1.0 - NdVl, 4.0) * 0.12) + environment(reflect(-Vl, Nl)) * 0.10; // glassy rim light
-        float fl = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(col, uFogColor, fl * fl * (3.0 - 2.0 * fl)), 1.0);
+        col += vec3(pow(1.0 - NdVl, 4.0) * 0.12) + environment(reflect(-Vl, Nl)) * 0.12; // glassy rim light
+        gl_FragColor = vec4(mix(col, uFogColor, fogOf(vDist)), 1.0);
         return;
     }
     if (vGloss < 0.5) {
         // tyres, lights, badges: the CPU-lit vertex colour
-        float f0 = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(base.rgb, uFogColor, f0 * f0 * (3.0 - 2.0 * f0)), base.a);
+        gl_FragColor = vec4(mix(base.rgb, uFogColor, fogOf(vDist)), base.a);
         return;
     }
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCam - vPos);
-    vec3 L = normalize(vec3(0.40, 0.30, 0.866));
+    vec3 L = kSun;
     if (vGloss > 2.5) {
         // ---- wheels (ISSUES #264): 3 alloy rim, 4 rubber tyre, 5 brake disc ----------------------------------------------
         float NdV = max(dot(N, V), 0.0);
@@ -707,18 +807,15 @@ void main() {
         vec3 env = environment(R);
         vec3 col;
         if (vGloss < 3.5) {
-            // alloy: metal reflection tinted by the rim paint, bevel highlights, occlusion deep in the barrel
             vec3 paint = clamp(vColor.rgb, 0.0, 1.0);
             vec3 F0 = mix(vec3(0.62), paint * 0.8 + 0.2, 0.5);
             vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdV, 5.0);
             float diffuse = 0.22 + 0.40 * NdL;
             col = paint * diffuse * 0.9 + env * F * 2.1 + F0 * (pow(NdH, 90.0) * 1.6 + pow(NdH, 14.0) * 0.25) * (0.35 + 0.65 * NdL);
             col *= vAO;
-            // spoke blur: at speed the spokes fade into a translucent disc of the average rim tone
             vec3 disc = (paint * 0.35 + env * F0 * 0.35) * (0.55 + 0.45 * vAO);
             col = mix(col, disc, uBlur * 0.8);
         } else if (vGloss < 4.5) {
-            // rubber: near-black with the sidewall print kept, a broad grazing sheen and a faint tread glint
             vec3 print = tex.rgb * vColor.rgb;
             float luma = dot(print, vec3(0.299, 0.587, 0.114));
             vec3 rubber = vec3(0.022, 0.022, 0.025) + vec3(luma) * 0.42;
@@ -726,40 +823,68 @@ void main() {
             col = rubber * (0.55 + 0.55 * NdL) + env * (0.03 + sheen) + vec3(sheen * 0.4);
             col *= mix(1.0, vAO, 0.6);
         } else {
-            // brake disc: brushed grey steel, darker inside the wheel
             vec3 steel = vec3(0.34, 0.34, 0.36);
             float groove = 0.9 + 0.1 * sin(length(vPos.xz) * 520.0);
             vec3 F = vec3(0.5) + 0.5 * pow(1.0 - NdV, 5.0);
             col = steel * (0.25 + 0.4 * NdL) * groove + env * F * 0.55 + vec3(pow(NdH, 40.0) * 0.5);
             col *= 0.55 + 0.45 * vAO;
         }
-        float fw = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-        gl_FragColor = vec4(mix(col, uFogColor, fw * fw * (3.0 - 2.0 * fw)), (vGloss < 3.5) ? 1.0 : tex.a); // the tyre and the brake disc keep their alpha-tested (round) outline
+        // wheels sit in the arches: darker towards the ground contact and the inner barrel
+        float lowW = 1.0 - smoothstep(0.0, 0.40, vPos.z - uBase);
+        col *= 1.0 - 0.28 * lowW;
+        gl_FragColor = vec4(mix(col, uFogColor, fogOf(vDist)), (vGloss < 3.5) ? 1.0 : tex.a);
         return;
     }
-    float NdV = max(dot(N, V), 0.0);
-    float NdL = max(dot(N, L), 0.0);
+    // ---- paint (gloss 1) and glass (gloss 2): clear coat with orange peel and metallic flakes, an environment that is the real
+    // street, and contact with the ground (ISSUES #312) --------------------------------------------------------------------------------
     bool glass = vGloss > 1.5;
-    // base lighting: hemisphere + sun, with a wrap term so the shadow side stays rich
-    float hemi = 0.26 + 0.30 * (0.5 + 0.5 * N.z);
-    float wrap = clamp((dot(N, L) + 0.35) / 1.35, 0.0, 1.0);
-    vec3 lit = base.rgb * (hemi + 0.62 * wrap) * (1.0 - 0.30 * uStage);
-    // clear coat: Fresnel-weighted environment reflection and two specular lobes (tight sun + broad sheen)
-    vec3 R = reflect(-V, N);
-    float F0 = (glass ? 0.085 : 0.045) + 0.10 * uStage; // the showroom paint is glossier: more of the studio lights shows
+    float near = 1.0 - smoothstep(10.0, 42.0, vDist);
+    vec3 Np = N;
+    if (!glass && near > 0.0) { // orange peel: a faint, fine ripple in the surface normal that breaks up reflections
+        vec3 pn = vec3(vn2(vPos.xy * 70.0 + vPos.z * 41.0), vn2(vPos.yz * 70.0 + 11.0), vn2(vPos.zx * 70.0 + 23.0)) - 0.5;
+        Np = normalize(N + pn * 0.055 * near);
+    }
+    float NdV = max(dot(Np, V), 0.0);
+    float NdL = dot(Np, L);
+    float wrap = clamp((NdL + 0.30) / 1.30, 0.0, 1.0);
+    bool bright = uDay > 0.5 || uStage > 0.5; // daylight or the lit showroom
+    vec3 skyAmb = bright ? vec3(0.36, 0.50, 0.78) : vec3(0.05, 0.07, 0.13);
+    vec3 grdAmb = bright ? vec3(0.30, 0.285, 0.27) : vec3(0.05, 0.045, 0.045);
+    vec3 amb = mix(grdAmb, skyAmb, 0.5 + 0.5 * Np.z) * (bright ? 0.62 : 1.0);
+    vec3 sunCol = bright ? vec3(1.0, 0.92, 0.78) : vec3(0.14, 0.16, 0.24);
+    float ao = mix(1.0, vAO, 0.6);
+    vec3 lit = base.rgb * (amb * ao + sunCol * wrap * (uStage > 0.5 ? 0.6 : 1.0) * 0.95);
+    // sitting on the road: the lower panels fall into the shadow of the car itself and pick up the dark asphalt
+    float rel = vPos.z - uBase;
+    float low = 1.0 - smoothstep(0.04, 0.60, rel);
+    lit *= 1.0 - 0.52 * low;
+    lit += vec3(0.020, 0.019, 0.018) * low * (0.5 - 0.5 * Np.z);
+    // clear coat: Fresnel-weighted environment reflection + a hot, tight sun lobe + a broad sheen
+    vec3 R = reflect(-V, Np);
+    float F0 = glass ? 0.10 : 0.068;
     float fres = F0 + (1.0 - F0) * pow(1.0 - NdV, 5.0);
-    float reflectivity = glass ? 1.0 : 0.85;
+    float reflectivity = glass ? 1.0 : 0.95;
     vec3 env = environment(R);
     vec3 H = normalize(L + V);
-    float NdH = max(dot(N, H), 0.0);
-    float spec = pow(NdH, glass ? 260.0 : 140.0) * 1.1 + pow(NdH, 18.0) * 0.12;
-    // a metallic-flake glint that moves with the view (paint only)
-    float flake = glass ? 0.0 : pow(max(0.0, sin(dot(vPos, vec3(61.0, 47.0, 53.0)) + NdV * 7.0)), 40.0) * 0.06 * (0.3 + NdL);
-    vec3 col = lit * (1.0 - fres * reflectivity * 0.65) + env * (1.0 + 0.9 * uStage) * fres * reflectivity + vec3(spec) * (0.4 + 0.6 * NdL) + base.rgb * flake;
-    if (glass) col = col * 0.55 + env * 0.18; // tinted glass picks up some of the surroundings even head-on
-    float f = clamp((vDist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
-    col = mix(col, uFogColor, f * f * (3.0 - 2.0 * f));
-    gl_FragColor = vec4(col, base.a);
+    float NdH = max(dot(Np, H), 0.0);
+    float tight = pow(NdH, glass ? 420.0 : 260.0) * 2.4;
+    float broad = pow(NdH, 28.0) * 0.20;
+    vec3 spec = sunCol * (tight + broad) * smoothstep(-0.05, 0.25, NdL) * (bright ? 1.0 : 0.5);
+    // metallic flakes: tiny mirrors scattered in the paint that glint with the view
+    float flake = 0.0;
+    if (!glass && near > 0.0) {
+        vec3 cell = floor(vPos * 230.0);
+        float rr = h13(cell);
+        vec3 fn = normalize((vec3(h13(cell + 1.3), h13(cell + 5.7), h13(cell + 9.1)) * 2.0 - 1.0) * 0.8 + N * 1.4);
+        float sp = pow(max(dot(reflect(-V, fn), L), 0.0), 40.0) + 0.35 * pow(max(dot(reflect(-V, fn), normalize(R + vec3(0.0, 0.0, 0.5))), 0.0), 18.0);
+        flake = step(0.93, rr) * sp * 0.55 * near * (bright ? 1.0 : 0.35);
+    }
+    vec3 col = lit * (1.0 - fres * reflectivity * 0.62) + env * fres * reflectivity * (1.0 - 0.35 * low) + spec + (0.35 + base.rgb * 1.6) * flake;
+    if (glass) {
+        // tinted glass: dark interior seen through it, almost everything else is reflection
+        col = base.rgb * amb * 0.30 + env * (0.38 + 0.95 * fres) * vec3(0.92, 1.0, 0.98) + spec * 1.1;
+    }
+    gl_FragColor = vec4(mix(col, uFogColor, fogOf(vDist)), base.a);
 }
 )";
 
