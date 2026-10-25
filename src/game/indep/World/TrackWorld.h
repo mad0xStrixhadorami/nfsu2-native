@@ -50,6 +50,8 @@ public:
         float accent[3] = {0.10f, 0.45f, 1.00f};
         float accent2[3] = {1.00f, 0.50f, 0.12f};
     };
+    // Writes the procedural old Israeli apartment block (ISSUES #306) as a coloured .obj / .ply pair (vertex colours), for use outside the game.
+    static bool ExportShikun(const char *basePath, int floors, float width, float depth, unsigned seed);
     bool RenderStage(SDL_Renderer *renderer, int width, int height, const StageParams &p);
     // Progress reports (0..1) from Load, for the loading screen (ISSUES #301).
     void SetProgress(std::function<void(float)> cb) { m_progress = std::move(cb); }

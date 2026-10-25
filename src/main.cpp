@@ -277,6 +277,9 @@ int main(int argc, char **argv)
     printf("File system self-test: %s\n", failures ? "FAILED" : "passed");
     if (argc > 1 && strcmp(argv[1], "--test") == 0)
         return failures ? 1 : 0;
+    if (argc > 2 && strcmp(argv[1], "--export-shikun") == 0) // dev aid: --export-shikun <base> [floors W D seed]  (ISSUES #306)
+        return TrackWorld::ExportShikun(argv[2], argc > 3 ? atoi(argv[3]) : 5, argc > 4 ? float(atof(argv[4])) : 24.0f,
+                                        argc > 5 ? float(atof(argv[5])) : 11.0f, argc > 6 ? unsigned(atoi(argv[6])) : 3u) ? 0 : 1;
     if (argc > 3 && strcmp(argv[1], "--dump") == 0)
         return DumpFile(*fs, argv[2], argv[3]);
     if (argc > 2 && strcmp(argv[1], "--solids") == 0) { // dev aid: --solids <GEOMETRY.BIN> [name-prefix]

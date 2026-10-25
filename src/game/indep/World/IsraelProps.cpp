@@ -188,6 +188,7 @@ struct PropBuilder {
 namespace {
 constexpr uint32_t kShopTex = 0x5e500000u, kStreetTex = 0x5e500010u, kFlagTex = 0x5e500020u, kShutterTex = 0x5e500030u, kAwningTex = 0x5e500040u, kPosterTex = 0x5e500050u; // generated sign atlases (512 x 512)
 bool g_signs = false;
+bool g_heroSlats = false; // the exported asset draws every roller-shutter slat as geometry (ISSUES #306)
 const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3] = {120, 98, 74}, kGrey[3] = {170, 170, 175},
               kLightGrey[3] = {205, 205, 205}, kDarkGrey[3] = {50, 52, 56}, kWhite[3] = {235, 235, 230},
               kPanel[3] = {28, 44, 82}, kTank[3] = {225, 225, 220}, kBlue[3] = {20, 70, 160}, kRed[3] = {190, 30, 30},
@@ -432,6 +433,17 @@ void Shutter(PropBuilder &b, V3 c, V3 along, V3 out, float width, float height, 
     (void)b0;
     const V3 aBot = a + V3{0, 0, std::max(0.0f, bot - (tilt > 0 ? tilt : 0.0f))}, bBot = bb + V3{0, 0, std::max(0.0f, bot - (tilt < 0 ? -tilt : 0.0f))};
     (void)a0;
+    if (g_heroSlats) {
+        static const uint8_t slatCol[4][3] = {{222, 220, 208}, {198, 186, 160}, {176, 150, 112}, {206, 214, 214}};
+        const uint8_t *sc = slatCol[variant & 3];
+        const float lowRel = std::min(aBot.z, bBot.z) - a.z; // offsets above the opening's bottom
+        for (float z = top - 0.075f; z > lowRel - 0.01f; z -= 0.075f) { // the slats, the odd one missing
+            if (rng.f() < 0.012f)
+                continue;
+            b.Box(a + V3{0, 0, z}, bb - a, out * 0.016f, {0, 0, 0.066f}, sc);
+        }
+        return;
+    }
     b.TexQuad(aBot, bBot, bb + V3{0, 0, top}, a + V3{0, 0, top}, kShutterTex + (variant & 3), 0, 1, 0, cover);
     b.TexQuad(bBot, aBot, a + V3{0, 0, top}, bb + V3{0, 0, top}, kShutterTex + (variant & 3), 0, 1, 0, cover);
 }
@@ -798,6 +810,239 @@ void Ribbons(PropBuilder &b, const std::vector<P2> &poly, float zBase, float fh,
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// An old Israeli apartment block, a "shikun" (ISSUES #306): weathered plaster panels, aluminium sliding windows with sills and lintels,
+// plastic roller shutters in every state, wall-mounted air-conditioner condensers with drain pipes, balconies with laundry, a stair
+// tower with glass-block windows, pipes and meter boxes, damp streaks and peeling patches, and a flat roof crowded with solar water
+// heaters (white tank on a flat black panel), black water tanks, dishes and aerials.  Generated in the footprint's own frame: x along
+// the width [0, W], y along the depth [0, D], z absolute.  `detail` 0 = world (cheap), 1 = hero (the exported asset).
+// ---------------------------------------------------------------------------------------------------------------------------
+struct ShikunStyle {
+    uint8_t wall[3], trim[3], frame[3];
+    int detail = 0;
+};
+
+void Patch(PropBuilder &b, V3 c, V3 along, V3 out, float w, float h, const uint8_t col[3], Rng &rng) // an irregular stain / peeled patch on a wall
+{
+    V3 pts[7];
+    for (int i = 0; i < 7; ++i) {
+        const float a = 6.2831853f * float(i) / 7.0f;
+        const float rr = 0.65f + 0.45f * rng.f();
+        pts[i] = c + along * (std::cos(a) * w * 0.5f * rr) + V3{0, 0, std::sin(a) * h * 0.5f * rr} + out * 0.012f;
+    }
+    for (int i = 0; i < 7; ++i)
+        b.Tri(c + out * 0.012f, pts[i], pts[(i + 1) % 7], col);
+}
+
+// one residential window on a wall plane: `c` = bottom centre on the wall, along / out unit vectors
+void ShikunWindow(PropBuilder &b, V3 c, V3 along, V3 out, float w, float h, const ShikunStyle &st, Rng &rng, int floor)
+{
+    static const uint8_t glassDark[3] = {34, 52, 70}, glassLit[3] = {214, 186, 120}, glassSky[3] = {96, 126, 152}, curtain[3] = {226, 218, 196}, bar[3] = {70, 70, 72},
+                         sillCol[3] = {196, 192, 182};
+    const float k = rng.f();
+    const uint8_t *gl = k < 0.55f ? glassDark : (k < 0.72f ? glassLit : glassSky);
+    const V3 o = out * 0.02f;
+    b.Quad(c - along * (w * 0.5f) + o, c + along * (w * 0.5f) + o, c + along * (w * 0.5f) + V3{0, 0, h} + o, c - along * (w * 0.5f) + V3{0, 0, h} + o, gl);
+    if (rng.f() < 0.4f) // a curtain drawn over part of it
+        b.Quad(c - along * (w * 0.5f) + o * 1.5f, c - along * (w * 0.5f - w * (0.3f + 0.3f * rng.f())) + o * 1.5f,
+               c - along * (w * 0.5f - w * 0.45f) + V3{0, 0, h * 0.95f} + o * 1.5f, c - along * (w * 0.5f) + V3{0, 0, h * 0.95f} + o * 1.5f, curtain);
+    // aluminium frame: the four sides and the centre mullion of a two-leaf sliding window (the world version: a mullion and the two boxes)
+    const float t = 0.045f;
+    const uint8_t *fr = st.frame;
+    if (st.detail > 0) {
+        b.Box(c - along * (w * 0.5f) + o, along * w, out * 0.05f, {0, 0, t}, fr);
+        b.Box(c - along * (w * 0.5f) + V3{0, 0, h - t} + o, along * w, out * 0.05f, {0, 0, t}, fr);
+        b.Box(c - along * (w * 0.5f) + o, along * t, out * 0.05f, {0, 0, h}, fr);
+        b.Box(c + along * (w * 0.5f - t) + o, along * t, out * 0.05f, {0, 0, h}, fr);
+    }
+    b.Quad(c - along * (t * 0.5f) + out * 0.03f, c + along * (t * 0.5f) + out * 0.03f, c + along * (t * 0.5f) + V3{0, 0, h} + out * 0.03f, c - along * (t * 0.5f) + V3{0, 0, h} + out * 0.03f, fr);
+    // concrete sill (sloped front: a thin box) and a lintel
+    b.Box(c - along * (w * 0.5f + 0.08f) - V3{0, 0, 0.07f}, along * (w + 0.16f), out * 0.15f, {0, 0, 0.07f}, sillCol);
+    if (st.detail > 0)
+        b.Box(c - along * (w * 0.5f + 0.06f) + V3{0, 0, h}, along * (w + 0.12f), out * 0.07f, {0, 0, 0.09f}, sillCol);
+    // a rusty iron grille on some ground-floor windows, a hanging plant pot on some upper ones
+    if (floor == 0 && rng.f() < 0.55f) {
+        for (int i = 0; i <= 6; ++i)
+            b.Prism(c - along * (w * 0.5f) + along * (w * float(i) / 6.0f) + out * 0.1f, c - along * (w * 0.5f) + along * (w * float(i) / 6.0f) + out * 0.1f + V3{0, 0, h}, 0.012f, 0.012f, 4, bar);
+        b.Prism(c - along * (w * 0.5f) + out * 0.1f + V3{0, 0, h * 0.5f}, c + along * (w * 0.5f) + out * 0.1f + V3{0, 0, h * 0.5f}, 0.012f, 0.012f, 4, bar);
+    }
+}
+
+// one wall-mounted split-system condenser on brackets with its drain pipe and a damp streak
+void WallAC(PropBuilder &b, V3 c, V3 along, V3 out, int detail)
+{
+    static const uint8_t body[3] = {214, 214, 208}, grille[3] = {58, 60, 64}, bracket[3] = {86, 86, 90}, pipe[3] = {226, 226, 220}, stain[3] = {112, 108, 98};
+    const V3 f = out * 0.40f;
+    if (detail > 0)
+        b.Box(c - along * 0.05f + out * 0.04f - V3{0, 0, 0.30f}, along * 0.1f, out * 0.36f, {0, 0, 0.05f}, bracket); // brackets
+    b.Box(c - along * 0.46f + out * 0.12f - V3{0, 0, 0.24f}, along * 0.92f, out * 0.34f, {0, 0, 0.6f}, body);     // the cabinet
+    b.Disc(c - along * 0.05f + f + out * 0.0f + V3{0, 0, 0.06f}, out, 0.19f, 10, grille);                       // the fan grille
+    if (detail > 0)
+        b.Disc(c - along * 0.05f + f + out * 0.005f + V3{0, 0, 0.06f}, out, 0.12f, 8, bracket);
+    b.Prism(c + along * 0.38f + out * 0.05f - V3{0, 0, 0.24f}, c + along * 0.38f + out * 0.05f - V3{0, 0, 2.0f}, 0.024f, 0.024f, 5, pipe); // drain pipe
+    if (detail > 0)
+        b.Quad(c + along * 0.28f + out * 0.014f - V3{0, 0, 0.6f}, c + along * 0.48f + out * 0.014f - V3{0, 0, 0.6f}, c + along * 0.62f + out * 0.014f - V3{0, 0, 2.7f},
+           c + along * 0.14f + out * 0.014f - V3{0, 0, 2.7f}, stain);
+}
+
+void ShikunFacade(PropBuilder &b, P2 p, P2 q, float zb, int floors, float fh, bool front, bool tower, const ShikunStyle &st, Rng &rng)
+{
+    static const uint8_t slab[3] = {196, 192, 184}, dark[3] = {44, 46, 50}, pipeGrey[3] = {150, 152, 154}, gas[3] = {220, 184, 40}, meter[3] = {196, 196, 190},
+                         stainCol[3] = {112, 108, 100}, peel[3] = {170, 164, 150}, concrete[3] = {150, 148, 142}, door[3] = {70, 82, 74}, glassBlock[3] = {176, 196, 200},
+                         doorGlass[3] = {42, 68, 92};
+    const float len = std::hypot(q.x - p.x, q.y - p.y);
+    const V3 u{(q.x - p.x) / len, (q.y - p.y) / len, 0}, n{u.y, -u.x, 0};
+    auto at = [&](float t, float z) { return V3{p.x + u.x * t, p.y + u.y * t, z}; };
+    const float bayW = 3.3f;
+    const int bays = std::max(1, int(len / bayW + 0.5f));
+    const float bw = len / float(bays);
+    const int towerBay = tower ? (rng.f() < 0.5f ? 0 : bays - 1) : -1;
+    b.alpha = 255; // the wall itself: ordinary triangles, panel by panel with its own tone, so the world shader (or the exported colours) weather it
+    for (int f = 0; f < floors; ++f)
+        for (int k = 0; k < bays; ++k) {
+            const float tone = 0.88f + 0.22f * rng.f() - (f == 0 ? 0.07f : 0.0f) + ((k % 3 == 1) ? 0.04f : 0.0f);
+            uint8_t col[3];
+            for (int i = 0; i < 3; ++i)
+                col[i] = uint8_t(std::clamp(st.wall[i] * tone, 0.0f, 255.0f));
+            b.Quad(at(bw * k, zb + fh * f), at(bw * (k + 1), zb + fh * f), at(bw * (k + 1), zb + fh * (f + 1)), at(bw * k, zb + fh * (f + 1)), col);
+        }
+    b.alpha = 254;
+    // floor slabs and a heavy cornice / parapet band
+    for (int f = 0; f <= floors; ++f)
+        b.Box(at(-0.05f, zb + fh * f - 0.09f), u * (len + 0.1f), n * (f == floors ? 0.28f : 0.07f), {0, 0, f == floors ? 0.5f : 0.18f}, st.trim);
+    for (int k = 0; k < bays; ++k) {
+        const float t = bw * (float(k) + 0.5f);
+        const bool isTower = k == towerBay;
+        for (int f = 0; f < floors; ++f) {
+            const float z0 = zb + fh * f;
+            const V3 cw = at(t, z0);
+            if (isTower) { // stair tower: a strip of glass blocks at each half landing
+                if (f > 0 || !front) {
+                    b.Box(cw + V3{0, 0, fh * 0.55f} - u * 0.4f, u * 0.8f, n * 0.05f, {0, 0, 0.9f}, glassBlock);
+                    b.Box(cw + V3{0, 0, fh * 0.55f} - u * 0.43f, u * 0.86f, n * 0.07f, {0, 0, 0.05f}, st.trim);
+                    b.Box(cw + V3{0, 0, fh * 0.55f + 0.9f} - u * 0.43f, u * 0.86f, n * 0.07f, {0, 0, 0.05f}, st.trim);
+                }
+                continue;
+            }
+            if (f == 0 && front && k == (towerBay == 0 ? 1 : bays - 2) && bays > 3) { // the street door and its canopy, mailboxes beside it
+                b.Box(cw - u * 0.55f, u * 1.1f, n * 0.06f, {0, 0, 2.1f}, door);
+                b.Box(cw - u * 0.85f + V3{0, 0, 2.2f}, u * 1.7f, n * 1.0f, {0, 0, 0.1f}, slab);
+                for (int m = 0; m < 4; ++m)
+                    b.Box(cw + u * (0.75f + 0.18f * float(m)) + V3{0, 0, 1.1f}, u * 0.15f, n * 0.1f, {0, 0, 0.22f}, meter);
+                continue;
+            }
+            const float wv = 1.35f + 0.35f * rng.f(), hv = 1.2f + 0.15f * rng.f();
+            const bool balcony = front && f > 0 && rng.f() < 0.30f && st.detail >= 0;
+            if (balcony) {
+                // a sliding door onto a balcony (full height glass) with the slab, parapet and the laundry
+                b.Quad(cw - u * 0.55f + n * 0.02f, cw + u * 0.55f + n * 0.02f, cw + u * 0.55f + V3{0, 0, 2.1f} + n * 0.02f, cw - u * 0.55f + V3{0, 0, 2.1f} + n * 0.02f, doorGlass);
+                Balcony(b, cw + V3{0, 0, 0.0f}, u, n, std::min(bw * 0.92f, 3.0f), int(rng.f() * 2.99f), rng);
+                if (rng.f() < 0.7f)
+                    Shutter(b, cw, u, n, 1.2f, 2.1f, int(rng.f() * 3.99f), rng);
+            } else {
+                ShikunWindow(b, cw + V3{0, 0, 0.95f}, u, n, wv, hv, st, rng, f);
+                if (rng.f() < 0.82f) // the plastic roller shutter: closed, half open, rolled up or hanging crooked (existing generator)
+                    Shutter(b, cw + V3{0, 0, 0.95f}, u, n, wv + 0.2f, hv, int(rng.f() * 3.99f), rng);
+                if (rng.f() < 0.40f) // an air conditioner beside the window
+                    WallAC(b, cw + u * ((rng.f() < 0.5f ? -1.0f : 1.0f) * (wv * 0.5f + 0.62f)) + V3{0, 0, 0.55f + 0.5f * rng.f()}, u, n, st.detail);
+                if (rng.f() < 0.32f) // damp streak under the sill
+                    Patch(b, cw + u * (rng.f() - 0.5f) * 0.6f + V3{0, 0, 0.1f - 0.5f * rng.f()}, u, n, 0.35f + 0.3f * rng.f(), 1.0f + 0.8f * rng.f(), stainCol, rng);
+            }
+            if (rng.f() < 0.12f)
+                Patch(b, cw + u * (rng.f() - 0.5f) * (bw * 0.6f) + V3{0, 0, 0.5f + 1.8f * rng.f()}, u, n, 0.5f + 0.7f * rng.f(), 0.4f + 0.7f * rng.f(), rng.f() < 0.5f ? peel : concrete, rng);
+        }
+    }
+    // vertical services: a drain pipe at each end, a yellow gas riser with its meters, a bundle of cables
+    for (int e = 0; e < 2; ++e) {
+        const V3 base = at(e == 0 ? 0.25f : len - 0.25f, zb);
+        b.Prism(base + n * 0.07f, base + n * 0.07f + V3{0, 0, fh * float(floors)}, 0.045f, 0.045f, 6, pipeGrey);
+    }
+    if (front) {
+        const V3 gb = at(len * (0.28f + 0.4f * rng.f()), zb);
+        b.Prism(gb + n * 0.06f, gb + n * 0.06f + V3{0, 0, fh * float(floors) - 0.4f}, 0.03f, 0.03f, 5, gas);
+        for (int f = 0; f < floors; ++f)
+            b.Box(gb - u * 0.12f + n * 0.04f + V3{0, 0, fh * f + 1.2f}, u * 0.24f, n * 0.1f, {0, 0, 0.2f}, gas);
+    }
+    // a thin ground band of dirt and a few exposed-concrete scars where the plaster has fallen
+    static const uint8_t bandCol[3] = {92, 84, 72}, rust[3] = {132, 82, 54}, mould[3] = {74, 92, 70};
+    b.Quad(at(0, zb) + n * 0.01f, at(len, zb) + n * 0.01f, at(len, zb + 0.7f) + n * 0.01f, at(0, zb + 0.7f) + n * 0.01f, bandCol);
+    for (int i = 0; i < int(len / 3.0f) + 1; ++i) { // rising damp and mould at the foot, rust bleeding from the railings above
+        if (rng.f() < 0.6f)
+            Patch(b, at(len * rng.f(), zb + 0.7f + 0.5f * rng.f()), u, n, 0.7f + 0.6f * rng.f(), 0.6f + 0.5f * rng.f(), mould, rng);
+        if (rng.f() < 0.5f)
+            Patch(b, at(len * rng.f(), zb + fh * (1.0f + float(floors - 1) * rng.f()) - 0.3f), u, n, 0.14f + 0.12f * rng.f(), 1.4f + 1.2f * rng.f(), rust, rng);
+    }
+    const int scars = 1 + int(len / 6.0f);
+    for (int i = 0; i < scars; ++i)
+        if (rng.f() < 0.7f)
+            Patch(b, at(len * rng.f(), zb + fh * (0.4f + float(floors - 1) * rng.f())), u, n, 0.8f + 0.9f * rng.f(), 0.6f + 0.8f * rng.f(), concrete, rng);
+}
+
+// the whole building; returns the roof z.  `st.wall` is the plaster colour.
+float ShikunBuilding(PropBuilder &b, float W, float D, float zb, int floors, float fh, const ShikunStyle &st, Rng &rng)
+{
+    static const uint8_t roofCol[3] = {120, 118, 112}, parapetCol[3] = {196, 192, 182}, junk[3] = {120, 96, 70}, dishCol[3] = {214, 214, 210}, line[3] = {150, 150, 150}, tarp[3] = {50, 90, 130},
+                         stairBox[3] = {200, 196, 186}, doorCol[3] = {70, 74, 80};
+    const float x0 = 0.0f, y0 = 0.0f, x1 = W, y1 = D;
+    // four facades CCW from the lower right; the y = 0 side is the street front
+    const P2 c0{x1, y0}, c1{x1, y1}, c2{x0, y1}, c3{x0, y0};
+    ShikunFacade(b, c0, c1, zb, floors, fh, false, false, st, rng); // east side
+    ShikunFacade(b, c1, c2, zb, floors, fh, false, rng.f() < 0.3f, st, rng); // back
+    ShikunFacade(b, c2, c3, zb, floors, fh, false, false, st, rng); // west side
+    ShikunFacade(b, c3, c0, zb, floors, fh, true, true, st, rng);  // front, with the stair tower
+    const float roofZ = zb + fh * float(floors);
+    // flat roof with a heavy parapet
+    b.Quad({x0, y0, roofZ + 0.02f}, {x1, y0, roofZ + 0.02f}, {x1, y1, roofZ + 0.02f}, {x0, y1, roofZ + 0.02f}, roofCol);
+    b.Box({x0 - 0.05f, y0 - 0.05f, roofZ}, {W + 0.1f, 0, 0}, {0, 0.22f, 0}, {0, 0, 0.55f}, parapetCol);
+    b.Box({x0 - 0.05f, y1 - 0.17f, roofZ}, {W + 0.1f, 0, 0}, {0, 0.22f, 0}, {0, 0, 0.55f}, parapetCol);
+    b.Box({x0 - 0.05f, y0, roofZ}, {0.22f, 0, 0}, {0, D, 0}, {0, 0, 0.55f}, parapetCol);
+    b.Box({x1 - 0.17f, y0, roofZ}, {0.22f, 0, 0}, {0, D, 0}, {0, 0, 0.55f}, parapetCol);
+    // the stair head: a small box with a steel door
+    const float sx = x0 + 1.2f + (W - 4.5f) * (rng.f() < 0.5f ? 0.0f : 1.0f), sy = y0 + 1.2f;
+    b.Box({sx, sy, roofZ}, {2.6f, 0, 0}, {0, 2.4f, 0}, {0, 0, 2.5f}, stairBox);
+    b.Box({sx - 0.1f, sy - 0.1f, roofZ + 2.5f}, {2.8f, 0, 0}, {0, 2.6f, 0}, {0, 0, 0.12f}, parapetCol);
+    b.Box({sx + 0.6f, sy + 2.4f, roofZ}, {0.9f, 0, 0}, {0, 0.05f, 0}, {0, 0, 1.9f}, doorCol);
+    // solar heaters in rows facing south (+y is the back here: face -y), black tanks, dishes, aerials, a laundry line
+    const float yawS = 1.5708f;
+    const int rows = 1 + int(D / 9.0f), perRow = std::max(2, int((W - 3.0f) / 2.6f));
+    int placed = 0;
+    for (int r = 0; r < rows; ++r)
+        for (int i = 0; i < perRow; ++i) {
+            if (rng.f() < 0.25f)
+                continue;
+            const V3 pos{x0 + 1.6f + float(i) * (W - 3.2f) / float(std::max(perRow - 1, 1)), y0 + 4.6f + float(r) * 3.4f, roofZ + 0.02f};
+            if (pos.y > y1 - 1.8f || (std::fabs(pos.x - sx - 1.3f) < 2.4f && pos.y < sy + 3.2f))
+                continue;
+            SolarHeater(b, pos, yawS + (rng.f() - 0.5f) * 0.12f);
+            ++placed;
+        }
+    for (int i = 0; i < 2 + int(rng.f() * 2.0f); ++i) // extra water tanks and condensers
+        WaterTank(b, V3{x0 + 1.2f + (W - 2.4f) * rng.f(), y1 - 1.5f - 1.0f * rng.f(), roofZ + 0.02f});
+    for (int i = 0; i < 1 + int(rng.f() * 3.0f); ++i)
+        Condenser(b, V3{x0 + 1.5f + (W - 3.0f) * rng.f(), y0 + 2.0f + (D - 4.0f) * rng.f(), roofZ + 0.02f}, rng.f() * 6.28f, false, {0, 0, 1});
+    for (int i = 0; i < 3; ++i) { // satellite dishes on short masts
+        const V3 base{x0 + 1.0f + (W - 2.0f) * rng.f(), y0 + 0.8f + (D - 1.6f) * rng.f(), roofZ + 0.02f};
+        b.Prism(base, base + V3{0, 0, 1.3f}, 0.03f, 0.03f, 5, line);
+        b.Disc(base + V3{0, 0, 1.4f}, Norm(V3{0.3f, 0.2f, 0.6f}), 0.42f, 10, dishCol);
+    }
+    for (int i = 0; i < 2; ++i)
+        Antenna(b, V3{x0 + 1.5f + (W - 3.0f) * rng.f(), y0 + 1.5f + (D - 3.0f) * rng.f(), roofZ + 0.02f}, rng.f() * 3.14f);
+    {
+        const float ly = y0 + D * 0.55f;
+        b.Prism({x0 + 1.0f, ly, roofZ + 1.9f}, {x1 - 1.0f, ly, roofZ + 1.9f}, 0.01f, 0.01f, 3, line);
+        static const uint8_t cloth[5][3] = {{235, 235, 235}, {200, 70, 60}, {70, 120, 190}, {240, 200, 80}, {100, 170, 110}};
+        for (int i = 0; i < 7; ++i) {
+            const float t = x0 + 1.4f + (W - 2.8f) * float(i) / 7.0f;
+            b.Quad({t, ly, roofZ + 1.9f}, {t + 0.35f, ly, roofZ + 1.9f}, {t + 0.33f, ly, roofZ + 1.3f}, {t + 0.02f, ly, roofZ + 1.35f}, cloth[int(rng.f() * 4.99f)]);
+        }
+    }
+    if (rng.f() < 0.5f) // a heap of junk under a tarp
+        b.UBox(x1 - 2.2f, y0 + 2.6f, roofZ + 0.02f, 1.6f, 1.2f, 0.6f, 0.3f, tarp), b.UBox(x1 - 3.4f, y0 + 2.2f, roofZ + 0.02f, 0.9f, 0.7f, 0.5f, 0.1f, junk);
+    (void)placed;
+    return roofZ;
+}
+
 } // namespace
 
 bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::Triangle> &tris, const float *pos, const float *m)
@@ -826,13 +1071,15 @@ bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::T
     const float ux = m[0] / sx, uy = m[1] / sx, vx = m[3] / sy, vy = m[4] / sy; // unit axes in the world
     const float ox = pos[0] + lo[0] * m[0] + lo[1] * m[3], oy = pos[1] + lo[0] * m[1] + lo[1] * m[4]; // world position of the local corner
     const float cx = ox + ux * W * 0.5f + vx * D * 0.5f, cy = oy + uy * W * 0.5f + vy * D * 0.5f;
-    if (DistrictAt(cx, cy).tlv < 0.26f)
+    const District dist = DistrictAt(cx, cy);
+    const bool shikun = dist.tlv < 0.26f; // outside Tel Aviv the block becomes an old apartment building (ISSUES #306)
+    if (shikun && (getenv("NFSU2_NO_SHIKUN") || H > 27.0f || W > 46.0f || D > 46.0f || H < 7.0f))
         return ++cDist, false;
     // companions (window / neon overlays of the same building) share the footprint: build once, hide the rest
     const int64_t key = Key(int(cx * 0.5f), int(cy * 0.5f)) ^ (int64_t(int(W)) << 50) ^ (int64_t(int(D)) << 40);
     if (!m_bauhausDone.insert(key).second)
         return true;
-    if (m_bauhaus.size() > 1200000)
+    if (m_bauhaus.size() > 2200000)
         return false;
     if (getenv("NFSU2_PROP_DEBUG") && m_bauhausDone.size() % 10 == 1)
         printf("[BauhausAt] %s %.1f %.1f z %.1f W %.1f D %.1f H %.1f yaw %.0f\n", name, cx, cy, pos[2] + lo[2] * m[8], W, D, H, std::atan2(uy, ux) * 57.3f);
@@ -841,6 +1088,29 @@ bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::T
     std::vector<RTri> local;
     PropBuilder b{&local, 4000000, nullptr};
     Rng rng(HashXY(int(cx * 10), int(cy * 10), 77));
+    if (shikun) {
+        static const uint8_t plaster[4][3] = {{214, 202, 176}, {196, 184, 160}, {222, 208, 190}, {188, 186, 178}},
+                             stone[3] = {212, 194, 156}, concreteWall[3] = {186, 182, 172}, frames[4][3] = {{232, 232, 228}, {96, 70, 52}, {58, 60, 64}, {210, 206, 196}};
+        ShikunStyle st;
+        const uint8_t *wc = dist.jer > 0.45f ? stone : (dist.bsh > 0.45f ? concreteWall : plaster[int(rng.f() * 3.99f)]);
+        for (int i = 0; i < 3; ++i)
+            st.wall[i] = wc[i], st.trim[i] = uint8_t(std::min(255, wc[i] + 14));
+        const uint8_t *fc = frames[int(rng.f() * 3.99f)];
+        for (int i = 0; i < 3; ++i)
+            st.frame[i] = fc[i];
+        st.detail = 0;
+        const int fl = std::clamp(int(H / 3.0f + 0.5f), 3, 8);
+        ShikunBuilding(b, W, D, pos[2] + lo[2] * m[8], fl, H / float(fl), st, rng);
+        if (getenv("NFSU2_PROP_DEBUG") && m_bauhausDone.size() % 15 == 0)
+            printf("[ShikunAt] %.1f %.1f z %.1f W %.1f D %.1f floors %d yaw %.0f\n", cx, cy, pos[2] + lo[2] * m[8], W, D, fl, std::atan2(uy, ux) * 57.3f);
+        for (RTri &t : local)
+            for (RVertex &v : t.v) {
+                const float lx = v.x, ly = v.y;
+                v.x = ox + ux * lx + vx * ly, v.y = oy + uy * lx + vy * ly;
+            }
+        m_bauhaus.insert(m_bauhaus.end(), local.begin(), local.end());
+        return true;
+    }
     const float x0 = 0.3f, y0 = 0.3f, x1 = W - 0.3f, y1 = D - 0.3f, zb = pos[2] + lo[2] * m[8], zt = zb + H;
     W = x1 - x0, D = y1 - y0, H = zt - zb;
     const int floors = std::max(2, int(H / 3.3f + 0.5f));
@@ -979,6 +1249,53 @@ bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::T
             v.x = ox + ux * lx + vx * ly, v.y = oy + uy * lx + vy * ly;
         }
     m_bauhaus.insert(m_bauhaus.end(), local.begin(), local.end());
+    return true;
+}
+
+bool TrackWorld::ExportShikun(const char *basePath, int floors, float W, float D, unsigned seed)
+{
+    std::vector<RTri> tris;
+    PropBuilder b{&tris, 4000000, nullptr};
+    Rng rng(seed * 7919u + 13u);
+    static const uint8_t plaster[4][3] = {{214, 202, 176}, {196, 184, 160}, {222, 208, 190}, {188, 186, 178}}, frames[4][3] = {{232, 232, 228}, {96, 70, 52}, {58, 60, 64}, {210, 206, 196}};
+    ShikunStyle st;
+    const uint8_t *wc = plaster[seed & 3], *fc = frames[(seed >> 2) & 3];
+    for (int i = 0; i < 3; ++i)
+        st.wall[i] = wc[i], st.trim[i] = uint8_t(std::min(255, wc[i] + 14)), st.frame[i] = fc[i];
+    st.detail = 1;
+    g_heroSlats = true;
+    // a ground plane / pavement slab so the asset stands on something
+    ShikunBuilding(b, W, D, 0.0f, std::clamp(floors, 2, 9), 3.0f, st, rng);
+    static const uint8_t pave[3] = {128, 124, 118};
+    b.Quad({-3.0f, -6.0f, -0.02f}, {W + 3.0f, -6.0f, -0.02f}, {W + 3.0f, D + 3.0f, -0.02f}, {-3.0f, D + 3.0f, -0.02f}, pave);
+    g_heroSlats = false;
+    for (RTri &t : tris)
+        for (RVertex &v : t.v) { // the baked flat lighting darkens everything: lift it for a standalone asset
+            v.r = uint8_t(std::min(255.0f, v.r * 1.22f)), v.g = uint8_t(std::min(255.0f, v.g * 1.22f)), v.b = uint8_t(std::min(255.0f, v.b * 1.22f));
+            if (t.tex)
+                v.r = 206, v.g = 208, v.b = 202;
+        }
+    const std::string obj = std::string(basePath) + ".obj", ply = std::string(basePath) + ".ply";
+    FILE *fo = fopen(obj.c_str(), "w"), *fp = fopen(ply.c_str(), "w");
+    if (!fo || !fp) {
+        if (fo) fclose(fo);
+        if (fp) fclose(fp);
+        return false;
+    }
+    fprintf(fo, "# Old Israeli apartment block (shikun), %d floors, %.1f x %.1f m; vertex colours after the position (x y z r g b)\n", floors, W, D);
+    fprintf(fp, "ply\nformat ascii 1.0\nelement vertex %zu\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n"
+                "element face %zu\nproperty list uchar int vertex_indices\nend_header\n", tris.size() * 3, tris.size());
+    for (const RTri &t : tris)
+        for (const RVertex &v : t.v) { // metres, z up -> OBJ y up
+            fprintf(fo, "v %.3f %.3f %.3f %.3f %.3f %.3f\n", v.x, v.z, -v.y, v.r / 255.0f, v.g / 255.0f, v.b / 255.0f);
+            fprintf(fp, "%.3f %.3f %.3f %d %d %d\n", v.x, v.y, v.z, v.r, v.g, v.b);
+        }
+    for (size_t i = 0; i < tris.size(); ++i) {
+        fprintf(fo, "f %zu %zu %zu\n", i * 3 + 1, i * 3 + 2, i * 3 + 3);
+        fprintf(fp, "3 %zu %zu %zu\n", i * 3, i * 3 + 1, i * 3 + 2);
+    }
+    fclose(fo), fclose(fp);
+    printf("[Shikun] %zu triangles -> %s / %s\n", tris.size(), obj.c_str(), ply.c_str());
     return true;
 }
 
