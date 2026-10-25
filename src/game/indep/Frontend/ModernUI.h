@@ -51,6 +51,9 @@ public:
     // purse and two buttons (selected 0 = Accept, 1 = Decline).
     void DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                     float seconds);
+    // A message toast (ISSUES #308): a glass card sliding in from the top with a kicker, a title and a wrapped body; `age` is seconds since it
+    // appeared, `life` how long it stays.
+    void DrawToast(int w, int h, std::string_view kicker, std::string_view title, std::string_view body, float age, float life);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
     // The loading screen (ISSUES #301): assets/ui/loading.jpg full-window with a slow drift, a stage label, a smooth progress bar with

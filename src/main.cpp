@@ -828,6 +828,9 @@ int main(int argc, char **argv)
     bool shopFromWorld = false;       // the open shop screen was entered from a free-roam hot spot (#269)
     const Career::Trigger *engageArmed = nullptr; // an event locator stays disarmed until the car leaves its zone (ISSUES #303)
     FEStartupSequence::EngageInfo engage;
+    const Career::Trigger *tipArmed = nullptr; // a tip spot delivers its message once per visit (ISSUES #308)
+    std::string tipTitle, tipBody;
+    Uint32 tipStart = 0;
     int engageSel = 0;
     const Career::Hotspot *hotArmed = nullptr; // a hot spot stays disarmed until the car leaves its circle
 
@@ -1940,6 +1943,20 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            // Tutorial-tip spots (#308): driving over one files its Game Tips message in the inbox and shows it as a toast.
+            if (!pausePkg && !cribPkg && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
+                const Career::Trigger *inside = nullptr;
+                for (const Career::Trigger &t : Career::TriggerTable::Get().All())
+                    if (t.kind == Career::Trigger::kTip && t.Contains(car.X(), car.Y()))
+                        inside = &t;
+                if (!inside)
+                    tipArmed = nullptr;
+                else if (inside != tipArmed) {
+                    tipArmed = inside;
+                    if (startup.DeliverTip(inside->hash, tipTitle, tipBody))
+                        tipStart = now;
+                }
+            }
             // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
             const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
             if (useModernPause) {
@@ -2757,6 +2774,13 @@ int main(int argc, char **argv)
                 if (!getenv("NFSU2_NO_WIND"))
                     modernUi.DrawWind(w, h, windSm, nitroSm, float(now) * 0.001f);
                 modernUi.DrawHud(w, h, mh, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
+            if (tipStart && modernUi.Ready() && !pausePkg && !cribPkg && now - tipStart < 12000) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int tw, th;
+                SDL_GetRendererOutputSize(ren, &tw, &th);
+                modernUi.DrawToast(tw, th, "NEW TIP  -  SAVED TO YOUR INBOX", tipTitle, tipBody, float(now - tipStart) * 0.001f, 12.0f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
             if (modernPause == 4 && modernUi.Ready()) {

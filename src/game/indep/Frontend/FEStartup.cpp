@@ -5046,6 +5046,24 @@ void FEStartupSequence::HandleCareerWorldMapLoaded(FEPackage *pkg)
     RefreshCareerWorldMap(pkg);
 }
 
+bool FEStartupSequence::DeliverTip(uint32_t nameHash, std::string &subject, std::string &body)
+{
+    if (!m_profile.valid)
+        return false;
+    const Career::SmsDef *def = Career::SmsTable::Get().Find(nameHash);
+    if (!def || !Career::SmsDeliver(m_profile, *def))
+        return false; // unknown, or already in the mailbox
+    for (const Career::Profile::InboxEntry &e : m_profile.inbox)
+        if (e.def == def->hash) {
+            const Career::SmsText t = Career::SmsTextFor(e);
+            subject = m_fe->LanguageText(t.subjectKey);
+            body = m_fe->LanguageText(t.bodyKey);
+        }
+    Career::SaveCareer(m_profile);
+    printf("[Tip] %s delivered: %s\n", def->name.c_str(), subject.c_str());
+    return true;
+}
+
 bool FEStartupSequence::FreeRoamEventAt(uint32_t locator, EngageInfo &out) const
 {
     if (!m_profile.valid)

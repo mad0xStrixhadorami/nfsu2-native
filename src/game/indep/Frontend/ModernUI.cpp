@@ -564,6 +564,55 @@ void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_vie
     }
 }
 
+void ModernUI::DrawToast(int w, int h, std::string_view kicker, std::string_view title, std::string_view body, float age, float life)
+{
+    if (!m_font || age < 0.0f || age > life)
+        return;
+    const float s = float(h) / 720.0f, W = float(w);
+    const float slide = std::clamp(age / 0.35f, 0.0f, 1.0f), out = std::clamp((life - age) / 0.35f, 0.0f, 1.0f);
+    const float k = std::min(slide, out), ease = 1.0f - (1.0f - k) * (1.0f - k);
+    const float pw = 560 * s, px = W * 0.5f - pw * 0.5f;
+    // wrap the body to the card width
+    std::vector<std::string> lines;
+    {
+        std::string cur;
+        size_t i = 0;
+        const float maxw = pw - 60 * s;
+        while (i < body.size()) {
+            size_t j = body.find(' ', i);
+            if (j == std::string_view::npos)
+                j = body.size();
+            const std::string word(body.substr(i, j - i));
+            const std::string tryLine = cur.empty() ? word : cur + " " + word;
+            if (TextWidth(tryLine, 19 * s) > maxw && !cur.empty()) {
+                lines.push_back(cur);
+                cur = word;
+            } else {
+                cur = tryLine;
+            }
+            i = j + 1;
+        }
+        if (!cur.empty())
+            lines.push_back(cur);
+    }
+    if (lines.size() > 5)
+        lines.resize(5);
+    const float ph = (82.0f + 25.0f * float(lines.size()) + 18.0f) * s;
+    const float py = -ph + (ph + 22.0f * s) * ease;
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    const Uint8 a = Uint8(235.0f * ease);
+    Glass(px, py, pw, ph, 22 * s, {8, 14, 28, a}, {120, 190, 255, Uint8(170.0f * ease)});
+    Quad({px, py}, {px + pw - 22 * s, py}, {px + pw - 22 * s, py + 3 * s}, {px, py + 3 * s}, kAccent, kWarm, kWarm, kAccent);
+    Text(px + 28 * s, py + 14 * s, 15 * s, kicker, Alpha(kWarm, ease), 0);
+    Text(px + 28 * s, py + 32 * s, 30 * s, title, Alpha(kWhite, ease), 0);
+    for (size_t i = 0; i < lines.size(); ++i)
+        Text(px + 28 * s, py + (76.0f + 25.0f * float(i)) * s, 19 * s, lines[i], {190, 212, 238, Uint8(235.0f * ease)}, 0);
+    // a thin timer line at the bottom
+    const float f = std::clamp(1.0f - age / life, 0.0f, 1.0f);
+    Quad({px + 28 * s, py + ph - 8 * s}, {px + 28 * s + (pw - 56 * s) * f, py + ph - 8 * s}, {px + 28 * s + (pw - 56 * s) * f, py + ph - 6 * s}, {px + 28 * s, py + ph - 6 * s},
+         Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease), Alpha(kAccent, 0.8f * ease));
+}
+
 void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
 {
     if (!m_font || count <= 0)

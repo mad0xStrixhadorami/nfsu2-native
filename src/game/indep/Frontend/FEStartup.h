@@ -125,6 +125,9 @@ public:
     bool FreeRoamEventAt(uint32_t locator, EngageInfo &out) const;
     bool FreeRoamEventOpen(uint32_t locator) const { EngageInfo i; return FreeRoamEventAt(locator, i); }
     void AcceptFreeRoamEvent(const Career::Event &ev) { StartCareerEvent(ev); }
+    // A tutorial-tip spot was entered (ISSUES #308): the Game Tips message of that name (hash = bStringHash of ENGAGE_TIPS_*) goes into the
+    // SMS inbox once; returns true with its subject and body text when it is new.
+    bool DeliverTip(uint32_t nameHash, std::string &subject, std::string &body);
     bool PeekCareerMenuSwitchIs(const char *name) const { return m_careerMenuSwitch && !strcmp(m_careerMenuSwitch, name); }
     const char *TakeCareerMenuSwitch()
     {
