@@ -49,7 +49,7 @@ switchable off with environment variables (see the table at the bottom) if you w
 
 <table>
 <tr>
-<td width="50%"><img src="docs/media/loading.gif" alt="Loading screen"/><br/><sub><b>Loading screen</b> — full-window artwork with a slow push-in, a glass progress bar that only moves forward across every load phase (menus, race interface, streaming and building the city), stage names and rotating hints.</sub></td>
+<td width="50%"><img src="docs/media/loading.gif" alt="Loading screen"/><br/><sub><b>Loading screen</b> — an animated full-window backdrop (the artwork with drifting smoke, played back and forth with a cross-fade), a glass progress bar that only moves forward across every load phase (menus, race interface, streaming and building the city), stage names and rotating hints.</sub></td>
 <td width="50%"><img src="docs/media/menu_stage.gif" alt="Main menu showroom"/><br/><sub><b>Main-menu showroom</b> — the real 3D car on a dark studio floor with a mirrored reflection, softbox light panels and a gentle camera sway, behind the original menu.</sub></td>
 </tr>
 <tr>

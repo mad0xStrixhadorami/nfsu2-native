@@ -46,6 +46,9 @@ ModernUI::~ModernUI()
         SDL_DestroyTexture(m_map);
     if (m_loadArt)
         SDL_DestroyTexture(m_loadArt);
+    for (auto &f : m_frames)
+        if (f.second)
+            SDL_DestroyTexture(f.second);
     if (m_font)
         SDL_DestroyTexture(m_font);
     if (m_glow)
@@ -112,6 +115,30 @@ bool ModernUI::Init(SDL_Renderer *r)
             stbi_image_free(img);
         } else {
             printf("[ModernUI] loading art not found (%s)\n", art.c_str());
+        }
+    }
+    {   // the animated backdrop: count the consecutive frames
+        std::string dir = FontPath();
+        dir = dir.substr(0, dir.rfind('/') + 1) + "loading/";
+        m_frameDir = dir;
+        char name[600];
+        for (int i = 1; i < 2000; ++i) {
+            snprintf(name, sizeof(name), "%sf%03d.jpg", dir.c_str(), i);
+            FILE *f = fopen(name, "rb");
+            if (!f)
+                break;
+            fclose(f);
+            ++m_frameCount;
+        }
+        if (m_frameCount >= 2 && !getenv("NFSU2_STILL_LOADING")) {
+            if (SDL_Texture *first = LoadingFrame(0)) {
+                Uint32 fmt;
+                int acc;
+                SDL_QueryTexture(first, &fmt, &acc, &m_loadW, &m_loadH);
+            }
+            printf("[ModernUI] animated loading backdrop: %d frames\n", m_frameCount);
+        } else {
+            m_frameCount = 0;
         }
     }
     printf("[ModernUI] ready (%s)\n", FontPath().c_str());
@@ -651,9 +678,38 @@ void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
     }
 }
 
+SDL_Texture *ModernUI::LoadingFrame(int index)
+{
+    auto it = m_frames.find(index);
+    if (it != m_frames.end())
+        return it->second;
+    if (m_frames.size() >= 6) { // keep only a few: drop the one furthest from the request
+        auto far = m_frames.begin();
+        for (auto k = m_frames.begin(); k != m_frames.end(); ++k)
+            if (std::abs(k->first - index) > std::abs(far->first - index))
+                far = k;
+        if (far->second)
+            SDL_DestroyTexture(far->second);
+        m_frames.erase(far);
+    }
+    char name[600];
+    snprintf(name, sizeof(name), "%sf%03d.jpg", m_frameDir.c_str(), index + 1);
+    SDL_Texture *tex = nullptr;
+    int iw = 0, ih = 0, comp = 0;
+    if (unsigned char *img = stbi_load(name, &iw, &ih, &comp, 4)) {
+        tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, iw, ih);
+        SDL_UpdateTexture(tex, nullptr, img, iw * 4);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        stbi_image_free(img);
+    }
+    m_frames[index] = tex;
+    return tex;
+}
+
 bool ModernUI::DrawLoading(int w, int h, const char *stage, float fraction, float t)
 {
-    if (!m_font || !m_loadArt)
+    if (!m_font || (!m_loadArt && m_frameCount < 2))
         return false;
     const float W = float(w), H = float(h);
     fraction = std::clamp(fraction, 0.0f, 1.0f);
@@ -665,7 +721,27 @@ bool ModernUI::DrawLoading(int w, int h, const char *stage, float fraction, floa
     const float dw = m_loadW * cover, dh = m_loadH * cover;
     const float ox = (W - dw) * (0.5f + 0.35f * std::sin(t * 0.17f)), oy = (H - dh) * 0.5f;
     const SDL_FRect dst{ox, oy, dw, dh};
-    SDL_RenderCopyF(m_r, m_loadArt, nullptr, &dst);
+    if (m_frameCount >= 2) {
+        // ping-pong playback of the frames (16 fps) with a cross-fade between neighbours, so the loop never jumps
+        const float pos = t * 16.0f, period = float(2 * (m_frameCount - 1));
+        float p = std::fmod(pos, period);
+        if (p > float(m_frameCount - 1))
+            p = period - p;
+        const int i0 = std::clamp(int(p), 0, m_frameCount - 1), i1 = std::min(i0 + 1, m_frameCount - 1);
+        const float k = p - float(i0);
+        SDL_Texture *a = LoadingFrame(i0), *b = LoadingFrame(i1);
+        if (a) {
+            SDL_SetTextureBlendMode(a, SDL_BLENDMODE_NONE);
+            SDL_RenderCopyF(m_r, a, nullptr, &dst);
+        }
+        if (b && i1 != i0 && k > 0.02f) {
+            SDL_SetTextureBlendMode(b, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(b, Uint8(std::clamp(k, 0.0f, 1.0f) * 255.0f));
+            SDL_RenderCopyF(m_r, b, nullptr, &dst);
+        }
+    } else {
+        SDL_RenderCopyF(m_r, m_loadArt, nullptr, &dst);
+    }
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
     // grading: darker top and a deep floor for the text, soft side vignette
     Rect(0, 0, W, H * 0.20f, {0, 4, 14, 150}, {0, 4, 14, 0});

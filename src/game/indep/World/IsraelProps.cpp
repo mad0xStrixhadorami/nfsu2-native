@@ -1419,8 +1419,11 @@ void TrackWorld::AddIsraeliProps()
         gTicks += SDL_GetTicks() - a0, ++gCalls;
         return r;
     };
+    size_t cellNo = 0;
     for (auto &entry : m_cells) {
+        const float cellF = 0.7f + 0.29f * float(cellNo++) / float(std::max<size_t>(m_cells.size(), 1));
         for (RTri &t : entry.second.render) {
+            Tick(cellF);
             if (props.size() >= propCap)
                 break;
             const V3 p0{t.v[0].x, t.v[0].y, t.v[0].z}, p1{t.v[1].x, t.v[1].y, t.v[1].z}, p2{t.v[2].x, t.v[2].y, t.v[2].z};

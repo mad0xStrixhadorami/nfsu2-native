@@ -1119,6 +1119,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             if (cid != 0x34134)
                 return;
             for (size_t f = cbody; f + 32 <= cbody + clen; f += 32) {
+                Tick(0.1f);
                 CTri t;
                 int16_t zh, sx[4], sy[4], sz[4];
                 memcpy(&zh, d + f + 4, 2);
@@ -1150,7 +1151,9 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     double sumX = 0, sumY = 0;
     size_t unresolved = 0;
 
+    size_t sectionNo = 0;
     for (auto [body, len] : sections) {
+        const float sectionF = 0.12f + 0.33f * float(sectionNo++) / float(std::max<size_t>(sections.size(), 1));
         size_t infos = 0, infosLen = 0, inst = 0, instLen = 0;
         ForEachChunk(d, body, body + len, [&](uint32_t id, size_t b, size_t l) {
             if (id == kChunkSceneryInfos) { infos = b; infosLen = l; }
@@ -1163,6 +1166,7 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
             ++inst;
         const size_t infoCount = infosLen / kInfoSize;
         for (size_t o = inst; o + kInstanceSize <= instEnd; o += kInstanceSize) {
+            Tick(sectionF);
             const uint8_t *r = d + o;
             uint16_t infoIndex;
             memcpy(&infoIndex, r + 0x18, 2);

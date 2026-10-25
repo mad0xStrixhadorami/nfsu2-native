@@ -296,6 +296,16 @@ public:
 private:
     std::function<void(float)> m_progress;
     void Progress(float f) const { if (m_progress) m_progress(f); }
+    // Called from the long loops of Load: a progress report at most every 33 ms, so the animated loading screen keeps moving (ISSUES #310).
+    void Tick(float f) const
+    {
+        if (!m_progress)
+            return;
+        const Uint32 now = SDL_GetTicks();
+        if (now - m_tickAt >= 33)
+            m_tickAt = now, m_progress(f);
+    }
+    mutable Uint32 m_tickAt = 0;
     bool CollisionGround(float x, float y, float zq, float &z, float *normal) const;
     size_t m_collisionFaces = 0;
     int m_groundSource = 0;

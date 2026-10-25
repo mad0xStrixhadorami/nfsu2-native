@@ -2,6 +2,7 @@
 // A modern native UI layer drawn over / under the original FEng screens (ISSUES #276): an animated full-window menu
 // backdrop and a redesigned race HUD (arc rev meter, big speed readout, glass info pills) in the Rajdhani typeface
 // (SIL OFL, assets/ui).  Everything draws with the SDL renderer in window pixels (logical size 0).
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -72,6 +73,11 @@ private:
     SDL_Renderer *m_r = nullptr;
     SDL_Texture *m_font = nullptr, *m_glow = nullptr, *m_map = nullptr, *m_loadArt = nullptr;
     int m_loadW = 0, m_loadH = 0;
+    // the animated loading backdrop (ISSUES #310): JPEG frames assets/ui/loading/f001.jpg ... played back and forth at 16 fps with a cross-fade
+    std::string m_frameDir;
+    int m_frameCount = 0;
+    std::map<int, SDL_Texture *> m_frames; // the most recent few
+    SDL_Texture *LoadingFrame(int index);
     int m_mapTexSize = 0;
     Glyph m_glyphs[96] = {};
     int m_atlasW = 0, m_atlasH = 0;
