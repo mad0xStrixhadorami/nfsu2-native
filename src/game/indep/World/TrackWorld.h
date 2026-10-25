@@ -436,6 +436,7 @@ private:
     std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode
     unsigned m_glWhite = 0;
     std::unordered_map<int64_t, GLCell> m_glCells;
+    std::unordered_set<unsigned> m_glFoliage; // GL texture ids of leaves (ORG_* with punch-through alpha), drawn with the wind and leaf shading (ISSUES #314)
     // One vertex arena for every cell (ISSUES #282): cells are sub-allocated lazily, drawn with batched multi-draws under one VAO.
     unsigned m_arena = 0, m_arenaVao = 0;
     size_t m_arenaCap = 0, m_arenaUsed = 0; // in vertices

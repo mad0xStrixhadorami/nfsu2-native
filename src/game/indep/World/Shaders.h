@@ -11,13 +11,26 @@ varying float vDist;
 varying vec3 vWorld;
 varying vec3 vRel;
 uniform vec3 uCam;
+uniform float uFoliage; // 1 while leaves are drawn (ISSUES #314)
+uniform float uTime;
 void main() {
-    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+    vec4 p = gl_Vertex;
+    if (uFoliage > 0.5) {
+        // wind: a slow, spatially coherent gust that bends whole crowns plus a quick flutter of the leaf cards (coherent over a few metres, so
+        // neighbouring cards of one tree move together and no gaps open)
+        float gust = 0.5 + 0.5 * sin(uTime * 0.37 + p.y * 0.021 + p.x * 0.013);
+        float amp = 0.035 + 0.10 * gust;
+        vec2 sway = vec2(sin(uTime * 1.25 + (p.x + p.y) * 0.11), cos(uTime * 1.05 + p.x * 0.09 - p.y * 0.04)) * amp;
+        float flutter = sin(uTime * 7.3 + dot(p.xyz, vec3(1.7, 2.3, 0.9))) * 0.012;
+        p.xy += sway;
+        p.z += flutter;
+    }
+    gl_Position = gl_ModelViewProjectionMatrix * p;
     vColor = gl_Color;
     vUV = gl_MultiTexCoord0.xy;
     vWorld = gl_Vertex.xyz;
     vRel = gl_Vertex.xyz - uCam;
-    vDist = length((gl_ModelViewMatrix * gl_Vertex).xyz);
+    vDist = length((gl_ModelViewMatrix * p).xyz);
 }
 )";
 
@@ -52,6 +65,8 @@ uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
 uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
 uniform float uDebugPave;
+uniform float uFoliage; // 1 while leaves are drawn (ISSUES #314)
+uniform float uTime;
 uniform float uGlow;    // multiplier for additive (light) textures: the night-time light pools wash the road out in daylight
 #ifdef FULL
 uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
@@ -142,6 +157,20 @@ float bumpL(vec3 nts, vec3 T, vec3 B, vec3 N) { // lighting ratio of the perturb
 void main() {
     vec4 t = texture2D(uTex, vUV);
     vec4 c = t * vColor; // the PS2's MODULATE (vertex colours were doubled on the CPU)
+    if (uFoliage > 0.5) {
+        // ---- foliage (ISSUES #314): per-tree colour variation, light shining through the leaves, a waxy sheen, breakup of the flat cards ----
+        vec2 tc = floor(vWorld.xy * 0.16);
+        float hh = fract(sin(dot(tc, vec2(12.9898, 78.233))) * 43758.5453);
+        vec3 tintA = vec3(0.90, 1.05, 0.80), tintB = vec3(1.12, 1.03, 0.74), tintC = vec3(0.82, 0.98, 0.90);
+        vec3 tint = hh < 0.5 ? mix(tintA, tintB, hh * 2.0) : mix(tintB, tintC, (hh - 0.5) * 2.0);
+        vec3 leaf = c.rgb * tint;
+        vec3 Vd = normalize(vWorld - uCam);
+        float back = pow(max(dot(Vd, vec3(0.6228, 0.4521, 0.6430)), 0.0), 3.0); // looking towards the sun: the leaves glow
+        leaf += c.rgb * vec3(0.60, 0.78, 0.14) * back * 0.55 * uDay;
+        leaf *= 0.80 + 0.30 * fract(sin(dot(floor(vWorld * 3.1), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        float sheen = pow(max(dot(reflect(Vd, vec3(0.0, 0.0, 1.0)), vec3(0.6228, 0.4521, 0.6430)), 0.0), 28.0) * 0.12 * uDay;
+        c.rgb = leaf + vec3(sheen);
+    }
 #ifdef FULL
     float wetMask = 0.0;
     if (uWet > 0.0 && vDist < 90.0) {
@@ -182,8 +211,8 @@ void main() {
         float isKerb = step(252.5, fl) * step(fl, 253.5);
         float isBike = step(251.5, fl) * step(fl, 252.5);
         float isPave = step(250.5, fl) * step(fl, 251.5);                // pavement / plaza triangle (IsraelProps, ISSUES #300)
-        float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a * (1.0 - isProp);
-        float flatUp = smoothstep(0.85, 0.97, Nt.z) * t.a;
+        float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a * (1.0 - isProp) * (1.0 - uFoliage);
+        float flatUp = smoothstep(0.85, 0.97, Nt.z) * t.a * (1.0 - uFoliage);
         // facade courses along the wall (u runs horizontally along it)
         float along = dot(vWorld.xy, normalize(vec2(-Nt.y, Nt.x) + 1e-5));
         float keep = smoothstep(0.07, 0.16, lumT) * (1.0 - smoothstep(0.35, 0.7, satT)); // windows / signs stay as they were

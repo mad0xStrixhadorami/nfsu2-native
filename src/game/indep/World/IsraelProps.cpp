@@ -98,7 +98,7 @@ struct PropBuilder {
     }
     void Quad(V3 a, V3 b, V3 c, V3 d, const uint8_t col[3]) { Tri(a, b, c, col), Tri(a, c, d, col); }
     // textured quad a(u0,v1) b(u1,v1) c(u1,v0) d(u0,v0) from the texture rows [v0, v1] (a = bottom left, b = bottom right)
-    void TexQuad(V3 a, V3 b, V3 c, V3 d, uint32_t tex, float u0, float u1, float v0, float v1)
+    void TexQuad(V3 a, V3 b, V3 c, V3 d, uint32_t tex, float u0, float u1, float v0, float v1, const uint8_t *tint = nullptr)
     {
         if (out->size() + 2 > cap)
             return;
@@ -111,7 +111,11 @@ struct PropBuilder {
             for (int i = 0; i < 3; ++i) {
                 auto &v = t.v[i];
                 v.x = p[tri[i]].x, v.y = p[tri[i]].y, v.z = p[tri[i]].z, v.u = uv[tri[i]][0], v.v = uv[tri[i]][1];
-                v.r = v.g = v.b = 255, v.a = 254;
+                if (tint)
+                    v.r = tint[0], v.g = tint[1], v.b = tint[2];
+                else
+                    v.r = v.g = v.b = 255;
+                v.a = 254;
             }
             out->push_back(t);
         }
@@ -194,47 +198,195 @@ const uint8_t kGreen[3] = {52, 112, 46}, kDarkGreen[3] = {36, 78, 42}, kTrunk[3]
               kPanel[3] = {28, 44, 82}, kTank[3] = {225, 225, 220}, kBlue[3] = {20, 70, 160}, kRed[3] = {190, 30, 30},
               kYellow[3] = {220, 190, 40}, kStone[3] = {222, 205, 170}, kOlive[3] = {104, 120, 78};
 
-void Palm(PropBuilder &b, V3 base, Rng &r)
+// ---- Vegetation (ISSUES #314): trees and bushes are clusters of leaf cards textured with the game's own ORG_* foliage (the world shader gives them
+// wind, per-tree colour variation, translucency and antialiased edges) instead of faceted blobs.  Cards are drawn on both sides (the world culls).
+constexpr uint32_t kTexGreenBush = 0xcf52b629u, kTexJuniper = 0x7a6f8c82u, kTexPalmTop = 0xc6c4259cu, kTexPalmBushy = 0x22f7122eu, kTexPineA = 0xde90d917u,
+                   kTexPineB = 0xde916578u, kTexPineBranch = 0xc9ef55f1u, kTexLeafyTree = 0x8ab5780bu, kTexPlanterTree = 0xee76912cu,
+                   kTexFlowerPurple = 0x47d4022du, kTexFlowerRed = 0xfc745db0u, kTexAgave = 0xf8ab84bdu, kTexFlowerBed = 0xefce0dd8u,
+                   kTexRedBush = 0xeba0da48u, kTexGoldGrass = 0x5e175a7eu, kTexPepper = 0xef6b50b5u, kTexYellowBush = 0x520a6429u;
+
+// one leaf card centred on c: `right` / `up` unit vectors, size w x h, texture columns [u0, u1], colour tint
+void LeafCard(PropBuilder &b, V3 c, V3 right, V3 up, float w, float h, uint32_t tex, const uint8_t tint[3], float u0 = 0.0f, float u1 = 1.0f)
 {
-    const float h = 5.5f + 4.0f * r.f();
-    const float lean = (r.f() - 0.5f) * 0.9f, la = r.f() * 6.28f;
-    const V3 top = base + V3{lean * std::cos(la), lean * std::sin(la), h};
-    b.Prism(base, top, 0.2f, 0.13f, 6, kTrunk);
-    b.Solid(base.x, base.y, 0.32f, base.z, 3.0f);
-    const int fronds = 9;
-    for (int i = 0; i < fronds; ++i) {
-        const float a = 6.2831853f * (i + 0.3f * r.f()) / fronds;
-        const V3 d{std::cos(a), std::sin(a), 0}, side{-std::sin(a), std::cos(a), 0};
-        const V3 mid = top + d * 1.5f + V3{0, 0, 0.55f}, tip = top + d * 3.0f + V3{0, 0, -0.55f};
-        b.Tri(top, mid + side * 0.32f, mid - side * 0.32f, kGreen);
-        b.Tri(mid + side * 0.32f, tip, mid - side * 0.32f, kDarkGreen);
+    const V3 a = c - right * (w * 0.5f) - up * (h * 0.5f), bq = c + right * (w * 0.5f) - up * (h * 0.5f);
+    const V3 cq = c + right * (w * 0.5f) + up * (h * 0.5f), d = c - right * (w * 0.5f) + up * (h * 0.5f);
+    b.TexQuad(a, bq, cq, d, tex, u0, u1, 0.0f, 1.0f, tint);
+    b.TexQuad(bq, a, d, cq, tex, u1, u0, 0.0f, 1.0f, tint);
+}
+
+// baked shading of a card inside a crown: lighter on the sun side and towards the top, darker in the deep interior and low down
+void CardShade(const uint8_t base[3], V3 offset, V3 radii, float k0, uint8_t out[3])
+{
+    const V3 n = Norm({offset.x / std::max(radii.x, 0.1f), offset.y / std::max(radii.y, 0.1f), offset.z / std::max(radii.z, 0.1f)});
+    const float sun = Dot(n, Norm({0.62f, 0.45f, 0.64f}));
+    const float up = std::clamp((offset.z / std::max(radii.z, 0.1f) + 1.0f) * 0.5f, 0.0f, 1.0f);
+    const float k = std::clamp(k0 + 0.30f * sun + 0.28f * up, 0.45f, 1.18f);
+    for (int i = 0; i < 3; ++i)
+        out[i] = uint8_t(std::clamp(base[i] * k, 0.0f, 255.0f));
+}
+
+// a dome of leaf cards around `centre` with radii rx = ry, rz
+void Crown(PropBuilder &b, V3 centre, float rx, float rz, int cards, uint32_t tex, const uint8_t tint[3], float cardW, Rng &r)
+{
+    const V3 radii{rx, rx, rz};
+    for (int i = 0; i < cards; ++i) {
+        const float yaw = 2.39996f * float(i) + r.f() * 0.5f;           // golden-angle spread
+        const float el = (float(i) + r.f()) / float(cards);              // 0 = low edge .. 1 = top
+        const float zr = -0.55f + 1.55f * el;                            // height within the dome
+        const float ring = std::sqrt(std::max(0.05f, 1.0f - zr * zr));
+        const V3 off{std::cos(yaw) * rx * ring * (0.45f + 0.4f * r.f()), std::sin(yaw) * rx * ring * (0.45f + 0.4f * r.f()), zr * rz};
+        const V3 outward = Norm({off.x, off.y, 0.0f});
+        const float tilt = 0.55f * zr + (r.f() - 0.5f) * 0.5f;         // cards at the top lean over, those at the sides stand
+        const V3 right{-outward.y, outward.x, 0.0f};
+        const V3 up = Norm(V3{0, 0, 1} * std::cos(tilt) + outward * std::sin(tilt));
+        const float w = cardW * (0.85f + 0.4f * r.f());
+        uint8_t col[3];
+        CardShade(tint, off, radii, 0.62f + 0.12f * r.f(), col);
+        LeafCard(b, centre + off, right, up, w, w * 0.88f, tex, col);
     }
 }
 
-void Pine(PropBuilder &b, V3 base, Rng &r) // Aleppo / stone pine: bare trunk, layered dark crown
+void Bark(PropBuilder &b, V3 base, V3 top, float r0, float r1)
 {
-    const float h = 4.5f + 3.0f * r.f();
-    b.Prism(base, base + V3{0, 0, h}, 0.22f, 0.12f, 6, kTrunk);
+    static const uint8_t bark[3] = {104, 86, 66};
+    b.Prism(base, top, r0, r1, 7, bark);
+}
+
+void Palm(PropBuilder &b, V3 base, Rng &r)
+{
+    const float h = 6.0f + 4.5f * r.f();
+    const float lean = (r.f() - 0.5f) * 1.1f, la = r.f() * 6.28f;
+    const V3 top = base + V3{lean * std::cos(la), lean * std::sin(la), h};
+    // a gently curved, ringed trunk in three segments
+    static const uint8_t bark[3] = {120, 104, 84}, ring[3] = {96, 82, 66};
+    V3 prev = base;
+    for (int i = 1; i <= 3; ++i) {
+        const float t = float(i) / 3.0f;
+        const V3 p = base + (top - base) * t + V3{0.18f * std::sin(t * 3.14f) * std::cos(la + 1.5f), 0.18f * std::sin(t * 3.14f) * std::sin(la + 1.5f), 0};
+        b.Prism(prev, p, 0.2f - 0.05f * (i - 1), 0.2f - 0.05f * i, 7, i % 2 ? bark : ring);
+        prev = p;
+    }
+    b.Solid(base.x, base.y, 0.32f, base.z, 3.0f);
+    // the crown: three crossed vertical sprites and two drooping ones, the dark under-fronds and a sunlit top
+    const uint8_t lit[3] = {232, 246, 214}, dark[3] = {170, 196, 160};
+    const float yaw0 = r.f() * 3.14f;
+    for (int i = 0; i < 3; ++i) {
+        const float a = yaw0 + 1.0472f * float(i);
+        const V3 right{std::cos(a), std::sin(a), 0.0f};
+        LeafCard(b, top + V3{0, 0, 1.55f}, right, V3{0, 0, 1}, 5.4f, 4.4f, i == 1 ? kTexPalmBushy : kTexPalmTop, lit);
+    }
+    for (int i = 0; i < 2; ++i) { // under-fronds hanging out and down
+        const float a = yaw0 + 0.5f + 1.5708f * float(i);
+        const V3 out{std::cos(a), std::sin(a), 0.0f};
+        LeafCard(b, top + out * 1.5f + V3{0, 0, 0.35f}, Norm(V3{-out.y, out.x, 0}), Norm(V3{0, 0, 1} * 0.7f + out * 0.7f), 3.8f, 2.6f, kTexPalmTop, dark);
+    }
+}
+
+void Pine(PropBuilder &b, V3 base, Rng &r) // Aleppo / stone pine: three crossed tree sprites (their bark strip is left out)
+{
+    const float h = 8.0f + 4.0f * r.f();
     b.Solid(base.x, base.y, 0.34f, base.z, 3.0f);
-    const float rad = 1.9f + r.f() * 0.8f;
-    for (int i = 0; i < 3; ++i)
-        b.Cone(base + V3{0, 0, h * 0.55f + i * h * 0.17f}, rad * (1.0f - 0.27f * i), h * 0.34f, 8, i == 1 ? kGreen : kDarkGreen);
+    const uint8_t col[3] = {176 + int(r.f() * 20), 196, 164};
+    const float yaw0 = r.f() * 3.14f;
+    const uint32_t tex = r.f() < 0.5f ? kTexPineA : kTexPineB;
+    for (int i = 0; i < 3; ++i) {
+        const float a = yaw0 + 1.0472f * float(i);
+        LeafCard(b, base + V3{0, 0, h * 0.5f}, V3{std::cos(a), std::sin(a), 0.0f}, V3{0, 0, 1}, h * 0.62f, h, tex, col, 0.0f, 0.86f);
+    }
 }
 
 void Cypress(PropBuilder &b, V3 base, Rng &r)
 {
-    const float h = 5.0f + 3.0f * r.f();
-    b.Prism(base, base + V3{0, 0, 0.8f}, 0.1f, 0.1f, 5, kTrunk);
+    const float h = 5.5f + 3.0f * r.f();
     b.Solid(base.x, base.y, 0.55f, base.z, 3.0f);
-    b.Cone(base + V3{0, 0, 0.5f}, 0.75f, h, 7, kDarkGreen);
+    const uint8_t col[3] = {120, 150, 118};
+    const float yaw0 = r.f() * 3.14f;
+    for (int i = 0; i < 3; ++i) {
+        const float a = yaw0 + 1.0472f * float(i);
+        LeafCard(b, base + V3{0, 0, h * 0.5f}, V3{std::cos(a), std::sin(a), 0.0f}, V3{0, 0, 1}, h * 0.36f, h, kTexPineBranch, col);
+    }
 }
 
-void Olive(PropBuilder &b, V3 base, Rng &r) // olive / ficus: short trunk, wide grey-green crown
+void Olive(PropBuilder &b, V3 base, Rng &r) // olive / ficus: a short, forked trunk and a wide, grey-green crown
 {
-    const float h = 2.0f + r.f();
-    b.Prism(base, base + V3{0, 0, h}, 0.2f, 0.14f, 6, kTrunk);
+    const float h = 2.0f + 0.9f * r.f();
+    const float la = r.f() * 6.28f;
+    Bark(b, base, base + V3{0, 0, h}, 0.2f, 0.13f);
     b.Solid(base.x, base.y, 0.32f, base.z, 3.0f);
-    b.Ellipsoid(base + V3{0, 0, h + 1.2f}, 2.0f + r.f() * 0.6f, 1.5f, 8, r.f() > 0.5f ? kOlive : kGreen);
+    const float rx = 2.2f + r.f() * 0.8f, rz = 1.5f + r.f() * 0.4f;
+    const V3 crown = base + V3{0, 0, h + rz * 0.7f};
+    for (int i = 0; i < 3; ++i) { // limbs
+        const float a = la + 2.094f * float(i);
+        Bark(b, base + V3{0, 0, h * 0.8f}, crown + V3{std::cos(a) * rx * 0.45f, std::sin(a) * rx * 0.45f, rz * 0.2f}, 0.09f, 0.04f);
+    }
+    const bool ficus = r.f() < 0.4f;
+    const uint8_t tint[3] = {ficus ? 150 : 196, ficus ? 188 : 208, ficus ? 140 : 168};
+    Crown(b, crown, rx, rz, 16, ficus ? kTexGreenBush : kTexJuniper, tint, rx * 1.15f, r);
+}
+
+// Bushes at the foot of walls and in planters: crossed cards, flowering ones (bougainvillea red / purple), agave rosettes and dry desert shrubs.
+void Bush(PropBuilder &b, V3 base, Rng &r, int kind)
+{
+    const float yaw0 = r.f() * 3.14f;
+    switch (kind) {
+    case 3: { // agave: a rosette of fat spiky leaves
+        const uint8_t col[3] = {200, 214, 190};
+        const int n = 7;
+        for (int i = 0; i < n; ++i) {
+            const float a = yaw0 + 6.2831853f * float(i) / n;
+            const V3 out{std::cos(a), std::sin(a), 0.0f};
+            LeafCard(b, base + out * 0.32f + V3{0, 0, 0.42f}, Norm(V3{-out.y, out.x, 0}), Norm(V3{0, 0, 1} * 0.75f + out * 0.65f), 0.95f, 0.95f, kTexAgave, col);
+        }
+        break;
+    }
+    case 4: { // dry desert shrub
+        const uint8_t col[3] = {206, 190, 130};
+        for (int i = 0; i < 4; ++i) {
+            const float a = yaw0 + 0.785f * float(i);
+            LeafCard(b, base + V3{0, 0, 0.5f}, V3{std::cos(a), std::sin(a), 0}, V3{0, 0, 1}, 1.5f, 1.0f, kTexGoldGrass, col);
+        }
+        break;
+    }
+    default: {
+        const uint32_t tex = kind == 0 ? kTexGreenBush : kind == 1 ? kTexJuniper : kTexGreenBush;
+        const uint8_t col[3] = {kind == 1 ? 190 : 170, 204, kind == 1 ? 164 : 146};
+        const float w = 1.7f + 0.8f * r.f();
+        for (int i = 0; i < 4; ++i) {
+            const float a = yaw0 + 0.785f * float(i);
+            uint8_t sh[3];
+            CardShade(col, V3{std::cos(a) * 0.4f, std::sin(a) * 0.4f, 0.1f}, {1, 1, 1}, 0.78f, sh);
+            LeafCard(b, base + V3{0, 0, w * 0.34f}, V3{std::cos(a), std::sin(a), 0}, V3{0, 0, 1}, w, w * 0.78f, tex, sh);
+        }
+        // a low cap of cards on top so it reads as a rounded mass from above
+        const uint8_t cap[3] = {col[0], col[1], col[2]};
+        LeafCard(b, base + V3{0, 0, w * 0.62f}, V3{1, 0, 0}, V3{0, 1, 0}, w * 0.8f, w * 0.8f, tex, cap);
+        if (kind == 2) { // flowering: bougainvillea cards scattered on the bush
+            const uint32_t ft = r.f() < 0.5f ? kTexFlowerPurple : kTexFlowerRed;
+            const uint8_t fc[3] = {236, 226, 236};
+            for (int i = 0; i < 5; ++i) {
+                const float a = r.f() * 6.28f;
+                LeafCard(b, base + V3{std::cos(a) * w * 0.28f, std::sin(a) * w * 0.28f, w * (0.32f + 0.3f * r.f())}, V3{-std::sin(a), std::cos(a), 0}, V3{0, 0, 1}, 0.9f, 0.9f, ft, fc);
+            }
+        }
+        break;
+    }
+    }
+}
+
+// a low planter box brimming with flowers
+void FlowerBed(PropBuilder &b, V3 base, float yaw, Rng &r)
+{
+    static const uint8_t stone[3] = {206, 198, 180};
+    const V3 u{std::cos(yaw), std::sin(yaw), 0}, v{-std::sin(yaw), std::cos(yaw), 0};
+    const float w = 2.0f + 1.2f * r.f(), d = 1.1f;
+    b.Box(base - u * (w * 0.5f) - v * (d * 0.5f), u * w, v * d, {0, 0, 0.38f}, stone);
+    const uint8_t col[3] = {255, 255, 255};
+    b.TexQuad(base - u * (w * 0.46f) - v * (d * 0.42f) + V3{0, 0, 0.40f}, base + u * (w * 0.46f) - v * (d * 0.42f) + V3{0, 0, 0.40f},
+              base + u * (w * 0.46f) + v * (d * 0.42f) + V3{0, 0, 0.40f}, base - u * (w * 0.46f) + v * (d * 0.42f) + V3{0, 0, 0.40f}, kTexFlowerBed, 0, 1, 0, 1, col);
+    for (int i = 0; i < 3; ++i) { // flowers and leaves standing out of it
+        const float a = yaw + 0.7f * float(i);
+        LeafCard(b, base + V3{0, 0, 0.7f}, V3{std::cos(a), std::sin(a), 0}, V3{0, 0, 1}, w * 0.7f, 0.65f, i == 1 ? kTexFlowerRed : kTexFlowerPurple, col);
+    }
 }
 
 void SolarHeater(PropBuilder &b, V3 o, float yaw) // dud shemesh: tilted panel with the tank on its high edge
@@ -1411,7 +1563,7 @@ void TrackWorld::AddIsraeliProps()
         return storefront[hash] = ok;
     };
     size_t nTrees = 0, nRoofs = 0, nWalls = 0, nCurbs = 0, nBike = 0, nBus = 0, nSigns = 0, nScoot = 0, nCafe = 0;
-    size_t nPave = 0;
+    size_t nPave = 0, nBushes = 0;
 
     auto GroundHeightT = [&](float x, float y, float zmax, float &z) {
         const unsigned a0 = SDL_GetTicks();
@@ -1522,6 +1674,24 @@ void TrackWorld::AddIsraeliProps()
                             k < 0.6f ? Palm(b, q, rng) : Olive(b, q, rng);
                         ++nTrees;
                     }
+                    // bushes, agave and flower beds along the pavements (ISSUES #314): dense greenery in Haifa and Jerusalem, agave and dry shrubs in
+                    // the desert of Be'er Sheva, flowering bushes and planters in Tel Aviv
+                    if (area > 2.0f && rng.f() < area / 85.0f) {
+                        const V3 q = inTri(0.5f);
+                        const float k = rng.f();
+                        int kind;
+                        if (d.bsh > 0.45f)
+                            kind = k < 0.45f ? 3 : k < 0.8f ? 4 : 1;
+                        else if (d.jer > 0.45f)
+                            kind = k < 0.30f ? 3 : k < 0.65f ? 1 : k < 0.85f ? 0 : 2;
+                        else if (d.hai > 0.45f)
+                            kind = k < 0.55f ? 0 : k < 0.8f ? 1 : 2;
+                        else
+                            kind = k < 0.30f ? 2 : k < 0.65f ? 0 : k < 0.85f ? 1 : 3;
+                        Bush(b, q, rng, kind), ++nBushes;
+                    }
+                    if (area > 6.0f && rng.f() < area / 1100.0f)
+                        FlowerBed(b, inTri(0.8f), yawE, rng), ++nBushes;
                     if (area > 4.0f && rng.f() < area / 2200.0f && busCells.insert(Key(c4x / 12, c4y / 12)).second) {
                         BusStop(b, inTri(0.5f), yawE), ++nBus;
                     }
@@ -1775,7 +1945,7 @@ void TrackWorld::AddIsraeliProps()
     printf("[Props] flat %zu, ground-level %zu (road %zu, near-road non-road %zu)\n", flatTris, flatGround, flatRoad, flatNear);
     m_groundSource = savedSource;
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
-    printf("[Props] %zu pavement triangles flagged\n", nPave);
+    printf("[Props] %zu pavement triangles flagged, %zu bushes and flower beds\n", nPave, nBushes);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
            "%zu signs, %zu scooters, %zu cafes, %zu dumpster groups, %zu cats, %zu EV bays, %zu kiosks, %zu mopeds, %zu poles, %zu cable spans, %zu islands, %zu posters, %zu Hebrew shop signs, %zu street-name signs, %zu flags, %zu balconies, %zu shutters, %zu awnings\n",
            props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nDump, nCats, nEV, nKiosk, nMopeds, nPoles, nCableSpans, nRound, nPosters, nShopSigns, nStreetSigns, nFlags, nBalconies, nShutters, nAwnings);

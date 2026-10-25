@@ -146,6 +146,8 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         m_glTextureMode[id] = !blended ? 0 : info->alphaBlend == 2 ? 2 : 1;
+        if (info->alphaUsage == 1 && info->name.rfind("ORG_", 0) == 0 && !getenv("NFSU2_NO_FOLIAGE"))
+            m_glFoliage.insert(id);
     }
     m_glTextures[hash] = id;
     return id;
@@ -500,13 +502,14 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     // locations are looked up once per frame and the per-frame constants are set once; switching only re-uses a program and
     // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
     struct WorldUniforms {
-        int spotPos0 = -1, spotPos1 = -1, spotDir = -1, spotOn = -1, dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int foliage = -1, timeLoc = -1, spotPos0 = -1, spotPos1 = -1, spotDir = -1, spotOn = -1, dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
         int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
         float lastFogStart = -1.0f, lastFogEnd = -1.0f;
     };
     WorldUniforms wuFull, wuLite;
     auto queryWorldUniforms = [&](unsigned prog, WorldUniforms &u) {
         u.glow = GLShader::Uniform(prog, "uGlow");
+        u.foliage = GLShader::Uniform(prog, "uFoliage"), u.timeLoc = GLShader::Uniform(prog, "uTime");
         u.spotPos0 = GLShader::Uniform(prog, "uSpotPos0"), u.spotPos1 = GLShader::Uniform(prog, "uSpotPos1");
         u.spotDir = GLShader::Uniform(prog, "uSpotDir"), u.spotOn = GLShader::Uniform(prog, "uSpotOn");
         u.tex = GLShader::Uniform(prog, "uTex"), u.fogColor = GLShader::Uniform(prog, "uFogColor");
@@ -530,6 +533,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         ++Perf::g.programSwitches;
         GLShader::Set1i(u.tex, 0);
         GLShader::Set1f(u.glow, 1.0f);
+        GLShader::Set1f(u.foliage, 0.0f);
+        GLShader::Set1f(u.timeLoc, float(SDL_GetTicks()) * 0.001f);
         GLShader::Set3f(u.fogColor, fogColour[0], fogColour[1], fogColour[2]);
         GLShader::Set1f(u.grade, getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(u.cam, cam.x, cam.y, cam.z);
@@ -708,9 +713,21 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     };
     auto drawBatches = [&](int g) {
         unsigned boundTex = ~0u;
+        bool foliageOn = false;
         for (const Batch &b : batches[g]) {
             if (b.first.empty())
                 continue;
+            if (g != kInterior && curU) { // leaves: wind, leaf shading and antialiased cut-out edges
+                const bool fol = !m_glFoliage.empty() && m_glFoliage.count(b.tex) != 0;
+                if (fol != foliageOn) {
+                    GLShader::Set1f(curU->foliage, fol ? 1.0f : 0.0f);
+                    if (fol)
+                        glEnable(0x809E); // GL_SAMPLE_ALPHA_TO_COVERAGE
+                    else
+                        glDisable(0x809E);
+                    foliageOn = fol;
+                }
+            }
             if (g == kInterior)
                 GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), b.interior == 2 ? 1.0f : 0.0f);
             if (g == kBlendNear || g == kBlendFar) {
@@ -726,6 +743,10 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             ++Perf::g.drawCalls, ++Perf::g.multiDraws;
             for (GLsizei c : b.count)
                 Perf::g.triangles += uint32_t(c / 3);
+        }
+        if (foliageOn && curU) {
+            GLShader::Set1f(curU->foliage, 0.0f);
+            glDisable(0x809E);
         }
     };
 
