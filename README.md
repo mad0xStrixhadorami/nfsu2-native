@@ -11,8 +11,8 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![language](https://img.shields.io/badge/C%2B%2B17-SDL2%20%2B%20OpenGL-blue?style=flat-square)
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
-![commits](https://img.shields.io/badge/commits-350%2B-lightgrey?style=flat-square)
-![log](https://img.shields.io/badge/ISSUES.md-307%20entries-informational?style=flat-square)
+![commits](https://img.shields.io/badge/commits-360%2B-lightgrey?style=flat-square)
+![log](https://img.shields.io/badge/ISSUES.md-318%20entries-informational?style=flat-square)
 
 <img src="docs/media/race_drive.gif" width="760" alt="Pre-race cinematic, countdown and launch in the Israeli-themed city"/>
 
@@ -61,12 +61,22 @@ switchable off with environment variables (see the table at the bottom) if you w
 <td width="50%"><img src="docs/media/shikun_orbit.gif" alt="Old Israeli apartment block"/><br/><sub><b>Old apartment blocks</b> — generated "shikun" buildings with slatted plastic shutters, wall air-conditioners, balconies and a roof of solar water heaters, in Jerusalem stone.</sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/media/police_chase.gif" alt="Police pursuit"/><br/><sub><b>Police pursuit</b> — patrols watch the lanes; speeding in their sight starts a chase with heat levels 1–5, reinforcements, roadblocks, a BUSTED bar, a COOLDOWN bar and a bounty (<code>NFSU2_NO_POLICE=1</code> turns it off). The car is a converted third-party model that is <b>not</b> in this repository.</sub></td>
+<td width="50%"><img src="docs/media/nitro_flames.gif" alt="Nitrous flames"/><br/><sub><b>Nitrous flames</b> — a turbulent flame jet from each exhaust with shock-diamond beads, fire-frame particles, embers, a glare and a road glow; hold <kbd>Space</kbd> with a nitrous tank.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/media/foliage_wind.gif" alt="Trees and bushes in the wind"/><br/><sub><b>Living vegetation</b> — leaf-card trees, flowering bushes and agave built from the game's own foliage textures, with a wind shader (travelling gusts, leaf flutter), per-tree colour variation and light through the leaves.</sub></td>
+<td width="50%"><img src="docs/media/pause_menu.gif" alt="Pause menu"/><br/><sub><b>Esc menu</b> — the glass pause dialog now opens the original in-race options (audio, video…) and Back returns to it; Resume, Main Menu and Quit work.</sub></td>
+</tr>
+<tr>
 <td colspan="2" align="center"><img src="docs/media/transitions.gif" width="50%" alt="Screen transitions"/><br/><sub><b>Screen transitions</b> — menu → loading → game, with a glowing diagonal wipe between screens and a loading backdrop that keeps moving (<code>NFSU2_NO_TRANSITIONS=1</code> turns the wipes off).</sub></td>
 </tr>
 <tr>
 <td colspan="2" align="center"><img src="docs/media/night_race.gif" width="50%" alt="Night racing"/><br/><sub><b>Night racing</b> (<code>NFSU2_NIGHT=1</code>) — emissive headlights and tail lights, glass covers, light pools on the road, dusk sky with stars.</sub></td>
 </tr>
 </table>
+
+<div align="center"><img src="docs/media/police_car.png" width="70%" alt="The police car"/><br/><sub>A patrol car at night with its light bar flashing (the model is the user's own download and is not distributed with the project).</sub></div>
 
 ## A modern presentation layer
 
@@ -92,6 +102,9 @@ switchable off with environment variables (see the table at the bottom) if you w
 - **God rays and lens reflections (#305)** — the post pass keeps the frame's depth (far = sky) and marches 48 jittered samples from every pixel towards the sun, so shafts only appear through real gaps; five ghosts, a halo ring and an anamorphic streak appear while the sun disc is visible; the sun is also mirrored in the interior-mapped window glass. Costs about 1.7 ms of GPU time.
 - **Weathered ground (#299, #300)** — a worn asphalt with repaired patches, fine cracks, stains and sheen; Israeli interlocking paving ("Eckerstein") with per-block tones, pale worn edges, sandy joints, dry leaves and litter; painted kerbs that are sun-bleached, chipped and grimy at the foot.
 - **An Israeli city (#272–#280, #306)** — four districts blended by the world shader (Tel Aviv Bauhaus, Jerusalem stone, Haifa terraces, Be'er Sheva brutalist concrete) with CC0 photographic materials, Hebrew signage, ~2 million triangles of street life (palms and pines, bus stops, scooters, cafés, dumpsters with cats, EV chargers, utility poles and cables, balconies, roller shutters, awnings) and generated buildings: Bauhaus "White City" blocks in Tel Aviv, old **shikun** apartment blocks elsewhere.
+- **Vegetation (#314)** — palms, pines, cypresses and olive trees rebuilt from textured leaf cards, plus ~11,000 bushes, agaves and flower beds; one foliage shader gives wind, translucency and per-tree colour.
+- **Cars (#312)** — a clear-coat shader with grounding and sun shadow, real lamp interiors and headlight cones on the road; a post-race reward screen (#313); nitrous flames (#317); better landings after a jump and a roll-stability torque (#316).
+- **Police (#318)** — the Israeli police Škoda (converted from the user's own GTA V mod by `tools/convert_police.py`, output kept outside the repo), AI cops on the lane network, heat, roadblocks, bust and escape, a siren, and a pursuit HUD.
 - **Wet roads, interior-mapped offices, bloom, MSAA 4×, anisotropic filtering, widescreen Hor+** from the earlier shader work.
 
 ### The apartment-block asset
@@ -114,6 +127,8 @@ This port keeps the original assets but renders them through **custom GLSL progr
 | **Post-process** | Bloom, filmic curve, vignette, radial speed blur, **god rays** and **lens reflections** from the frame's depth |
 | **Studio stage** | Backdrop with accent glow, light slabs and horizon seam for the menu showroom |
 | **Lamps and glass** | Emissive lenses that react to the brake pedal, translucent clear covers, soft glows, night light pools |
+| **Foliage** | Wind sway and flutter, per-tree tint, sun-through-leaf translucency, alpha-to-coverage edges |
+| **Flames and sirens** | Additive procedural flame sprites for the nitrous jet, red/blue light-bar flashes and road pools |
 | **Hot-spot and event beacons** | Additive light columns marking shops, car lots, the crib and open career events |
 
 ## Free-roam career layer
@@ -140,9 +155,9 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **307 entries** in [`ISSUES.md`](ISSUES.md) |
-| Commits | **350+** |
-| C++ written | **≈ 38,600 lines in 114 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
+| Findings, decodes and design notes logged | **318 entries** in [`ISSUES.md`](ISSUES.md) |
+| Commits | **360+** |
+| C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
 | Triangles in view in the city | ≈ 1.1 million per frame, ≈ 560 draw calls |
 
@@ -162,6 +177,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Free roam / city | ✅ working | Whole city streams in, collision mesh, traffic, minimap, full map, shop and event locators |
 | Driving physics | 🟢 solid | UG2 vehicle model from the car records, drivetrain, tuning, drift layer, regression benchmark |
 | AI opponents | 🟢 working | Route followers with skill scaling |
+| Police pursuit | 🟡 playable | Patrols, heat 1–5, roadblocks, bust / escape and a bounty in free roam; no spike strips, helicopters or bust animation |
 | Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules, events started from the street |
 | Car customisation | 🟡 mostly | Parts, performance packages, tuning sliders, dyno, vinyls, decals, paint, rims, spinners, neon |
 | Garage / shops (3D) | 🟡 partial | Garage room renders with a part-following camera; per-shop filtering not done |
@@ -295,6 +311,7 @@ roadmap (all **planned**, none of it is done yet):
   loading-screen artwork and the apartment-block asset are original to this project; the photo materials are CC0. The
   screenshots and GIFs under `docs/media` are captures of the running program, included to document the
   project; if a rights holder objects, they will be removed.
+- The police car is **not** part of this repository: it is converted at run time from a third-party mod the user owns (its author forbids redistribution), kept outside git. The GIFs and the still show it only as running in the game; they will be removed on request.
 - Not affiliated with or endorsed by Electronic Arts or Black Box.
 - Thanks to [`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw) (CC0 Most Wanted decompilation),
   [`cobanov/nfsu2-decomp`](https://github.com/cobanov/nfsu2-decomp) (GC/PC day-zero work), the Ghidra project
