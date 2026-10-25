@@ -2670,6 +2670,7 @@ int main(int argc, char **argv)
                     world.SetCarWheels(i, &cars[i]->TriangleWheels(), &cars[i]->TriangleBrakes(), cars[i]->WheelHubs(), cars[i]->WheelAngle(),
                                       cars[i]->WheelSteer(), cars[i]->WheelRate());
                     world.SetCarLamps(i, true, cars[i]->BrakeLamp(), cars[i]->ReverseLamp());
+                    world.SetCarNitrous(i, (cars[i]->NitrousActive() && std::fabs(cars[i]->Speed()) > 1.0f) || (i == 0 && getenv("NFSU2_FORCE_FLAMES"))); // the env is a dev aid: flames without a tank
                     // Tyre smoke and skid marks from the sliding tyres of the UG2-physics cars (ISSUES #294).
                     if (i == 0 && cars[i]->UsingUG2Physics() && dt > 0.0f && !sceneMode) {
                         static float lastX[4], lastY[4], lastZ[4];

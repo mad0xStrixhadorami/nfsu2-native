@@ -89,6 +89,7 @@ public:
     bool Warming() const { return m_warmAll && !m_scene && !m_cells.empty(); }
     float WarmFraction() const { return m_warmKeys.empty() ? 0.0f : float(m_warmIdx) / float(m_warmKeys.size()); }
     void DrawCarLights(const Camera &cam, bool day) const;
+    void DrawCarFlames(const Camera &cam, bool day) const;
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
@@ -159,13 +160,25 @@ public:
             s.vx *= 1.0f - 1.2f * dt, s.vy *= 1.0f - 1.2f * dt, s.vz *= 1.0f - 0.9f * dt;
         }
         m_smoke.erase(std::remove_if(m_smoke.begin(), m_smoke.end(), [](const Smoke &s) { return s.age >= s.life; }), m_smoke.end());
+        UpdateFlames(dt);
     }
+    void UpdateFlames(float dt);
     void DrawTyreEffects(const Camera &cam) const;
     // The speed effect (ISSUES #298): radial blur strength 0..1 (from the speed), a nitrous burst 0..1, and where the car is on screen
     // (uv, y up) so it can stay sharp; carRx = 0 for the rigid cameras where the car is not visible.
     void SetSpeedFx(float motion, float nitro, float carX, float carY, float carRx, float carRy)
     {
         m_fxMotion = motion, m_fxNitro = nitro, m_fxCar[0] = carX, m_fxCar[1] = carY, m_fxCar[2] = carRx, m_fxCar[3] = carRy;
+    }
+    // Nitrous flames (ISSUES #317): the car's exhaust jet, embers and glare while the nitrous burns. Call once per frame before UpdateEffects.
+    void SetCarNitrous(size_t car, bool active)
+    {
+        if (car >= m_cars.size())
+            return;
+        Car &c = m_cars[car];
+        if (active != c.nosOn)
+            c.burst = active ? 1.0f : 0.55f; // a fireball as it lights, a smaller pop as it cuts out
+        c.nosOn = active;
     }
     void SetCarLamps(size_t car, bool head, bool brake, bool reverse)
     {
@@ -371,6 +384,10 @@ private:
         float lampHead = 0, lampBrake = 0, lampReverse = 0;
         float headPos[2][3] = {}, tailPos[2][3] = {}, fwd[3] = {1, 0, 0};
         bool haveHead[2] = {}, haveTail[2] = {};
+        // Nitrous flames (#317): the exhaust tips in world space (the installed muffler tips, else below the tail lamps), the jet direction,
+        // the smoothed burn 0..1, the ignition burst and the car's velocity from frame to frame.
+        float exhPos[2][3] = {}, nos = 0, burst = 0, prevPos[3] = {}, vel[3] = {}, emitAcc[2] = {};
+        bool haveExh[2] = {}, nosOn = false, havePrev = false;
     };
     // Car material slot -> texture (0 = untextured) and base colour.
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;
@@ -383,6 +400,12 @@ private:
         float x0, y0, z0, x1, y1, z1, width, strength;
         unsigned born;
     };
+    struct Flame {
+        float x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, age = 0, life = 1, size = 0.3f;
+        int kind = 0, cell = 0; // 0 fire sprite, 1 ember streak
+    };
+    std::vector<Flame> m_flames;
+    float m_flameClock = 0;
     std::vector<Smoke> m_smoke;
     std::vector<Skid> m_skids;
     size_t m_skidNext = 0;
@@ -416,7 +439,7 @@ private:
     std::unordered_map<uint32_t, int> m_interiorClass; // texture hash -> 0 none / 1 windowed facade / 2 glass wall
     int InteriorClassOf(uint32_t hash);
     unsigned m_progWorldLite = 0; // the cheap world shader for far cells (ISSUES #282)
-    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0;
+    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0, m_progFlame = 0;
     unsigned m_postDepth = 0, m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
     int m_postW = 0, m_postH = 0;
     bool m_shadersTried = false;

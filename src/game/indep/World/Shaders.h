@@ -1221,4 +1221,71 @@ void main() {
     gl_FragColor = vec4(c, 1.0);
 }
 )";
+
+// ---- Flames (ISSUES #317): additive sprites for the nitrous exhaust jet, embers and glare ------------------------------------------------
+inline const char *kFlameVS = R"(#version 120
+varying vec2 vUV;
+varying vec4 vColor;
+void main() {
+    gl_Position = ftransform();
+    vUV = gl_MultiTexCoord0.xy;
+    vColor = gl_Color;
+}
+)";
+
+inline const char *kFlameFS = R"(#version 120
+uniform sampler2D uTex;
+uniform float uMode;  // 0 turbulent flame blob, 1 textured (fire atlas / glare), 2 spark streak, 3 soft round glow
+uniform float uTime;
+uniform float uSeed;
+uniform vec2 uCell;   // atlas cell offset for mode 1 (0 or 0.5)
+uniform float uCellScale;
+varying vec2 vUV;
+varying vec4 vColor;
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) {
+    float a = 0.5, s = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        s += a * vnoise(p);
+        p = p * 2.03 + vec2(17.1, 9.3);
+        a *= 0.5;
+    }
+    return s;
+}
+void main() {
+    vec2 p = vUV * 2.0 - 1.0;
+    float r = length(p);
+    vec3 col;
+    if (uMode < 0.5) {
+        // a lick of flame: noise pulls the edge about, so the blob tears into tongues that stream away from the exhaust (-y of the quad)
+        vec2 q = p * vec2(2.4, 1.7) + vec2(uSeed * 11.0, uSeed * 5.0 - uTime * 7.5);
+        float n = fbm(q);
+        float n2 = fbm(q * 1.9 + vec2(4.0, -uTime * 11.0));
+        float d = r + (n - 0.5) * 0.85 + (n2 - 0.5) * 0.35;
+        float body = smoothstep(1.0, 0.05, d);
+        float core = smoothstep(0.52, 0.0, d + 0.1 * r);
+        col = vColor.rgb * body * (0.6 + 1.0 * n) + mix(vColor.rgb, vec3(1.0, 0.95, 0.88), 0.5) * core * core * 0.9;
+        col *= vColor.a;
+    } else if (uMode < 1.5) {
+        vec4 t = texture2D(uTex, uCell + vUV * uCellScale);
+        col = t.rgb * vColor.rgb * vColor.a * (0.5 + 0.9 * t.a);
+    } else if (uMode < 2.5) {
+        // spark: a thin bright streak, hot white at the head
+        float along = vUV.y;
+        float w = abs(p.x);
+        float a = smoothstep(1.0, 0.0, w) * smoothstep(0.0, 0.25, along) * (0.25 + 0.75 * along);
+        col = mix(vColor.rgb, vec3(1.0, 0.9, 0.7), smoothstep(0.7, 1.0, along)) * a * vColor.a;
+    } else {
+        float a = exp(-r * r * 3.2) * (1.0 - smoothstep(0.85, 1.0, r));
+        col = vColor.rgb * a * vColor.a;
+    }
+    gl_FragColor = vec4(col, 1.0);
+}
+)";
+
 } // namespace Shaders

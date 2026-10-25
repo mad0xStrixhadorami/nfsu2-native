@@ -801,6 +801,49 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
         }
     }
     car.fwd[0] = m[0], car.fwd[1] = m[1], car.fwd[2] = m[2];
+    // Exhaust tips for the nitrous flames (#317): the rear end of the installed muffler tips, one per side of the car; a stock car has none
+    // marked, so the jet comes out just under the tail lamps instead.
+    if (car.nos > 0.01f || car.burst > 0.01f || car.nosOn) {
+        float loc[2][3] = {};
+        int haveLoc[2] = {};
+        if (car.exhausts && car.exhausts->size() == car.model->size()) {
+            for (int side = 0; side < 2; ++side) {
+                float minX = 1e9f;
+                for (size_t i = 0; i < car.model->size(); ++i) {
+                    if (!(*car.exhausts)[i])
+                        continue;
+                    for (const auto &v : (*car.model)[i].v)
+                        if ((v.y > 0.0f) == (side == 0) && std::fabs(v.y) > 0.2f)
+                            minX = std::min(minX, v.x);
+                }
+                float sum[3] = {}, n = 0;
+                for (size_t i = 0; i < car.model->size() && minX < 1e8f; ++i) {
+                    if (!(*car.exhausts)[i])
+                        continue;
+                    for (const auto &v : (*car.model)[i].v)
+                        if ((v.y > 0.0f) == (side == 0) && std::fabs(v.y) > 0.2f && v.x < minX + 0.12f)
+                            sum[0] += v.x, sum[1] += v.y, sum[2] += v.z, n += 1.0f;
+                }
+                if (n > 0.0f)
+                    haveLoc[side] = 1, loc[side][0] = sum[0] / n, loc[side][1] = sum[1] / n, loc[side][2] = sum[2] / n;
+            }
+        }
+        for (int side = 0; side < 2; ++side) {
+            car.haveExh[side] = haveLoc[side] != 0;
+            if (haveLoc[side]) {
+                for (int a = 0; a < 3; ++a)
+                    car.exhPos[side][a] = loc[side][0] * m[a] + loc[side][1] * m[4 + a] + loc[side][2] * m[8 + a] + m[3 + 4 * a];
+            } else if (car.haveTail[0] && car.haveTail[1]) {
+                // under the lamps, pulled a third of the way in: the pipes of most of the cars sit there
+                for (int a = 0; a < 3; ++a) {
+                    const float mid = 0.5f * (car.tailPos[0][a] + car.tailPos[1][a]);
+                    car.exhPos[side][a] = mid + (car.tailPos[side][a] - mid) * 0.62f - m[8 + a] * 0.34f;
+                }
+                car.haveExh[side] = true;
+            } else
+                car.haveExh[side] = false;
+        }
+    }
 }
 
 // Markers of one race in TrackPosMarkersAll.bin (see TrackWorld.h), grouped by name hash.

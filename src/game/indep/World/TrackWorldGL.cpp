@@ -196,6 +196,7 @@ void TrackWorld::InitShaders()
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
     m_progSky = getenv("NFSU2_CLASSIC_SKY") ? 0 : GLShader::Build("sky", Shaders::kSkyVS, Shaders::kSkyFS);
     m_progStageBg = GLShader::Build("stage-bg", Shaders::kSkyVS, Shaders::kStageBgFS);
+    m_progFlame = getenv("NFSU2_NO_FLAMES") ? 0 : GLShader::Build("flame", Shaders::kFlameVS, Shaders::kFlameFS);
     printf("[GLSL] programs: world %u, interior %u, car %u, post %u / %u / %u\n", m_progWorld, m_progInterior, m_progCar, m_progBright, m_progBlur, m_progComposite);
 }
 
@@ -1146,6 +1147,7 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
         GLShader::Use(0);
         if (!reflect) {
             DrawCarLights(cam, day);
+            DrawCarFlames(cam, day);
             DrawTyreEffects(cam);
         }
     } else {
@@ -1522,6 +1524,239 @@ void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
             }
         }
     }
+    glPopAttrib();
+}
+
+
+// ---- Nitrous flames (ISSUES #317) ----------------------------------------------------------------------------------------------------------
+// The original plays the emitter set XES_NOS_FlameA (CARFX_NITRO, texture SFX_FIREB: a 2 x 2 atlas of fire frames) at the exhaust.  Here the
+// jet is a chain of turbulent flame sprites along the pipe axis (white-blue core, orange body, dark red tips, shock diamonds near the
+// pipe), the SFX_FIREB frames tear away from it as particles that the air carries behind the car, glowing embers fly off as streaks, and a
+// glare plus a warm pool on the road light the surroundings.  The ignition throws a fireball.
+static float Rnd01(unsigned &s)
+{
+    s = s * 1664525u + 1013904223u;
+    return float(s >> 8) * (1.0f / 16777216.0f);
+}
+
+void TrackWorld::UpdateFlames(float dt)
+{
+    if (dt <= 0.0f)
+        return;
+    static unsigned seed = 12345u;
+    m_flameClock += dt;
+    for (Car &car : m_cars) {
+        car.nos += ((car.nosOn ? 1.0f : 0.0f) - car.nos) * std::min(1.0f, dt * (car.nosOn ? 16.0f : 7.0f));
+        car.burst = std::max(0.0f, car.burst - dt * 2.8f);
+        const float *t = car.xf;
+        if (car.havePrev)
+            for (int a = 0; a < 3; ++a)
+                car.vel[a] += ((t[3 + 4 * a] - car.prevPos[a]) / dt - car.vel[a]) * std::min(1.0f, dt * 12.0f);
+        for (int a = 0; a < 3; ++a)
+            car.prevPos[a] = t[3 + 4 * a];
+        car.havePrev = true;
+        if (std::fabs(car.vel[0]) + std::fabs(car.vel[1]) > 300.0f)
+            car.vel[0] = car.vel[1] = car.vel[2] = 0.0f; // a respawn, not a speed
+        if (car.nos < 0.04f && car.burst < 0.04f)
+            continue;
+        if (t[3] > 5.0e4f)
+            continue; // hidden (the garage shows only the player's car)
+        const float fl = std::max(1e-4f, std::sqrt(car.fwd[0] * car.fwd[0] + car.fwd[1] * car.fwd[1] + car.fwd[2] * car.fwd[2]));
+        const float ax = -car.fwd[0] / fl, ay = -car.fwd[1] / fl, az = -car.fwd[2] / fl * 0.35f; // the jet axis, pointing back
+        for (int side = 0; side < 2; ++side) {
+            if (!car.haveExh[side])
+                continue;
+            car.emitAcc[side] += dt * (95.0f * car.nos + 340.0f * car.burst);
+            while (car.emitAcc[side] >= 1.0f && m_flames.size() < 1600) {
+                car.emitAcc[side] -= 1.0f;
+                Flame f;
+                const bool ember = Rnd01(seed) < 0.22f;
+                const float jet = (ember ? 6.0f : 10.0f) + 12.0f * Rnd01(seed);
+                const float k = 0.75f + 0.45f * car.nos + 0.7f * car.burst;
+                f.x = car.exhPos[side][0] + ax * 0.12f * Rnd01(seed), f.y = car.exhPos[side][1] + ay * 0.12f * Rnd01(seed), f.z = car.exhPos[side][2];
+                const float spread = ember ? 3.2f : 0.9f;
+                f.vx = car.vel[0] * 0.55f + ax * jet * k + (Rnd01(seed) - 0.5f) * spread;
+                f.vy = car.vel[1] * 0.55f + ay * jet * k + (Rnd01(seed) - 0.5f) * spread;
+                f.vz = car.vel[2] * 0.55f + az * jet * k + (Rnd01(seed) - 0.5f) * spread * 0.8f + 0.4f;
+                f.kind = ember ? 1 : 0;
+                f.cell = int(Rnd01(seed) * 3.99f);
+                f.life = ember ? 0.45f + 0.7f * Rnd01(seed) : 0.22f + 0.30f * Rnd01(seed);
+                f.size = ember ? 0.05f : 0.20f + 0.20f * Rnd01(seed) + 0.15f * car.burst;
+                m_flames.push_back(f);
+            }
+        }
+    }
+    for (Flame &f : m_flames) {
+        f.age += dt;
+        const float drag = f.kind == 1 ? 1.6f : 5.5f; // the air stops the fire quickly; the embers fly on
+        f.vx -= f.vx * std::min(1.0f, drag * dt), f.vy -= f.vy * std::min(1.0f, drag * dt);
+        f.vz += (f.kind == 1 ? -9.0f : 2.4f) * dt; // the flames rise, the embers fall
+        f.x += f.vx * dt, f.y += f.vy * dt, f.z += f.vz * dt;
+    }
+    m_flames.erase(std::remove_if(m_flames.begin(), m_flames.end(), [](const Flame &f) { return f.age >= f.life; }), m_flames.end());
+}
+
+void TrackWorld::DrawCarFlames(const Camera &cam, bool day) const
+{
+    if (!m_progFlame || getenv("NFSU2_NO_FLAMES"))
+        return;
+    bool any = !m_flames.empty();
+    for (const Car &car : m_cars)
+        any = any || car.nos > 0.02f || car.burst > 0.02f;
+    if (!any)
+        return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT | GL_TEXTURE_BIT);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_FOG);
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_TEXTURE_2D);
+    GLShader::Use(m_progFlame);
+    const GLint modeLoc = GLShader::Uniform(m_progFlame, "uMode"), seedLoc = GLShader::Uniform(m_progFlame, "uSeed"),
+                cellLoc = GLShader::Uniform(m_progFlame, "uCell"), cellScaleLoc = GLShader::Uniform(m_progFlame, "uCellScale");
+    GLShader::Set1f(GLShader::Uniform(m_progFlame, "uTime"), m_flameClock);
+    GLShader::Set1i(GLShader::Uniform(m_progFlame, "uTex"), 0);
+    const float dayK = day ? 0.8f : 1.0f;
+    const unsigned fireTex = const_cast<TrackWorld *>(this)->GLTexture(0xb3095eb7u);   // SFX_FIREB
+    const unsigned glareTex = const_cast<TrackWorld *>(this)->GLTexture(0x17e5ebd2u);  // SFX_FLARE_GLOWA
+
+    // camera-facing basis for a point
+    auto basis = [&](float px, float py, float pz, float &rx, float &ry, float &rz, float &ux, float &uy, float &uz) {
+        float dx = px - cam.x, dy = py - cam.y, dz = pz - cam.z;
+        const float dl = std::max(1e-4f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        dx /= dl, dy /= dl, dz /= dl;
+        rx = dy, ry = -dx, rz = 0.0f;
+        const float rl = std::max(1e-4f, std::sqrt(rx * rx + ry * ry));
+        rx /= rl, ry /= rl;
+        ux = ry * dz - 0.0f, uy = -rx * dz, uz = rx * dy - ry * dx;
+    };
+    // a sprite whose "up" is rolled to point along (ax, ay, az) on screen: flame tongues stream away from the pipe
+    auto sprite = [&](float px, float py, float pz, float size, float stretch, float ax, float ay, float az, float r, float g, float b, float a) {
+        float rx, ry, rz, ux, uy, uz;
+        basis(px, py, pz, rx, ry, rz, ux, uy, uz);
+        // project the stream direction on the view plane
+        float sx = ax * rx + ay * ry + az * rz, sy = ax * ux + ay * uy + az * uz;
+        const float sl = std::sqrt(sx * sx + sy * sy);
+        if (sl > 1e-3f)
+            sx /= sl, sy /= sl;
+        else
+            sx = 0.0f, sy = -1.0f; // looking straight down the pipe: the sprite just faces the camera
+        // 2-D frame on the view plane: v along the stream (-> the quad's +y runs away from the pipe)
+        const float vx = sx * rx + sy * ux, vy = sx * ry + sy * uy, vz = sx * rz + sy * uz;
+        const float wx = -sy * rx + sx * ux, wy = -sy * ry + sx * uy, wz = -sy * rz + sx * uz;
+        const float hw = size, hl = size * stretch;
+        glColor4f(r, g, b, a);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0), glVertex3f(px - wx * hw - vx * hl, py - wy * hw - vy * hl, pz - wz * hw - vz * hl);
+        glTexCoord2f(1, 0), glVertex3f(px + wx * hw - vx * hl, py + wy * hw - vy * hl, pz + wz * hw - vz * hl);
+        glTexCoord2f(1, 1), glVertex3f(px + wx * hw + vx * hl, py + wy * hw + vy * hl, pz + wz * hw + vz * hl);
+        glTexCoord2f(0, 1), glVertex3f(px - wx * hw + vx * hl, py - wy * hw + vy * hl, pz - wz * hw + vz * hl);
+        glEnd();
+    };
+    auto flameColour = [](float t, float &r, float &g, float &b) { // t: 0 at the pipe .. 1 at the tip
+        // blue-white nitrous core -> yellow-orange body -> deep red tip
+        const float c0[3] = {0.40f, 0.62f, 1.00f}, c1[3] = {1.00f, 0.74f, 0.34f}, c2[3] = {1.00f, 0.36f, 0.07f}, c3[3] = {0.55f, 0.10f, 0.03f};
+        const float *a = c0, *b2 = c1;
+        float u = t / 0.28f;
+        if (t > 0.28f) a = c1, b2 = c2, u = (t - 0.28f) / 0.34f;
+        if (t > 0.62f) a = c2, b2 = c3, u = (t - 0.62f) / 0.38f;
+        u = std::min(1.0f, u);
+        r = a[0] + (b2[0] - a[0]) * u, g = a[1] + (b2[1] - a[1]) * u, b = a[2] + (b2[2] - a[2]) * u;
+    };
+
+    for (const Car &car : m_cars) {
+        if (car.nos < 0.02f && car.burst < 0.02f)
+            continue;
+        if (car.xf[3] > 5.0e4f)
+            continue;
+        const float fl = std::max(1e-4f, std::sqrt(car.fwd[0] * car.fwd[0] + car.fwd[1] * car.fwd[1] + car.fwd[2] * car.fwd[2]));
+        const float ax = -car.fwd[0] / fl, ay = -car.fwd[1] / fl, az = -car.fwd[2] / fl;
+        const float power = std::min(1.4f, car.nos + 0.9f * car.burst);
+        for (int side = 0; side < 2; ++side) {
+            if (!car.haveExh[side])
+                continue;
+            const float *p = car.exhPos[side];
+            const float flick = 0.88f + 0.12f * std::sin(m_flameClock * 53.0f + float(side) * 2.0f) + 0.06f * std::sin(m_flameClock * 91.0f);
+            const float L = (0.45f + 1.35f * car.nos + 1.1f * car.burst) * flick; // jet length in metres
+            // jet: a chain of turbulent sprites along the pipe axis
+            GLShader::Set1f(modeLoc, 0.0f);
+            glBindTexture(GL_TEXTURE_2D, m_glWhite);
+            const int n = 14;
+            for (int i = 0; i < n; ++i) {
+                const float t = (float(i) + 0.5f) / float(n);
+                float r, g, b;
+                flameColour(t, r, g, b);
+                const float wob = std::sin(m_flameClock * 31.0f + float(i) * 1.9f + float(side) * 3.1f) * 0.035f * t;
+                const float wob2 = std::cos(m_flameClock * 27.0f + float(i) * 2.3f) * 0.03f * t;
+                const float px = p[0] + ax * L * t + wob, py = p[1] + ay * L * t + wob2, pz = p[2] + az * L * t + 0.35f * L * t * t * 0.2f;
+                const float size = (0.07f + 0.14f * std::pow(t, 0.8f)) * (0.7f + 0.5f * power);
+                const float a = power * (1.0f - t) * (1.0f - t * 0.4f) * 0.30f * dayK;
+                GLShader::Set1f(seedLoc, float(i) * 0.37f + float(side) * 1.3f);
+                sprite(px, py, pz, size, 2.6f - 1.2f * t, ax, ay, az, r, g, b, a);
+            }
+            // shock diamonds: bright beads in the first third of the jet
+            GLShader::Set1f(modeLoc, 3.0f);
+            for (int i = 0; i < 3; ++i) {
+                const float t = 0.10f + 0.12f * float(i);
+                const float pulse = 0.65f + 0.35f * std::sin(m_flameClock * 70.0f + float(i) * 2.0f);
+                sprite(p[0] + ax * L * t, p[1] + ay * L * t, p[2] + az * L * t, 0.075f * (0.9f + 0.4f * power), 1.5f, ax, ay, az, 0.75f, 0.88f, 1.0f,
+                       power * pulse * (1.0f - 1.5f * t) * 0.95f * dayK);
+            }
+            // the glare at the pipe mouth and the ignition flash
+            GLShader::Set1f(modeLoc, 1.0f);
+            glBindTexture(GL_TEXTURE_2D, glareTex);
+            GLShader::Set2f(cellLoc, 0.0f, 0.0f);
+            GLShader::Set1f(cellScaleLoc, 1.0f);
+            sprite(p[0] + ax * 0.12f, p[1] + ay * 0.12f, p[2] + az * 0.12f, 0.55f + 0.5f * power, 1.0f, ax, ay, az, 1.0f, 0.62f, 0.30f,
+                   (0.55f * power + 0.7f * car.burst) * dayK);
+        }
+        // a warm pool on the road behind the car and a soft glow around the tail
+        GLShader::Set1f(modeLoc, 3.0f);
+        glBindTexture(GL_TEXTURE_2D, m_glWhite);
+        const float cx = 0.5f * (car.exhPos[0][0] + car.exhPos[1][0]) + ax * 1.6f, cy = 0.5f * (car.exhPos[0][1] + car.exhPos[1][1]) + ay * 1.6f;
+        const float gz = car.groundZ + 0.04f, R = 3.6f * (0.6f + 0.6f * power);
+        glColor4f(1.0f, 0.55f, 0.22f, 0.40f * power * dayK);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0), glVertex3f(cx - R, cy - R, gz);
+        glTexCoord2f(1, 0), glVertex3f(cx + R, cy - R, gz);
+        glTexCoord2f(1, 1), glVertex3f(cx + R, cy + R, gz);
+        glTexCoord2f(0, 1), glVertex3f(cx - R, cy + R, gz);
+        glEnd();
+    }
+
+    // particles: fire frames of SFX_FIREB and glowing embers
+    glBindTexture(GL_TEXTURE_2D, fireTex);
+    for (const Flame &f : m_flames) {
+        if (f.kind != 0)
+            continue;
+        const float u = f.age / f.life;
+        float r, g, b;
+        flameColour(0.1f + 0.9f * u, r, g, b);
+        const float a = (1.0f - u) * (1.0f - u) * std::min(1.0f, f.age * 30.0f) * 0.85f * dayK;
+        GLShader::Set1f(modeLoc, 1.0f);
+        GLShader::Set2f(cellLoc, (f.cell & 1) * 0.5f, (f.cell >> 1) * 0.5f);
+        GLShader::Set1f(cellScaleLoc, 0.5f);
+        float sx = f.vx, sy = f.vy, sz = f.vz;
+        const float sl = std::max(1e-3f, std::sqrt(sx * sx + sy * sy + sz * sz));
+        sprite(f.x, f.y, f.z, f.size * (0.8f + 1.7f * u), 1.0f, sx / sl, sy / sl, sz / sl, r * 1.2f, g * 1.1f, b, a);
+    }
+    GLShader::Set1f(modeLoc, 2.0f);
+    glBindTexture(GL_TEXTURE_2D, m_glWhite);
+    for (const Flame &f : m_flames) {
+        if (f.kind != 1)
+            continue;
+        const float u = f.age / f.life;
+        float sx = f.vx, sy = f.vy, sz = f.vz;
+        const float sl = std::max(1e-3f, std::sqrt(sx * sx + sy * sy + sz * sz));
+        const float len = std::min(0.45f, 0.03f + sl * 0.016f);
+        sprite(f.x - sx / sl * len * 0.0f, f.y, f.z, f.size, len / f.size, sx / sl, sy / sl, sz / sl, 1.0f, 0.58f - 0.3f * u, 0.18f - 0.1f * u,
+               (1.0f - u) * 1.3f * dayK);
+    }
+    GLShader::Use(0);
     glPopAttrib();
 }
 
