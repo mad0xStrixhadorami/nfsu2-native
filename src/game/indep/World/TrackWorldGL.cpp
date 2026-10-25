@@ -199,6 +199,8 @@ void TrackWorld::InitShaders()
 
 void TrackWorld::ReleasePost()
 {
+    if (m_postDepth)
+        glDeleteTextures(1, &m_postDepth), m_postDepth = 0;
     if (m_postScene)
         glDeleteTextures(1, &m_postScene);
     for (unsigned &t : m_postBloom)
@@ -240,6 +242,24 @@ void TrackWorld::PostProcess(int w, int h)
         m_postFboScene = GLShader::GenFramebuffer();
         GLShader::BindFramebuffer(m_postFboScene);
         bool ok = GLShader::AttachColor(m_postScene);
+        // the depth of the frame (for the god rays: far = sky); without it the rays are simply off
+        if (!getenv("NFSU2_NO_RAYS")) {
+            glGenTextures(1, &m_postDepth);
+            glBindTexture(GL_TEXTURE_2D, m_postDepth);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            GLShader::BindFramebuffer(m_postFboScene);
+            if (!GLShader::AttachDepth(m_postDepth)) {
+                fprintf(stderr, "[GLSL] depth capture unavailable: god rays off\n");
+                glDeleteTextures(1, &m_postDepth);
+                m_postDepth = 0;
+                GLShader::BindFramebuffer(m_postFboScene);
+                ok = GLShader::AttachColor(m_postScene); // re-check the colour-only framebuffer
+            }
+        }
         for (int i = 0; i < 2; ++i) {
             m_postFbo[i] = GLShader::GenFramebuffer();
             GLShader::BindFramebuffer(m_postFbo[i]);
@@ -254,7 +274,13 @@ void TrackWorld::PostProcess(int w, int h)
             return;
         }
     }
-    GLShader::BlitWindowTo(m_postFboScene, w, h); // resolves the multisampled frame
+    while (glGetError() != GL_NO_ERROR) {
+    } // errors left by earlier drawing are not the blit's
+    GLShader::BlitWindowTo(m_postFboScene, w, h, m_postDepth != 0); // resolves the multisampled frame (and its depth)
+    if (m_postDepth && glGetError() != GL_NO_ERROR) { // the depth formats do not match: no god rays
+        glDeleteTextures(1, &m_postDepth);
+        m_postDepth = 0;
+    }
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_ALPHA_TEST);
@@ -314,11 +340,29 @@ void TrackWorld::PostProcess(int w, int h)
     GLShader::Set2f(GLShader::Uniform(m_progComposite, "uFxCenter"), m_fxCenter[0], m_fxCenter[1]);
     GLShader::Set2f(GLShader::Uniform(m_progComposite, "uCarPos"), m_fxCar[0], m_fxCar[1]);
     GLShader::Set2f(GLShader::Uniform(m_progComposite, "uCarRad"), m_fxCar[2], m_fxCar[3]);
+    {
+        const float rays = (m_postDepth && !getenv("NFSU2_NO_RAYS")) ? m_raysK * (getenv("NFSU2_RAYS") ? float(atof(getenv("NFSU2_RAYS"))) : 1.0f) : 0.0f;
+        if (getenv("NFSU2_RAYS_DEBUG"))
+            printf("[Rays] post: depth tex %u, rays %.2f, sun %.2f %.2f, loc %d\n", m_postDepth, rays, m_sunUV[0], m_sunUV[1], GLShader::Uniform(m_progComposite, "uRays"));
+        GLShader::Set1i(GLShader::Uniform(m_progComposite, "uDepth"), 2);
+        GLShader::Set1f(GLShader::Uniform(m_progComposite, "uRays"), rays);
+        GLShader::Set2f(GLShader::Uniform(m_progComposite, "uSunUV"), m_sunUV[0], m_sunUV[1]);
+        GLShader::Set1f(GLShader::Uniform(m_progComposite, "uAspectX"), float(w) / float(h));
+        GLShader::Set1f(GLShader::Uniform(m_progComposite, "uTime"), float(SDL_GetTicks()) * 0.001f);
+    }
+    if (m_postDepth) {
+        GLShader::ActiveTexture(2);
+        glBindTexture(GL_TEXTURE_2D, m_postDepth);
+    }
     GLShader::ActiveTexture(1);
     glBindTexture(GL_TEXTURE_2D, m_postBloom[0]);
     GLShader::ActiveTexture(0);
     glBindTexture(GL_TEXTURE_2D, m_postScene);
     quad();
+    if (m_postDepth) {
+        GLShader::ActiveTexture(2);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
     GLShader::ActiveTexture(1);
     glBindTexture(GL_TEXTURE_2D, 0);
     GLShader::ActiveTexture(0);
@@ -544,6 +588,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         ++Perf::g.programSwitches;
         GLShader::Set1i(GLShader::Uniform(m_progInterior, "uTex"), 0);
         GLShader::Set3f(GLShader::Uniform(m_progInterior, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDay"), day ? 1.0f : 0.0f);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogStart"), curFogStart);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogEnd"), curFogEnd);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
@@ -871,6 +916,26 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     }
 
     DrawCarsGL(cam, fogColour, day, kFogStart, kDrawDistance, false);
+    // The sun on screen for the god rays and lens reflections (ISSUES #305): its direction in camera space through the same frustum.
+    {
+        const float sl = std::sqrt(0.62f * 0.62f + 0.45f * 0.45f + 0.64f * 0.64f);
+        const float s3[3] = {0.62f / sl, 0.45f / sl, 0.64f / sl};
+        const float xc = s3[0] * r[0] + s3[1] * r[1] + s3[2] * r[2], yc = s3[0] * u[0] + s3[1] * u[1] + s3[2] * u[2],
+                    zc = s3[0] * f[0] + s3[1] * f[1] + s3[2] * f[2];
+        m_raysK = 0.0f;
+        if (day && zc > 0.05f && !inset) {
+            const float nx = xc / (zc * tanHalf) * side, ny = yc / (zc * tanHalf * aspect);
+            m_sunUV[0] = 0.5f + 0.5f * nx, m_sunUV[1] = 0.5f + 0.5f * ny;
+            // fade out as the sun swings far off to the side of the view
+            const float off = std::max(std::fabs(nx), std::fabs(ny));
+            m_raysK = std::clamp((2.4f - off) / 1.4f, 0.0f, 1.0f) * std::clamp((zc - 0.05f) * 4.0f, 0.0f, 1.0f);
+            if (getenv("NFSU2_RAYS_DEBUG"))
+                printf("[Rays] sun uv %.2f %.2f k %.2f depth %u\n", m_sunUV[0], m_sunUV[1], m_raysK, m_postDepth);
+        }
+    }
+    if (const char *forced = getenv("NFSU2_RAYS_SUN")) // dev aid: "u,v" puts the sun there (uv, 0..1) whatever the camera sees
+        if (day && !inset && sscanf(forced, "%f,%f", &m_sunUV[0], &m_sunUV[1]) == 2)
+            m_raysK = 1.0f;
     if (!inset)
         PostProcess(width, height);
     if (inset)
@@ -1190,6 +1255,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     // 3. the car itself
     DrawCarsGL(cam, fog, false, 400.0f, 900.0f, false);
     m_stageEnv = 0.0f;
+    m_raysK = 0.0f;
     PostProcess(width, height);
     return true;
 }

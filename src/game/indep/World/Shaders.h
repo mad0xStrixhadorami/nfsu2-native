@@ -382,6 +382,7 @@ void main() {
 )";
 
 inline const char *kInteriorFS = R"(#version 120
+uniform float uDay;
 uniform sampler2D uTex;
 uniform vec3 uFogColor;
 uniform float uFogStart;
@@ -535,6 +536,9 @@ void main() {
             float F = 0.06 + 0.94 * pow(1.0 - cosI, 4.0);
             vec3 reflection = mix(vec3(0.05, 0.07, 0.11), vec3(0.20, 0.25, 0.34), clamp(0.5 + 0.5 * reflect(d, N).z, 0.0, 1.0));
             vec3 glass = inside * (1.0 - F) * vec3(0.95, 1.0, 1.0) + reflection * F;
+            // the sun mirrored in the glass (ISSUES #305): a hot spot on windows that face it, strongest at glancing angles
+            vec3 Rg = reflect(d, N);
+            glass += vec3(1.0, 0.93, 0.78) * pow(max(dot(Rg, vec3(0.64, 0.46, 0.66)), 0.0), 160.0) * (1.2 + 3.0 * F) * step(0.5, uDay);
             c = mix(c, glass, clamp(mask, 0.0, 0.92));
         }
     }
@@ -946,7 +950,17 @@ uniform float uNitro;    // 0..1, nitrous burst: a little more of everything
 uniform vec2 uFxCenter;  // the vanishing point, uv
 uniform vec2 uCarPos;    // the car's ellipse centre in uv
 uniform vec2 uCarRad;    // and radii; x = 0: no car in view
+uniform sampler2D uDepth; // the frame's depth: 1.0 = nothing drawn = sky (ISSUES #305)
+uniform vec2 uSunUV;      // the sun on screen (uv, may lie outside)
+uniform float uRays;      // god rays and lens reflections strength 0..1
+uniform float uAspectX;   // width / height
+uniform float uTime;
 varying vec2 vUV;
+float skyAt(vec2 uv) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y > 1.0 || uv.y < 0.0)
+        return uv.y > 1.0 ? 1.0 : 0.0; // above the frame is open sky
+    return step(0.99995, texture2D(uDepth, uv).r);
+}
 vec3 filmic(vec3 x) { // ACES fit
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -982,6 +996,60 @@ void main() {
         c.b = mix(c.b, texture2D(uScene, vUV + d * ca).b, 0.5);
     } else {
         c = texture2D(uScene, vUV).rgb;
+    }
+    if (uRays > 1.5) { gl_FragColor = vec4(vec3(skyAt(vUV)), 1.0); return; } // NFSU2_RAYS=2: show the sky mask (dev aid)
+    if (uRays > 0.002) {
+        // ---- god rays: march from the pixel towards the sun, collecting open sky; buildings and trees cut the shafts ----
+        vec2 toSun = uSunUV - vUV;
+        vec2 aspect = vec2(uAspectX, 1.0);
+        float dist = length(toSun * aspect);
+        const int N = 48;
+        vec2 stepv = toSun * 0.95 / float(N);
+        float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        vec2 p = vUV + stepv * jit;
+        float illum = 1.0, acc = 0.0;
+        for (int i = 0; i < N; ++i) {
+            float sky = skyAt(p);
+            vec3 sc = texture2D(uScene, clamp(p, 0.001, 0.999)).rgb;
+            float lum = dot(sc, vec3(0.299, 0.587, 0.114));
+            acc += sky * illum * (0.45 + 0.55 * smoothstep(0.25, 0.85, lum));
+            illum *= 0.962;
+            p += stepv;
+        }
+        float shaft = acc / float(N);
+        shaft *= pow(1.0 - clamp(dist * 0.62, 0.0, 1.0), 1.4);              // thins out with distance from the sun
+        float pixelSky = skyAt(vUV);
+        shaft *= mix(1.0, 0.55, pixelSky);                                    // against open sky the shafts add less
+        vec3 rayCol = vec3(1.0, 0.86, 0.62);
+        c += rayCol * shaft * uRays * 0.95;
+        // ---- lens reflections: ghosts along the line through the screen centre, a halo and a streak, only while the sun disc is visible ----
+        float vis = 0.0;
+        for (int k = 0; k < 5; ++k) {
+            vec2 o = vec2(k == 0 ? 0.0 : (k == 1 ? 0.012 : (k == 2 ? -0.012 : 0.0)), k == 3 ? 0.012 : (k == 4 ? -0.012 : 0.0));
+            vis += skyAt(uSunUV + o) * 0.2;
+        }
+        vis *= uRays * smoothstep(1.35, 0.7, max(abs(uSunUV.x - 0.5) * 2.0, abs(uSunUV.y - 0.5) * 2.0));
+        if (vis > 0.002) {
+            vec2 ctr = vec2(0.5);
+            vec2 axis = uSunUV - ctr;
+            vec2 q = (vUV - ctr) * aspect;
+            vec3 fl = vec3(0.0);
+            for (int i = 0; i < 5; ++i) {
+                float kk = i == 0 ? -0.55 : (i == 1 ? 0.38 : (i == 2 ? 0.8 : (i == 3 ? -1.15 : 1.55)));
+                float rr = i == 0 ? 0.055 : (i == 1 ? 0.035 : (i == 2 ? 0.095 : (i == 3 ? 0.045 : 0.07)));
+                vec3 tint = i == 0 ? vec3(1.0, 0.65, 0.35) : (i == 1 ? vec3(0.35, 0.75, 1.0) : (i == 2 ? vec3(0.6, 1.0, 0.55) : (i == 3 ? vec3(1.0, 0.45, 0.7) : vec3(0.55, 0.6, 1.0))));
+                vec2 gp = axis * kk * aspect;
+                float d = length(q - gp) / rr;
+                float disc = (1.0 - smoothstep(0.82, 1.0, d)) * 0.10 + exp(-pow((d - 0.92) * 9.0, 2.0)) * 0.15; // a filled disc with a bright rim
+                fl += tint * disc;
+            }
+            // the halo ring around the sun and the horizontal anamorphic streak
+            float ds = length((vUV - uSunUV) * aspect);
+            fl += vec3(1.0, 0.85, 0.6) * exp(-pow((ds - 0.20) * 16.0, 2.0)) * 0.22;
+            fl += vec3(1.0, 0.9, 0.75) * exp(-ds * 7.0) * 0.32;
+            fl += vec3(0.55, 0.75, 1.0) * exp(-abs(vUV.y - uSunUV.y) * 70.0) * exp(-abs(vUV.x - uSunUV.x) * 1.6) * 0.45;
+            c += fl * vis;
+        }
     }
     vec3 b = texture2D(uBloom, vUV).rgb;
     c += b * uBloomStrength;

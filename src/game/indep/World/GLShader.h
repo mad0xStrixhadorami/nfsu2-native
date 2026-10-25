@@ -36,6 +36,7 @@ void DeleteFramebuffer(GLuint fbo);
 void BindFramebuffer(GLuint fbo); // 0 = the window's framebuffer
 bool AttachColor(GLuint texture);  // attaches to the currently bound framebuffer; true when complete
 // Resolves the window's (possibly multisampled) framebuffer into `dst` (size w x h); leaves the window framebuffer bound.
-void BlitWindowTo(GLuint dst, int w, int h);
+void BlitWindowTo(GLuint dst, int w, int h, bool depth = false);
+bool AttachDepth(GLuint texture); // a depth texture on the bound framebuffer; true when it is complete
 void ActiveTexture(int unit);
 } // namespace GLShader

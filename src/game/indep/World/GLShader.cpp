@@ -168,13 +168,20 @@ bool AttachColor(GLuint texture)
 } // namespace GLShader
 
 namespace GLShader {
-void BlitWindowTo(GLuint dst, int w, int h)
+void BlitWindowTo(GLuint dst, int w, int h, bool depth)
 {
     constexpr GLenum kRead = 0x8CA8, kDraw = 0x8CA9;
     pBindFramebuffer(kRead, 0);
     pBindFramebuffer(kDraw, dst);
-    pBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    pBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT | (depth ? GL_DEPTH_BUFFER_BIT : 0), GL_NEAREST);
     pBindFramebuffer(kFramebuffer, 0);
+}
+
+bool AttachDepth(GLuint texture)
+{
+    constexpr GLenum kDepthAttachment = 0x8D00;
+    pFramebufferTexture2D(kFramebuffer, kDepthAttachment, GL_TEXTURE_2D, texture, 0);
+    return pCheckFramebufferStatus(kFramebuffer) == kFramebufferComplete;
 }
 void ActiveTexture(int unit) { pActiveTexture(0x84C0 + GLenum(unit)); }
 } // namespace GLShader

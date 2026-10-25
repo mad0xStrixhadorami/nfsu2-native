@@ -396,11 +396,12 @@ private:
     int InteriorClassOf(uint32_t hash);
     unsigned m_progWorldLite = 0; // the cheap world shader for far cells (ISSUES #282)
     unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0;
-    unsigned m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
+    unsigned m_postDepth = 0, m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
     int m_postW = 0, m_postH = 0;
     bool m_shadersTried = false;
     void InitShaders();
     void PostProcess(int w, int h);
+    float m_sunUV[2] = {0.5f, 2.0f}, m_raysK = 0.0f; // the sun on screen (uv) and the god-ray / lens-reflection strength (ISSUES #305)
     float m_stageEnv = 0.0f, m_stageA[3] = {}, m_stageB[3] = {}; // the car shader's studio environment (RenderStage)
     void DrawCarsGL(const Camera &cam, const float fogColour[4], bool day, float kFogStart, float kDrawDistance, bool reflect);
     float m_fxMotion = 0, m_fxNitro = 0, m_fxCar[4] = {0, 0, 0, 0}, m_fxCenter[2] = {0.5f, 0.6f};
