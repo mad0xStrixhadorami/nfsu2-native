@@ -712,12 +712,24 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
 
     // First frame of a loaded world: upload every cell now, during loading, instead of the first time it comes into view.
     if (m_warmAll && !m_scene) {
+        if (m_warmKeys.empty()) {
+            for (const auto &kv : m_cells)
+                m_warmKeys.push_back(kv.first);
+            m_warmIdx = 0;
+        }
         const unsigned t0 = SDL_GetTicks();
-        for (auto &kv : m_cells)
-            upload(m_glCells[kv.first], kv.second.render);
-        m_warmAll = false;
-        printf("[GL] all %zu cells uploaded in %u ms (%.0f MB of the %.0f MB arena)\n", m_cells.size(), SDL_GetTicks() - t0,
-               double(m_arenaUsed * sizeof(Vertex)) / 1048576.0, double(m_arenaCap * sizeof(Vertex)) / 1048576.0);
+        while (m_warmIdx < m_warmKeys.size()) {
+            const int64_t key = m_warmKeys[m_warmIdx++];
+            upload(m_glCells[key], m_cells[key].render);
+            if (m_warmBudgetMs > 0 && int(SDL_GetTicks() - t0) >= m_warmBudgetMs)
+                break;
+        }
+        if (m_warmIdx >= m_warmKeys.size()) {
+            m_warmAll = false;
+            m_warmKeys.clear();
+            printf("[GL] all %zu cells uploaded (%.0f MB of the %.0f MB arena)\n", m_cells.size(),
+                   double(m_arenaUsed * sizeof(Vertex)) / 1048576.0, double(m_arenaCap * sizeof(Vertex)) / 1048576.0);
+        }
     }
     // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.
     upload(m_glPanorama, m_panorama);

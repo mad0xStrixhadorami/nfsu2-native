@@ -46,6 +46,8 @@ ModernUI::~ModernUI()
         SDL_DestroyTexture(m_map);
     if (m_loadArt)
         SDL_DestroyTexture(m_loadArt);
+    if (m_capture)
+        SDL_DestroyTexture(m_capture);
     for (auto &f : m_frames)
         if (f.second)
             SDL_DestroyTexture(f.second);
@@ -661,6 +663,72 @@ void ModernUI::DrawCoverFrame(int w, int h, const SDL_Rect &page, std::string_vi
     Quad({lx, page.y + 122 * s}, {lx + 70 * s, page.y + 122 * s}, {lx + 70 * s, page.y + 125 * s}, {lx, page.y + 125 * s}, kWarm, kWarm, kWarm, kWarm);
     Text(lx, page.y + 142 * s, 22 * s, detail, {190, 212, 238, 240}, 0);
     Text(W * 0.5f, H - 40 * s, 18 * s, hint, {140, 175, 215, 220}, 1);
+}
+
+void ModernUI::CaptureFrame()
+{
+    if (!m_r)
+        return;
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(m_r, &w, &h);
+    if (w < 16 || h < 16)
+        return;
+    std::vector<uint32_t> px(size_t(w) * size_t(h));
+    const SDL_Rect whole{0, 0, w, h};
+    if (SDL_RenderReadPixels(m_r, &whole, SDL_PIXELFORMAT_ARGB8888, px.data(), w * 4) != 0)
+        return;
+    for (uint32_t &p : px)
+        p |= 0xff000000u;
+    if (!m_capture || m_capW != w || m_capH != h) {
+        if (m_capture)
+            SDL_DestroyTexture(m_capture);
+        m_capture = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        SDL_SetTextureBlendMode(m_capture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(m_capture, SDL_ScaleModeLinear);
+        m_capW = w, m_capH = h;
+    }
+    SDL_UpdateTexture(m_capture, nullptr, px.data(), w * 4);
+}
+
+void ModernUI::DrawFade(int w, int h, float alpha)
+{
+    if (alpha <= 0.002f)
+        return;
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(m_r, 0, 0, 0, Uint8(std::clamp(alpha, 0.0f, 1.0f) * 255.0f));
+    const SDL_Rect all{0, 0, w, h};
+    SDL_RenderFillRect(m_r, &all);
+}
+
+void ModernUI::DrawWipe(int w, int h, float t)
+{
+    if (!m_capture)
+        return;
+    const float W = float(w), H = float(h);
+    t = std::clamp(t, 0.0f, 1.0f);
+    const float e = t < 0.5f ? 4.0f * t * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f; // ease in-out
+    const float slant = 0.20f * H;
+    const float x = -slant * 1.5f + (W + slant * 3.0f) * e; // the edge at the vertical centre
+    // the captured frame survives to the right of the slanted edge (its top leans right), and drifts a little as it leaves
+    const SDL_Color white{255, 255, 255, 255};
+    const float zoom = 1.0f + 0.07f * e;
+    auto uv = [&](float px, float py) { return SDL_FPoint{0.5f + (px / W - 0.5f) / zoom, 0.5f + (py / H - 0.5f) / zoom}; };
+    const float xt = x + slant, xb = x - slant; // top / bottom of the edge
+    const float lt = std::clamp(xt, 0.0f, W), lb = std::clamp(xb, 0.0f, W);
+    if (lt < W || lb < W) {
+        const SDL_Vertex v[4] = {{{lt, 0}, white, uv(lt, 0)}, {{W, 0}, white, uv(W, 0)}, {{W, H}, white, uv(W, H)}, {{lb, H}, white, uv(lb, H)}};
+        static const int idx[6] = {0, 1, 2, 0, 2, 3};
+        SDL_SetTextureAlphaMod(m_capture, Uint8(255.0f * (1.0f - 0.35f * e)));
+        SDL_RenderGeometry(m_r, m_capture, v, 4, idx, 6);
+    }
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    // a dark shadow on the leaving frame, the soft accent glow on both sides of the edge and a hot white core
+    const float fade = std::sin(std::clamp(t, 0.0f, 1.0f) * kPi); // the light is strongest mid-sweep
+    const float sh = 70.0f * H / 720.0f, gl = 150.0f * H / 720.0f, core = 4.0f * H / 720.0f;
+    Quad({xt, 0}, {xt + sh, 0}, {xb + sh, H}, {xb, H}, {0, 0, 0, Uint8(120.0f * fade)}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, Uint8(120.0f * fade)});
+    Quad({xt - gl, 0}, {xt, 0}, {xb, H}, {xb - gl, H}, Alpha(kAccent, 0.0f), Alpha(kAccent, 0.55f * fade), Alpha(kAccent, 0.55f * fade), Alpha(kAccent, 0.0f));
+    Quad({xt, 0}, {xt + gl * 0.35f, 0}, {xb + gl * 0.35f, H}, {xb, H}, Alpha(kWarm, 0.45f * fade), Alpha(kWarm, 0.0f), Alpha(kWarm, 0.0f), Alpha(kWarm, 0.45f * fade));
+    Quad({xt - core, 0}, {xt + core, 0}, {xb + core, H}, {xb - core, H}, Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade));
 }
 
 void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)

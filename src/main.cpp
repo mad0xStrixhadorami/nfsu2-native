@@ -447,6 +447,34 @@ int main(int argc, char **argv)
     // The loading screen (ISSUES #301): ModernUI::DrawLoading over the whole window. The overall bar is monotonic: each load phase owns a
     // slice [loadBase, loadBase + loadSpan] and reports its own 0..1 progress inside it.
     const Uint32 loadStart = SDL_GetTicks();
+    // Transitions (ISSUES #311): a captured menu frame is wiped away at the start of a load, and the finished loading frame is wiped away over the
+    // game when it starts; a load that begins without a capture fades in from black.
+    bool transActive = false, transFromCapture = false, revealCaptured = false, pendingReveal = false;
+    Uint32 transStart = 0, transLast = 0, lastLoadingDraw = 0, sessionStart = 0;
+    float transAccum = 0.0f;
+    constexpr float kTransSeconds = 0.9f;
+    const bool noTransitions = getenv("NFSU2_NO_TRANSITIONS") != nullptr;
+    auto transitionDraw = [&](int tw, int th) { // logical size must be reset by the caller
+        if (!transActive)
+            return;
+        // progress advances by at most 33 ms per drawn frame, so a hitch (the first game frames stall) cannot swallow the wipe
+        const Uint32 nowT = SDL_GetTicks();
+        if (transStart == transLast)
+            transAccum = 0.0f;
+        transAccum += std::min(float(nowT - transLast) * 0.001f, 0.033f);
+        transLast = nowT;
+        const float t = transAccum / kTransSeconds;
+        static int transFrames = 0;
+        ++transFrames;
+        if (t >= 1.0f) {
+            transActive = false;
+            if (getenv("NFSU2_TRANS_DEBUG"))
+                printf("[Transition] done after %d frames, %u ms\n", transFrames, nowT - transStart);
+            transFrames = 0;
+        } else {
+            modernUi.DrawWipe(tw, th, t);
+        }
+    };
     float loadBase = 0.0f, loadSpan = 1.0f, loadShown = 0.0f;
     const char *loadStage = nullptr;
     auto loadingFrame = [&](const char *label, float f) -> bool {
@@ -468,7 +496,27 @@ int main(int argc, char **argv)
         SDL_RenderSetLogicalSize(ren, 0, 0);
         int lw, lh;
         SDL_GetRendererOutputSize(ren, &lw, &lh);
-        const bool ok = modernUi.DrawLoading(lw, lh, stage ? stage : "Loading", loadShown, float(SDL_GetTicks() - loadStart) * 0.001f);
+        const Uint32 nowMs = SDL_GetTicks();
+        if (nowMs - lastLoadingDraw > 1500) { // a new load begins
+            sessionStart = nowMs;
+            revealCaptured = false;
+            transStart = nowMs, transLast = nowMs;
+            transActive = transFromCapture; // wipe the captured menu frame away, else fade in from black
+            transFromCapture = false;
+        }
+        lastLoadingDraw = nowMs;
+        const bool ok = modernUi.DrawLoading(lw, lh, stage ? stage : "Loading", loadShown, float(nowMs - sessionStart) * 0.001f);
+        if (ok && !noTransitions && loadShown >= 0.999f && !revealCaptured) { // the finished loading frame is kept to wipe away over the game
+            modernUi.CaptureFrame();
+            revealCaptured = true;
+            pendingReveal = true;
+        }
+        if (ok && !noTransitions) {
+            if (transActive)
+                transitionDraw(lw, lh);
+            else if (nowMs - sessionStart < 450)
+                modernUi.DrawFade(lw, lh, 1.0f - float(nowMs - sessionStart) / 450.0f);
+        }
         // NFSU2_LOADING_SHOT=<prefix>: save the loading screen as <prefix>_<percent>.bmp at 10 % steps (dev aid)
         if (ok)
             if (const char *shot = getenv("NFSU2_LOADING_SHOT")) {
@@ -1076,7 +1124,7 @@ int main(int argc, char **argv)
             world.AddExtraPack(inGameCommon);
             world.AddExtraPack(globalB); // GLOBALB also holds shared object textures (OBJ_*)
         }
-        loadBase = 0.3f, loadSpan = 0.7f, loadStage = "Building the city";
+        loadBase = 0.3f, loadSpan = 0.55f, loadStage = "Building the city";
         world.SetProgress([&](float f) { loadingFrame("", f); });
         const bool loaded = !stream.empty() && world.Load(stream, neighbours);
         world.SetProgress(nullptr);
@@ -1089,6 +1137,24 @@ int main(int argc, char **argv)
         {
             std::vector<uint8_t> regionBundle = ReadGameFile(*fs, ("TRACKS\\" + region + ".BUN").c_str());
             world.LoadBarrierGroups(regionBundle);
+        }
+        // The first RenderGL uploads every cell to the GPU (~1.3 s). Done here in 24 ms slices under the loading screen, so its animation and the
+        // bar keep moving instead of freezing at 100 % (ISSUES #311).
+        if (!getenv("NFSU2_NO_WARMUP") && modernUi.Ready()) {
+            loadBase = 0.85f, loadSpan = 0.15f, loadStage = "Preparing graphics";
+            world.SetWarmBudget(24);
+            for (int guard = 0; world.Warming() && guard < 3000; ++guard) {
+                int ww, wh;
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                SDL_GetRendererOutputSize(ren, &ww, &wh);
+                world.RenderGL(ren, camera, ww, wh);
+                if (!loadingFrame("", world.WarmFraction()))
+                    break;
+            }
+            world.SetWarmBudget(0);
+            loadingFrame("", 1.0f);
+            loadStage = nullptr;
+            SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
         }
         minimap.Build(world.RoadTriangles());
         minimapBound = false; // the new HUD package gets the map image again
@@ -2996,8 +3062,15 @@ int main(int argc, char **argv)
             if (!startup.IsMessageDialogOpen())
                 fe.RenderCarPreviewOverlay();
             std::string region;
-            if (startup.TakeRaceRequest(region))
+            if (startup.TakeRaceRequest(region)) {
+                if (modernUi.Ready() && !noTransitions) { // keep the menu frame: it wipes away at the start of the load
+                    SDL_RenderSetLogicalSize(ren, 0, 0);
+                    modernUi.CaptureFrame();
+                    SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                    transFromCapture = true;
+                }
                 enterWorld(region);
+            }
         }
 
         // Options > Video > Brightness / Contrast (-15..15): a translucent wash over the finished frame.
@@ -3045,6 +3118,19 @@ int main(int argc, char **argv)
                 SDL_FreeSurface(s);
                 running = false;
             }
+        }
+        // Screen transitions (#311): the finished loading frame wipes away over the first frames of the game
+        if (pendingReveal && modernUi.Ready()) {
+            pendingReveal = false;
+            transActive = true;
+            transStart = transLast = SDL_GetTicks();
+        }
+        if (transActive && modernUi.Ready()) {
+            SDL_RenderSetLogicalSize(ren, 0, 0);
+            int tw, th;
+            SDL_GetRendererOutputSize(ren, &tw, &th);
+            transitionDraw(tw, th);
+            SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
         }
         Perf::Lap(Perf::kUI);
         SDL_RenderPresent(ren);

@@ -61,6 +61,9 @@ switchable off with environment variables (see the table at the bottom) if you w
 <td width="50%"><img src="docs/media/shikun_orbit.gif" alt="Old Israeli apartment block"/><br/><sub><b>Old apartment blocks</b> — generated "shikun" buildings with slatted plastic shutters, wall air-conditioners, balconies and a roof of solar water heaters, in Jerusalem stone.</sub></td>
 </tr>
 <tr>
+<td colspan="2" align="center"><img src="docs/media/transitions.gif" width="50%" alt="Screen transitions"/><br/><sub><b>Screen transitions</b> — menu → loading → game, with a glowing diagonal wipe between screens and a loading backdrop that keeps moving (<code>NFSU2_NO_TRANSITIONS=1</code> turns the wipes off).</sub></td>
+</tr>
+<tr>
 <td colspan="2" align="center"><img src="docs/media/night_race.gif" width="50%" alt="Night racing"/><br/><sub><b>Night racing</b> (<code>NFSU2_NIGHT=1</code>) — emissive headlights and tail lights, glass covers, light pools on the road, dusk sky with stars.</sub></td>
 </tr>
 </table>
@@ -70,6 +73,7 @@ switchable off with environment variables (see the table at the bottom) if you w
 | Piece | What it does | Log |
 |---|---|---|
 | **Loading screen** | `ModernUI::DrawLoading`: your artwork cover-fitted with a Ken-Burns drift, grading, hints, a single monotonic progress bar fed by every loader (`FENativeInterface::SetLoadingHook`, `TrackWorld::SetProgress`) | #301 |
+| **Screen transitions** | A slanted, glowing light edge wipes one screen away to reveal the next: the menu frame into the loading screen, the finished loading frame over the game (`ModernUI::CaptureFrame` / `DrawWipe`); the graphics upload is done in slices under the loading screen so it never freezes at 100 % | #311 |
 | **Menu showroom** | `TrackWorld::RenderStage`: dark studio backdrop shader, the car drawn by the race's car shader in a *studio* environment (overhead strip box, tall coloured panels), mirrored reflection pass, glossy fading floor, light pool, bloom | #304 |
 | **Modern HUD** | Glass minimap rendered from the live road mesh, speed dial with nitrous gauge, drift counter, wind streaks and a radial speed blur (references: NFS Unbound) | #276, #295–#298 |
 | **Hybrid UI theme** | The original FEng menus keep their layout but are recoloured to the HUD palette | #290 |

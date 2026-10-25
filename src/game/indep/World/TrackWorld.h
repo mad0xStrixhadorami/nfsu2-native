@@ -83,6 +83,11 @@ public:
         bool mirror;
     };
     bool RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, int height, const Inset *inset = nullptr);
+    // The first RenderGL uploads every cell to the GPU (about a second): with a budget (ms) it does a slice per call instead, so the loading
+    // screen can keep animating (ISSUES #311).  Warming() is true until the last cell is in; WarmFraction() is 0..1.
+    void SetWarmBudget(int ms) { m_warmBudgetMs = ms; }
+    bool Warming() const { return m_warmAll && !m_scene && !m_cells.empty(); }
+    float WarmFraction() const { return m_warmKeys.empty() ? 0.0f : float(m_warmIdx) / float(m_warmKeys.size()); }
     void DrawCarLights(const Camera &cam, bool day) const;
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
@@ -434,6 +439,9 @@ private:
     // One vertex arena for every cell (ISSUES #282): cells are sub-allocated lazily, drawn with batched multi-draws under one VAO.
     unsigned m_arena = 0, m_arenaVao = 0;
     size_t m_arenaCap = 0, m_arenaUsed = 0; // in vertices
+    int m_warmBudgetMs = 0;
+    size_t m_warmIdx = 0;
+    std::vector<int64_t> m_warmKeys;
     bool m_warmAll = true;                   // the next RenderGL uploads every cell once (no streaming hitches while driving)
     GLCell m_glPanorama;
     int m_glState = 0; // 0 unknown, 1 available, -1 unavailable

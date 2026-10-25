@@ -58,6 +58,12 @@ public:
     // A magazine cover on show (ISSUES #309): dims the scene, lights and frames the cover `page` (window pixels) and writes the captions around it.
     void DrawCoverFrame(int w, int h, const SDL_Rect &page, std::string_view kicker, std::string_view title, std::string_view detail, std::string_view hint,
                         float seconds);
+    // Screen transitions (ISSUES #311).  CaptureFrame keeps what the window shows now (call with the logical size reset, after drawing the frame
+    // to hide); DrawWipe then draws that frame over whatever has been drawn since, cut away by a slanted, glowing light edge that sweeps left to
+    // right as t goes 0 -> 1; DrawFade lays black over the frame (alpha 0..1).
+    void CaptureFrame();
+    void DrawWipe(int w, int h, float t);
+    void DrawFade(int w, int h, float alpha);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
     void DrawOverlay(int w, int h, const char lines[][96], int count);
     // The loading screen (ISSUES #301): assets/ui/loading.jpg full-window with a slow drift, a stage label, a smooth progress bar with
@@ -78,6 +84,8 @@ private:
     int m_frameCount = 0;
     std::map<int, SDL_Texture *> m_frames; // the most recent few
     SDL_Texture *LoadingFrame(int index);
+    SDL_Texture *m_capture = nullptr;
+    int m_capW = 0, m_capH = 0;
     int m_mapTexSize = 0;
     Glyph m_glyphs[96] = {};
     int m_atlasW = 0, m_atlasH = 0;
