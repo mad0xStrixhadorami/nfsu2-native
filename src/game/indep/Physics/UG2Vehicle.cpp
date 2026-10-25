@@ -487,6 +487,19 @@ void Vehicle::Update(const TrackWorld &world, const Controls &in, float dt)
     UpdateDrift(dt);
     m_wheel[0].steerAngle += m_drift.assist, m_wheel[1].steerAngle += m_drift.assist; // counter-steer help (#291)
 
+    // dev aid (NFSU2_LAUNCH="seconds,vz"): throws the car upwards once, to test landings without a ramp
+    static const char *launch = getenv("NFSU2_LAUNCH");
+    if (launch) {
+        static float launchClock = 0;
+        static bool launched = false;
+        float at = 0, vz = 0, vside = 0, vfwd = 0;
+        launchClock += dt;
+        if (!launched && sscanf(launch, "%f,%f,%f,%f", &at, &vz, &vside, &vfwd) >= 2 && launchClock >= at) {
+            launched = true;
+            m_body.momentum = m_body.momentum + (Vec3{0, 0, vz} + m_body.rot.r[1] * vside + m_body.rot.r[0] * vfwd) * m_body.mass;
+            UpdateDerived();
+        }
+    }
     AutoGearbox();
     CollideWorld(world, dt);
     // Fixed substeps (0x00317428 splits dt into n equal steps of at most 0.0044 s).
@@ -714,6 +727,46 @@ void Vehicle::SuspensionAndContact(const TrackWorld &world, float h)
         w.load = s.grounded ? f * slope : 0.0f;
         if (s.grounded)
             ApplyForce(up * f, w.contact);
+    }
+    // Hard landings (ISSUES #316): the spring force is capped at the car's weight so a kerb cannot catapult it, but a car coming down from a
+    // jump sank through that cap until the hardpoint was more than 0.6 m under the road, found no ground and fell through, tumbling underneath.
+    // A wheel that has used up its travel now takes a contact impulse that removes the velocity into the surface (a little rebound) and
+    // is eased back out of it; nothing is added when the wheel is moving away, so kerbs still cannot launch the car.
+    for (int i = 0; i < 4; ++i) {
+        Wheel &w = m_wheel[i];
+        const Suspension &s = m_susp[i];
+        if (raw[i] <= s.maxTravel + 0.005f || raw[i] < -50.0f)
+            continue;
+        Vec3 n = {w.normal.x, w.normal.y, w.normal.z};
+        if (n.z < 0.5f)
+            n = {0.0f, 0.0f, 1.0f}; // a steep face is a wall's business, not the ground's
+        const Vec3 hard = b.pos + ToWorld(w.local);
+        const Vec3 p = hard + up * (raw[i] - w.radius);
+        const float vn = Dot(VelocityAt(p), n);
+        if (vn < 0.0f) {
+            const float j = -(1.0f + 0.08f) * vn / InverseMassAlong(p, n);
+            ApplyImpulse(n * j, p);
+        }
+        b.pos = b.pos + n * std::min((raw[i] - s.maxTravel) * 0.35f, 0.04f);
+    }
+    // Roll stability: lateral tyre forces act at road level, far below the centre of mass, and a long slide could roll the car onto its
+    // side.  With three or more wheels down a restoring torque levels the body to the surface about the car's length axis (not pitch, so
+    // crests and jumps still pitch it) and the roll rate is damped; it fades out once the car is on its side (a real crash still rolls).
+    {
+        int down = 0;
+        Vec3 nSum{};
+        for (int i = 0; i < 4; ++i)
+            if (m_susp[i].grounded && raw[i] > -50.0f)
+                ++down, nSum = nSum + Vec3{m_wheel[i].normal.x, m_wheel[i].normal.y, m_wheel[i].normal.z};
+        if (down >= 3 && up.z > 0.3f && Len(nSum) > 1e-3f) {
+            const Vec3 nAvg = Norm(nSum);
+            const Vec3 fwd = b.rot.r[0];
+            const float err = Dot(Cross(up, nAvg), fwd); // + = needs to roll about +fwd
+            const float rate = Dot(b.omega, fwd);
+            const float fade = std::clamp((up.z - 0.3f) / 0.4f, 0.0f, 1.0f);
+            static const float k = getenv("NFSU2_ROLL_K") ? float(atof(getenv("NFSU2_ROLL_K"))) : 40.0f;
+            b.torque = b.torque + fwd * (b.inertia.x * (k * err - 7.0f * rate) * fade);
+        }
     }
     m_grounded = m_susp[0].grounded || m_susp[1].grounded || m_susp[2].grounded || m_susp[3].grounded;
     m_groundBelow = groundBelow;
