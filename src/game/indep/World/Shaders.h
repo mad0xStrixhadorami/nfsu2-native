@@ -18,12 +18,17 @@ void main() {
     if (uFoliage > 0.5) {
         // wind: a slow, spatially coherent gust that bends whole crowns plus a quick flutter of the leaf cards (coherent over a few metres, so
         // neighbouring cards of one tree move together and no gaps open)
-        float gust = 0.5 + 0.5 * sin(uTime * 0.37 + p.y * 0.021 + p.x * 0.013);
-        float amp = 0.035 + 0.10 * gust;
-        vec2 sway = vec2(sin(uTime * 1.25 + (p.x + p.y) * 0.11), cos(uTime * 1.05 + p.x * 0.09 - p.y * 0.04)) * amp;
-        float flutter = sin(uTime * 7.3 + dot(p.xyz, vec3(1.7, 2.3, 0.9))) * 0.012;
-        p.xy += sway;
-        p.z += flutter;
+        // a travelling gust front rolls across the street; each crown leans with it and springs back, leaf tips whip and rustle more than
+        // the card's base (weight from the texture row: top of the card = V 0)
+        float tw = clamp(1.0 - fract(gl_MultiTexCoord0.y + 0.0001), 0.0, 1.0);
+        float front = dot(p.xy, vec2(0.82, 0.57)) * 0.045 - uTime * 0.9;
+        float gust = pow(0.5 + 0.5 * sin(front) * (0.7 + 0.3 * sin(front * 0.31 + 1.7)), 1.6);
+        float phase = dot(p.xy, vec2(0.37, 0.23));
+        vec2 lean = vec2(0.82, 0.57) * gust * 0.55;
+        vec2 sway = vec2(sin(uTime * 1.3 + phase), cos(uTime * 1.1 + phase * 1.3)) * 0.10;
+        vec2 rustle = vec2(sin(uTime * 6.1 + dot(p.xyz, vec3(2.9, 3.7, 4.3))), cos(uTime * 5.3 + dot(p.xyz, vec3(3.3, 2.1, 5.1)))) * (0.035 + 0.07 * gust);
+        p.xy += (lean + sway) * (0.45 + 0.55 * tw) + rustle * tw;
+        p.z -= gust * 0.12 * tw;
     }
     gl_Position = gl_ModelViewProjectionMatrix * p;
     vColor = gl_Color;

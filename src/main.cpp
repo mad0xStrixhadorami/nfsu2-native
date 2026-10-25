@@ -962,6 +962,9 @@ int main(int argc, char **argv)
     // The modern pause dialog (ISSUES #281): 0 closed, 1 menu, 2 confirm 'back to the main menu', 3 confirm 'quit the game'.
     int modernPause = 0, modernSel = 0;
     bool modernYes = false, modernLeave = false;
+    bool optionsPush = false;
+    bool optionsFromModern = false; // the options carousel was opened from the dialog: Back returns to the dialog, not to UI_Pause
+    int optionsGuard = 0; // frames after the dialog's OPTIONS opens UI_Pause.fng: its Continue also hears that Accept press and would resume at once
     // The pause menu's package changes when Options opens and closes (a package switch), so look it up.
     auto pauseScreen = [&engine, &pausePkg]() -> FEPackage * {
         for (FEPackage *p = engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
@@ -2056,6 +2059,27 @@ int main(int argc, char **argv)
             last = now;
             // Start opens the pause menu (UI_Pause.fng); its choice comes back through FEStartup.
             FEStartupSequence::PauseAction pauseAction = startup.TakePauseAction();
+            if (optionsGuard > 0) {
+                --optionsGuard;
+                pauseAction = FEStartupSequence::kPauseNone;
+            }
+            if (optionsPush && !(pad & FENativeInterface::kPadAccept)) {
+                optionsPush = false;
+                pausePkg = engine->PushPackage("UI_PauseOptionsMain.fng", 0, 0xff); // the original in-race options carousel
+                optionsGuard = 6, optionsFromModern = true;
+            }
+            if (optionsFromModern && pausePkg) {
+                FEPackage *cur = pauseScreen();
+                if (cur && cur->GetName() && strncasecmp(cur->GetName(), "UI_Pause.fng", 12) == 0) { // Back from the options carousel
+                    engine->UnloadPackage(cur);
+                    pausePkg = nullptr;
+                    optionsFromModern = false;
+                    modernPause = 1, modernSel = 0;
+                    printf("[Pause] options closed -> dialog\n");
+                }
+            } else if (!pausePkg) {
+                optionsFromModern = false;
+            }
             if (cribPkg && pauseAction == FEStartupSequence::kPauseResume && sceneMode) {
                 // Leaving the garage room: stream the city region back in (the explore session, HUD and all).
                 engine->UnloadPackage(cribPkg);
@@ -2211,6 +2235,7 @@ int main(int argc, char **argv)
                             printf("[Race] resumed\n");
                         } else if (pressed & FENativeInterface::kPadAccept) {
                             const char *it = items[modernSel];
+                            printf("[Pause] accept '%s' (sel %d)\n", it, modernSel);
                             if (!strcmp(it, "RESUME")) {
                                 modernPause = 0;
                             } else if (!strcmp(it, "RESTART RACE")) {
@@ -2227,7 +2252,7 @@ int main(int argc, char **argv)
                                 modernPause = 6;
                             } else if (!strcmp(it, "OPTIONS")) {
                                 modernPause = 0;
-                                pausePkg = engine->PushPackage("UI_Pause.fng", 0, 0xff); // the original pause screen holds the options
+                                optionsPush = true; // pushed once Accept is released, or the carousel would hear that press too
                             } else if (!strcmp(it, "MAIN MENU")) {
                                 modernPause = 2, modernYes = false;
                             } else {

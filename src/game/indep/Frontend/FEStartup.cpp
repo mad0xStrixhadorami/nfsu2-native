@@ -1334,7 +1334,9 @@ void FEStartupSequence::Tick(uint32_t nowMs)
         return;
     }
     FEPackage *list = m_widgets.Package();
-    if (pressed && list && list->IsInputEnabled() && m_engine->GetPackageList()->GetFirstPackage() == list) {
+    if (pressed && getenv("NFSU2_PAUSE_DEBUG"))
+        printf("[PauseDbg] pressed %x list %s input %d top %s first %s\n", pressed, list ? list->GetName() : "-", list ? list->IsInputEnabled() : -1, top ? top->GetName() : "-", m_engine->GetPackageList()->GetFirstPackage() ? m_engine->GetPackageList()->GetFirstPackage()->GetName() : "-");
+    if (pressed && list && list->IsInputEnabled() && (m_engine->GetPackageList()->GetFirstPackage() == list || top == list)) { // in a race the HUD package is first
         // A list belongs to exactly one options screen.  The engine releases and reuses package
         // storage, so a stale m_pkg could otherwise alias the next screen and eat its Left/Right
         // input (the Quick Race mode selector has no OPTION_DATA_3/5 row objects, ISSUES #179).
