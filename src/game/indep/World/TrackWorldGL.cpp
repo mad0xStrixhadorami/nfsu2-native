@@ -192,6 +192,7 @@ void TrackWorld::InitShaders()
     m_progBright = GLShader::Build("bright", Shaders::kPostVS, Shaders::kBrightFS);
     m_progBlur = GLShader::Build("blur", Shaders::kPostVS, Shaders::kBlurFS);
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
+    m_progSky = getenv("NFSU2_CLASSIC_SKY") ? 0 : GLShader::Build("sky", Shaders::kSkyVS, Shaders::kSkyFS);
     printf("[GLSL] programs: world %u, interior %u, car %u, post %u / %u / %u\n", m_progWorld, m_progInterior, m_progCar, m_progBright, m_progBlur, m_progComposite);
 }
 
@@ -352,29 +353,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     glDisable(GL_TEXTURE_2D);
     glShadeModel(GL_FLAT);
 
-    // Sky: vertical gradient over the whole view.
-    glDisable(GL_DEPTH_TEST);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    glShadeModel(GL_SMOOTH);
-    glBegin(GL_QUADS);
-    if (day)
-        glColor3ub(52, 128, 214);
-    else
-        glColor3ub(70, 100, 150);
-    glVertex2f(-1, 1);
-    glVertex2f(1, 1);
-    if (day)
-        glColor3ub(206, 224, 242);
-    else
-        glColor3ub(140, 158, 184);
-    glVertex2f(1, -1);
-    glVertex2f(-1, -1);
-    glEnd();
-    glShadeModel(GL_FLAT);
-
+    // Sky (ISSUES #302): drawn after the camera basis is known (below); the classic gradient is the fallback.
     // Camera: right-handed view from the same basis as the software path.
     const float cy = std::cos(cam.yaw), sy = std::sin(cam.yaw);
     const float cp = std::cos(cam.pitch), sp = std::sin(cam.pitch);
@@ -397,6 +376,57 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                             f[0] * c[0] + f[1] * c[1] + f[2] * c[2], 1};
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(view);
+
+    // Sky: the procedural shader sky, or (NFSU2_CLASSIC_SKY=1 / no shaders) the old vertical gradient, drawn with identity matrices.
+    {
+        glDisable(GL_DEPTH_TEST);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+        if (m_progSky) {
+            GLShader::Use(m_progSky);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uF"), f[0], f[1], f[2]);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uR"), r[0], r[1], r[2]);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uU"), u[0], u[1], u[2]);
+            GLShader::Set2f(GLShader::Uniform(m_progSky, "uTan"), tanHalf * side, tanHalf * aspect);
+            const float sl = std::sqrt(0.62f * 0.62f + 0.45f * 0.45f + 0.64f * 0.64f);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uSun"), 0.62f / sl, 0.45f / sl, 0.64f / sl);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uHorizon"), fogColour[0], fogColour[1], fogColour[2]);
+            GLShader::Set1f(GLShader::Uniform(m_progSky, "uTime"), float(SDL_GetTicks()) * 0.001f);
+            GLShader::Set1f(GLShader::Uniform(m_progSky, "uDay"), getenv("NFSU2_SKY_DEBUG") ? 2.0f : (day ? 1.0f : 0.0f));
+            glBegin(GL_QUADS);
+            glVertex2f(-1, 1);
+            glVertex2f(1, 1);
+            glVertex2f(1, -1);
+            glVertex2f(-1, -1);
+            glEnd();
+            GLShader::Use(0);
+        } else {
+            glShadeModel(GL_SMOOTH);
+            glBegin(GL_QUADS);
+            if (day)
+                glColor3ub(52, 128, 214);
+            else
+                glColor3ub(70, 100, 150);
+            glVertex2f(-1, 1);
+            glVertex2f(1, 1);
+            if (day)
+                glColor3ub(206, 224, 242);
+            else
+                glColor3ub(140, 158, 184);
+            glVertex2f(1, -1);
+            glVertex2f(-1, -1);
+            glEnd();
+            glShadeModel(GL_FLAT);
+        }
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glPopMatrix();
+    }
 
     glClearDepth(1.0);
     glClear(GL_DEPTH_BUFFER_BIT);

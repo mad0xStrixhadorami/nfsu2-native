@@ -744,6 +744,107 @@ void main() {
 )";
 
 // ---- Post-processing: bright pass (4x down), separable blur, composite with tone curve, bloom and vignette -------------
+// Procedural sky (ISSUES #302): a per-pixel view ray through a scattering-style gradient (deep zenith, pale hazy horizon that meets the
+// fog), a sun with a disc, bloom-like halo and warm forward haze, two cloud layers (lit cumulus with self-shadowing, silver edges and a
+// fading distance; high stretched cirrus) drifting with the wind, and at night a dusk gradient with stars and a moon.
+inline const char *kSkyVS = R"(#version 120
+varying vec2 vNdc;
+void main() {
+    gl_Position = gl_Vertex;
+    vNdc = gl_Vertex.xy;
+}
+)";
+
+inline const char *kSkyFS = R"(#version 120
+varying vec2 vNdc;
+uniform vec3 uF, uR, uU;
+uniform vec2 uTan;
+uniform vec3 uSun;
+uniform vec3 uHorizon;
+uniform float uTime;
+uniform float uDay;
+float h21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
+}
+float fbm(vec2 p) {
+    float a = 0.5, s = 0.0;
+    for (int i = 0; i < 5; ++i) {
+        s += a * vn(p);
+        p = p * 2.03 + vec2(17.1, 9.2);
+        a *= 0.5;
+    }
+    return s;
+}
+void main() {
+    vec3 d = normalize(uF + vNdc.x * uTan.x * uR + vNdc.y * uTan.y * uU);
+    float el = d.z;
+    float sd = max(dot(d, uSun), 0.0);
+    vec3 col;
+    float day = step(0.5, uDay);
+    // --- atmosphere ---
+    vec3 zenith = mix(vec3(0.05, 0.10, 0.26), vec3(0.09, 0.27, 0.66), day);
+    vec3 mid = mix(vec3(0.12, 0.20, 0.38), vec3(0.28, 0.56, 0.92), day);
+    float e = clamp(el, 0.0, 1.0);
+    vec3 haze = uHorizon * vec3(0.94, 0.95, 0.97);
+    col = mix(haze, mid, smoothstep(0.0, 0.17, e));
+    col = mix(col, zenith, smoothstep(0.10, 0.80, e));
+    col = mix(col, haze, (1.0 - smoothstep(-0.05, 0.0, el)));     // below the horizon: the haze
+    // low sun scatter: a warm band around the sun's azimuth near the horizon, and a Mie halo around the sun itself
+    float hz = exp(-e * 7.0);
+    col += vec3(1.0, 0.80, 0.55) * pow(sd, 5.0) * (0.10 + 0.22 * hz) * day;
+    col += vec3(1.0, 0.92, 0.78) * pow(sd, 48.0) * 0.55 * day;
+    col += vec3(1.0, 0.97, 0.90) * pow(sd, 700.0) * 2.4 * day;          // the glare
+    float disc = smoothstep(0.99955, 0.99975, sd);
+    col = mix(col, vec3(1.6, 1.5, 1.3), disc * day);
+    // --- night: stars and a moon ---
+    if (day < 0.5) {
+        vec2 sp = d.xy / max(d.z + 0.35, 0.2) * 70.0;
+        float st = h21(floor(sp));
+        float tw = 0.6 + 0.4 * sin(uTime * (1.5 + st * 4.0) + st * 50.0);
+        col += vec3(0.9, 0.95, 1.0) * step(0.985, st) * tw * smoothstep(0.05, 0.4, el) * 0.8;
+        col = mix(col, vec3(0.85, 0.9, 1.0), smoothstep(0.9993, 0.9996, sd) * 0.9);
+        col += vec3(0.30, 0.38, 0.55) * pow(sd, 90.0) * 0.5;
+    }
+    // --- clouds ---
+    if (el > 0.0) {
+        float t = uTime;
+        // cumulus on a plane ~1.8 km up: perspective projection so the clouds shrink towards the horizon
+        vec2 p = d.xy / (el + 0.05) * 0.80 + vec2(t * 0.012, t * 0.006);
+        float cover = 0.50;
+        float n = fbm(p * 1.3);
+        float dens = smoothstep(cover, cover + 0.13, n + 0.14 * fbm(p * 4.3 + 5.0));
+        // self-shadowing: sample towards the sun; thicker cloud on that side = darker base
+        vec2 toSun = normalize(uSun.xy + 1e-4) * 0.07;
+        float n2 = fbm((p + toSun) * 1.3);
+        float shade = clamp(0.58 + (n - n2) * 8.0 - 0.25 * smoothstep(0.62, 0.8, n), 0.0, 1.1);
+        vec3 lit = mix(vec3(1.02, 0.99, 0.94), vec3(1.0, 0.86, 0.68), (1.0 - day) * 0.0);
+        vec3 shadow = mix(vec3(0.46, 0.54, 0.70), vec3(0.20, 0.24, 0.34), 1.0 - day);
+        vec3 cc = mix(shadow, lit, clamp(shade, 0.0, 1.0)) * mix(0.22, 1.0, day);
+        // bright rims where the cloud is thin and faces the sun (silver lining)
+        float rim = (1.0 - dens) * smoothstep(0.0, 0.5, n - cover + 0.2) * pow(sd, 6.0);
+        cc += vec3(1.0, 0.95, 0.85) * rim * 1.2 * day;
+        float fade = smoothstep(0.0, 0.22, el);                        // dissolve into the haze at the horizon
+        float a = dens * fade * mix(0.35, 1.0, day);
+        col = mix(col, cc, a);
+        // cirrus: a thin streaked veil, high up
+        vec2 q = d.xy / (el + 0.30) * vec2(0.9, 2.6) + vec2(t * 0.02, 0.0);
+        float ci = smoothstep(0.52, 0.85, fbm(q * 2.2 + 11.0)) * smoothstep(0.02, 0.35, el) * 0.32;
+        col = mix(col, mix(vec3(0.95, 0.97, 1.0), vec3(0.3, 0.35, 0.5), 1.0 - day), ci * mix(0.4, 1.0, day));
+    }
+    // film-style dither against banding in the smooth gradient
+    col += (h21(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) / 255.0;
+    gl_FragColor = vec4(col, 1.0);
+    if (uDay > 1.5) gl_FragColor = vec4(d * 0.5 + 0.5, 1.0);
+}
+)";
+
 inline const char *kPostVS = R"(#version 120
 varying vec2 vUV;
 void main() {
