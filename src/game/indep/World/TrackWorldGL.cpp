@@ -425,7 +425,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     // locations are looked up once per frame and the per-frame constants are set once; switching only re-uses a program and
     // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
     struct WorldUniforms {
-        int glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
         int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
         float lastFogStart = -1.0f, lastFogEnd = -1.0f;
     };
@@ -435,7 +435,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         u.tex = GLShader::Uniform(prog, "uTex"), u.fogColor = GLShader::Uniform(prog, "uFogColor");
         u.fogStart = GLShader::Uniform(prog, "uFogStart"), u.fogEnd = GLShader::Uniform(prog, "uFogEnd");
         u.grade = GLShader::Uniform(prog, "uGrade"), u.cam = GLShader::Uniform(prog, "uCam"), u.theme = GLShader::Uniform(prog, "uTheme");
-        u.day = GLShader::Uniform(prog, "uDay"), u.matOn = GLShader::Uniform(prog, "uMatOn"), u.wet = GLShader::Uniform(prog, "uWet");
+        u.day = GLShader::Uniform(prog, "uDay"), u.dbgPave = GLShader::Uniform(prog, "uDebugPave"), u.matOn = GLShader::Uniform(prog, "uMatOn"), u.wet = GLShader::Uniform(prog, "uWet");
         for (int i = 0; i < MaterialLibrary::kColours; ++i) {
             char name[8];
             snprintf(name, sizeof(name), "uMC%d", i);
@@ -464,6 +464,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         for (int i = 0; i < MaterialLibrary::kNormals; ++i)
             GLShader::Set1i(u.mn[i], 10 + i);
         GLShader::Set1f(u.wet, getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (day ? 0.0f : 0.8f)));
+        GLShader::Set1f(u.dbgPave, getenv("NFSU2_DEBUG_PAVE") ? 1.0f : 0.0f);
     };
     if (m_progWorld) {
         queryWorldUniforms(m_progWorld, wuFull);

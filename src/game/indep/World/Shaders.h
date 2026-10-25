@@ -49,6 +49,7 @@ uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
 uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
+uniform float uDebugPave;
 uniform float uGlow;    // multiplier for additive (light) textures: the night-time light pools wash the road out in daylight
 #ifdef FULL
 uniform sampler2D uMC0, uMC1, uMC2, uMC3, uMC4, uMC5, uMC6, uMC7; // asphalt, pavers, cream pavers, stone, cladding, plaster, concrete, stucco
@@ -65,6 +66,51 @@ float vnoise(vec2 p) {
     return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y);
 }
 #ifdef FULL
+// Worn Israeli interlocking paving ("Eckerstein", ISSUES #300): 0.20 x 0.10 m blocks in a running bond turned off the world axes, each block
+// its own tan / reddish-brown / faded tone, edges rubbed pale, joints filled with sand and dirt, grime in broad patches, scattered dry
+// leaves and the odd bit of litter.
+vec3 paverTex(vec2 w) {
+    vec2 q = vec2(0.88 * w.x + 0.475 * w.y, -0.475 * w.x + 0.88 * w.y);
+    vec2 p = q / vec2(0.20, 0.10);
+    float row = floor(p.y);
+    p.x += 0.5 * mod(row, 2.0);
+    vec2 id = floor(p), f = fract(p);
+    float jd = min(min(f.x, 1.0 - f.x) * 0.20, min(f.y, 1.0 - f.y) * 0.10);   // distance to the nearest joint, metres
+    float hb = h12(id), hc = h12(id + 31.7);
+    vec3 tone = mix(vec3(0.60, 0.37, 0.27), vec3(0.74, 0.56, 0.40), hb);       // reddish-brown to tan
+    tone = mix(tone, vec3(0.42, 0.27, 0.21), smoothstep(0.86, 0.97, hc));      // the odd dark brown block
+    tone = mix(tone, vec3(0.80, 0.69, 0.55), smoothstep(0.88, 0.98, h12(id + 9.1)) * 0.8); // a sun-faded one
+    tone *= 0.88 + 0.22 * vnoise(w * 42.0);                                  // pitted surface
+    tone = mix(tone, tone * 1.22 + 0.04, smoothstep(0.016, 0.0, jd) * 0.8);  // worn edges go pale
+    tone *= 0.93 + 0.14 * vnoise(q * 5.0 + id);                              // uneven wear inside a block
+    float jointM = 1.0 - smoothstep(0.003, 0.010, jd);
+    vec3 sand = mix(vec3(0.62, 0.53, 0.40), vec3(0.27, 0.22, 0.17), clamp(vnoise(w * 7.0) * 1.3 - 0.1, 0.0, 1.0)); // sand, dirt in places
+    vec3 col = mix(tone, sand, jointM);
+    col *= 0.84 + 0.20 * vnoise(w * 0.35) - 0.10 * smoothstep(0.62, 0.82, vnoise(w * 0.9 + 4.0)); // broad grime and dust
+    // dry leaves: one per cell of a 1.1 m grid in about a quarter of the cells, a pointed ellipse in an autumn colour
+    for (int k = 0; k < 2; ++k) {
+        float sc = k == 0 ? 1.1 : 0.83;
+        vec2 g = (w + float(k) * 3.7) / sc, gi = floor(g), gf = fract(g) - 0.5;
+        float hh = h12(gi + float(k) * 11.0);
+        if (hh > 0.74) {
+            vec2 o = (vec2(h12(gi + 2.0), h12(gi + 5.0)) - 0.5) * 0.55;
+            float an = h12(gi + 8.0) * 6.2831853;
+            vec2 d = gf - o;
+            vec2 r = vec2(cos(an) * d.x + sin(an) * d.y, -sin(an) * d.x + cos(an) * d.y) * sc;
+            float leaf = 1.0 - smoothstep(0.55, 1.0, (r.x * r.x) / (0.058 * 0.058) + (r.y * r.y) / (0.024 * 0.024));
+            vec3 lc = mix(vec3(0.42, 0.25, 0.09), vec3(0.62, 0.40, 0.14), h12(gi + 4.0));
+            col = mix(col, lc * (0.9 + 0.2 * vnoise(w * 90.0)), leaf * 0.92);
+        }
+    }
+    // litter: a pale scrap of paper or a cigarette end now and then
+    vec2 lg = w / 1.7, li = floor(lg), lf = fract(lg) - 0.5;
+    if (h12(li + 21.0) > 0.9) {
+        vec2 d = lf - (vec2(h12(li + 3.0), h12(li + 6.0)) - 0.5) * 0.6;
+        float scrap = step(abs(d.x), 0.018) * step(abs(d.y), 0.010);
+        col = mix(col, vec3(0.80, 0.78, 0.72), scrap * 0.9);
+    }
+    return col;
+}
 float crackEdge(vec2 p) { // Worley edge distance: ~0 along the cell borders, which become the cracks
     vec2 i = floor(p), f = fract(p);
     float d1 = 8.0, d2 = 8.0;
@@ -133,6 +179,7 @@ void main() {
         float isProp = step(253.5, fl) * step(fl, 254.5);
         float isKerb = step(252.5, fl) * step(fl, 253.5);
         float isBike = step(251.5, fl) * step(fl, 252.5);
+        float isPave = step(250.5, fl) * step(fl, 251.5);                // pavement / plaza triangle (IsraelProps, ISSUES #300)
         float wall = (1.0 - smoothstep(0.25, 0.5, abs(Nt.z))) * t.a * (1.0 - isProp);
         float flatUp = smoothstep(0.85, 0.97, Nt.z) * t.a;
         // facade courses along the wall (u runs horizontally along it)
@@ -170,7 +217,7 @@ void main() {
             vec3 up = Nt;
             vec3 Tg = vec3(1.0, 0.0, 0.0), Bg = vec3(0.0, 1.0, 0.0);
             // asphalt: dark desaturated flat surfaces that are not lane paint
-            float roadM = flatUp * (1.0 - isProp) * (1.0 - smoothstep(0.22, 0.45, satO)) * (1.0 - smoothstep(0.42, 0.62, mxO)) * (1.0 - isBike);
+            float roadM = flatUp * (1.0 - isProp) * (1.0 - smoothstep(0.22, 0.45, satO)) * (1.0 - smoothstep(0.42, 0.62, mxO)) * (1.0 - isBike) * (1.0 - isPave);
             if (roadM * nearM > 0.01) {
                 vec2 ru = vWorld.xy / 3.4;
                 vec3 col = matC(uMC0, ru) * vec3(0.80, 0.79, 0.78);
@@ -215,15 +262,13 @@ void main() {
                     c.rgb = mix(vec3(dot(c.rgb, vec3(0.3, 0.59, 0.11))), c.rgb, 1.0 + 0.18 * yel); // a touch more punch
                 }
             }
-            // pavements and plazas: grey block pavers, cream paving in Jerusalem and on the Tel Aviv promenade
-            float paveM = flatUp * (1.0 - isProp) * (1.0 - roadM) * smoothstep(0.40, 0.56, mxO) * (1.0 - smoothstep(0.25, 0.5, satO));
+            // pavements and plazas: worn Eckerstein paving (ISSUES #300)
+            float paveM = isPave * flatUp * (1.0 - isProp) * (1.0 - roadM);
             if (paveM * nearM > 0.01) {
-                vec2 pu = vWorld.xy / 2.6;
-                float cream = clamp(wd.y * 1.2 + wd.x * 0.35, 0.0, 1.0);
-                vec3 grey = matC(uMC1, pu), warm = matC(uMC2, vWorld.xy / 2.2);
-                vec3 col = mix(grey, warm, cream);
-                float bl = mix(1.0, bumpL(matN(uMN1, pu), Tg, Bg, up), 0.7 * (1.0 - cream));
-                c.rgb = mix(c.rgb, col * vColor.rgb * 1.2 * bl, paveM * nearM * 0.95);
+                float fadeP = smoothstep(30.0, 75.0, vDist);
+                vec3 col = mix(paverTex(vWorld.xy), vec3(0.58, 0.42, 0.32), fadeP); // far away: the average tone, no moire
+                c.rgb = mix(c.rgb, col * vColor.rgb * 1.2, paveM * nearM * 0.96);
+                if (uDebugPave > 0.5) c.rgb = mix(c.rgb, vec3(1.0, 0.0, 1.0), paveM * 0.8);
             }
             // facades
             if (wall * keep * nearM > 0.01) {
@@ -249,13 +294,29 @@ void main() {
                 c.rgb = mix(c.rgb, skinM * vColor.rgb * 1.2 * bl, wall * keep * nearM * uTheme * 0.95);
             }
         }
-        // painted kerbs: 1 m stripes, red-white (no parking) or blue-white (paid parking) by 48 m stretch of street
+        // painted kerbs: 1 m stripes, red-white (no parking) or blue-white (paid parking) by 48 m stretch of street. Weathered (ISSUES #300):
+        // sun-faded paint that is chipped away to the bare concrete, mostly along the edges, with grime at the foot where the kerb meets
+        // the asphalt, dust on the top edge and rain streaks. vColor.b carries the height up the face (0 foot, 1 top; set in IsraelProps).
         {
             float seg = floor(along / 1.0);
             float stripe = mod(seg, 2.0);
-            float blueZone = step(0.5, h12(floor(vWorld.xy / 48.0) + 3.0));
-            vec3 paint = stripe < 0.5 ? vec3(0.95, 0.95, 0.92) : mix(vec3(0.82, 0.08, 0.08), vec3(0.08, 0.28, 0.80), blueZone);
-            c.rgb = mix(c.rgb, paint * (0.75 + 0.45 * vColor.r), isKerb * 0.95);
+            float zone = h12(floor(vWorld.xy / 48.0) + 3.0);
+            float blueZone = step(0.5, zone);
+            float kv = clamp(vColor.b, 0.0, 1.0);
+            vec3 paint = stripe < 0.5 ? vec3(0.86, 0.85, 0.80) : mix(vec3(0.66, 0.17, 0.15), vec3(0.15, 0.30, 0.58), blueZone);
+            float st = h12(vec2(seg, floor(vWorld.x / 48.0) + floor(vWorld.y / 48.0) * 13.0)); // each stripe has aged differently
+            paint = mix(paint, vec3(dot(paint, vec3(0.33))) * vec3(1.0, 0.98, 0.94), 0.22 + 0.32 * st); // sun-bleached
+            paint *= 0.80 + 0.26 * st;
+            vec3 concrete = vec3(0.60, 0.58, 0.54) * (0.85 + 0.30 * vnoise(vec2(along * 14.0, kv * 10.0)));
+            float n1 = vnoise(vec2(along * 7.0, kv * 14.0 + seg * 3.1)), n2 = vnoise(vec2(along * 31.0, kv * 55.0));
+            float edgeW = smoothstep(0.55, 0.95, kv) * 0.28 + (1.0 - smoothstep(0.0, 0.3, kv)) * 0.12;
+            float chip = smoothstep(0.50, 0.68, n1 * 0.62 + n2 * 0.38 + edgeW + 0.16 * (zone - 0.5));
+            vec3 kc = mix(paint, concrete, chip);
+            float seam = 1.0 - smoothstep(0.0, 0.36, kv);
+            kc = mix(kc, vec3(0.20, 0.17, 0.14), seam * (0.55 + 0.35 * vnoise(vec2(along * 6.0, 3.0))));
+            kc *= 1.0 - 0.18 * vnoise(vec2(along * 45.0, 7.0)) * (1.0 - kv);                    // rain streaks run down the face
+            kc = mix(kc, kc * 1.18 + 0.03, smoothstep(0.88, 1.0, kv) * 0.7);                       // the rubbed, dusty top edge
+            c.rgb = mix(c.rgb, kc * (0.75 + 0.45 * vColor.r), isKerb * 0.97);
         }
         // green bike lanes on the Tel Aviv pavement strips, with a white dashed edge
         {

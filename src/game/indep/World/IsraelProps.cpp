@@ -1094,6 +1094,7 @@ void TrackWorld::AddIsraeliProps()
         return storefront[hash] = ok;
     };
     size_t nTrees = 0, nRoofs = 0, nWalls = 0, nCurbs = 0, nBike = 0, nBus = 0, nSigns = 0, nScoot = 0, nCafe = 0;
+    size_t nPave = 0;
 
     auto GroundHeightT = [&](float x, float y, float zmax, float &z) {
         const unsigned a0 = SDL_GetTicks();
@@ -1173,6 +1174,14 @@ void TrackWorld::AddIsraeliProps()
                     if (Len(e3) > Len(ed)) ed = e3;
                     const float alt = 2.0f * area / std::max(Len(ed), 0.01f);
                     const float yawE = std::atan2(ed.y, ed.x);
+                    // every pavement / plaza triangle is flagged for the worn Eckerstein paving of the world shader (ISSUES #300);
+                    // the bike-lane strips below override the flag
+                    if (alt > 0.9f && area > 2.5f && c.z > nearIt->second.first + 0.03f) // a broad surface: not lane paint, a crosswalk stripe or a road patch
+                        for (RVertex &v : t.v)
+                            if (v.a != 252 && v.a != 253)
+                                v.a = 251, ++nPave;
+                    if (getenv("NFSU2_PROP_DEBUG") && area > 25.0f && c.z > nearIt->second.first + 0.03f && nPave % 40 == 0)
+                        printf("[Props] pavement %.0f %.0f %.1f (area %.0f)\n", c.x, c.y, c.z, area);
                     // Tel Aviv: green bike lane on the narrow pavement strips
                     if (d.tlv > 0.3f && alt < 3.4f && alt > 0.8f && (HashXY(c4x / 5, c4y / 5, 3) & 3) < 2) {
                         for (RVertex &v : t.v)
@@ -1279,8 +1288,10 @@ void TrackWorld::AddIsraeliProps()
                     const float l1 = std::hypot(e1.x, e1.y), l2 = std::hypot(e2.x, e2.y), l3 = std::hypot(e3.x, e3.y);
                     if (std::max({l1, l2, l3}) > 1.0f) {
                         if (minz > nearIt->second.first - 0.7f && minz < nearIt->second.second + 0.7f) {
-                            for (RVertex &v : t.v)
+                            for (RVertex &v : t.v) {
                                 v.a = 253;
+                                v.b = uint8_t(std::clamp((v.z - minz) / std::max(dz, 0.01f), 0.0f, 1.0f) * 255.0f); // height up the face: the shader puts the grime at the foot (#300)
+                            }
                             ++nCurbs;
                         }
                     }
@@ -1444,6 +1455,7 @@ void TrackWorld::AddIsraeliProps()
     printf("[Props] flat %zu, ground-level %zu (road %zu, near-road non-road %zu)\n", flatTris, flatGround, flatRoad, flatNear);
     m_groundSource = savedSource;
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
+    printf("[Props] %zu pavement triangles flagged\n", nPave);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "
            "%zu signs, %zu scooters, %zu cafes, %zu dumpster groups, %zu cats, %zu EV bays, %zu kiosks, %zu mopeds, %zu poles, %zu cable spans, %zu islands, %zu posters, %zu Hebrew shop signs, %zu street-name signs, %zu flags, %zu balconies, %zu shutters, %zu awnings\n",
            props.size(), nTrees, nRoofs, nWalls, nCurbs, nBike, nBus, nSigns, nScoot, nCafe, nDump, nCats, nEV, nKiosk, nMopeds, nPoles, nCableSpans, nRound, nPosters, nShopSigns, nStreetSigns, nFlags, nBalconies, nShutters, nAwnings);
