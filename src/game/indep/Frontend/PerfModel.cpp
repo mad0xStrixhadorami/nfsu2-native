@@ -204,6 +204,31 @@ void Apply(uint8_t *record, size_t size, const PerfPackages &packages, const std
         f.W(0x268) += (f.B(0x5a4) + f.B(0x594)) * out[1];
         f.W(0x26c) += (f.B(0x5a8) + f.B(0x598)) * s;
     }
+    // 0x0031b720 - the Unique slot flags: the car's own bonus tables (record frame +0x2b0..) on top of the tuned copy.
+    auto unique = [&](int slot) { return Has(installed, uint16_t(kUniqueBase + slot)); };
+    if (unique(0))
+        f.W(0x110) *= 1.0f - f.B(0x2b0);
+    if (unique(1))
+        f.W(0x1c0) = f.B(0x2b4);
+    if (unique(2))
+        f.W(0x2ac) += f.B(0x2b8);
+    if (unique(6))
+        f.W(0x274) += f.B(0x2bc);
+    if (unique(8))
+        for (int axle = 0; axle < 2; ++axle) {
+            f.W(0xdc + size_t(axle) * 0x20) += f.B(0x2c0 + size_t(axle) * 4);
+            f.W(0xe0 + size_t(axle) * 0x20) += f.B(0x2c8 + size_t(axle) * 4);
+        }
+    for (int i = 0; i < 9; ++i) { // the nine torque-curve points
+        if (unique(3))
+            f.W(0x200 + size_t(i) * 4) += f.B(0x2d0 + size_t(i) * 4);
+        if (unique(7))
+            f.W(0x200 + size_t(i) * 4) += f.B(0x2f4 + size_t(i) * 4);
+        if (unique(4)) {
+            f.W(0x200 + size_t(i) * 4) += f.B(0x318 + size_t(i) * 4);
+            f.W(0x224 + size_t(i) * 4) += f.B(0x318 + size_t(i) * 4);
+        }
+    }
     memcpy(record + kFrameOffset, f.w.data(), kFrameSize);
 }
 

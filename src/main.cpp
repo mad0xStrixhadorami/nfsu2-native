@@ -1588,7 +1588,7 @@ int main(int argc, char **argv)
                 size_t openUniques = 0;
                 for (const Career::Trigger &t : trig.All()) {
                     FEStartupSequence::UniqueInfo ui;
-                    if (t.kind == Career::Trigger::kUniqueVisual && startup.UniqueFor(t.name, ui) && ui.open && !ui.claimed && ui.supported) {
+                    if ((t.kind == Career::Trigger::kUniqueVisual || t.kind == Career::Trigger::kUniquePerf) && startup.UniqueFor(t.name, ui) && ui.open && !ui.claimed && ui.supported) {
                         TrackWorld::Beacon b;
                         b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 255, b.g = 150, b.b = 40;
                         beacons.push_back(b);
@@ -2274,7 +2274,7 @@ int main(int argc, char **argv)
                 if (!pausePkg && !cribPkg && !modernPause && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
                     const Career::Trigger *inside = nullptr;
                     for (const Career::Trigger &t : Career::TriggerTable::Get().All())
-                        if (t.kind == Career::Trigger::kUniqueVisual && t.Contains(car.X(), car.Y()))
+                        if ((t.kind == Career::Trigger::kUniqueVisual || t.kind == Career::Trigger::kUniquePerf) && t.Contains(car.X(), car.Y()))
                             inside = &t;
                     if (!inside)
                         uniqueArmed = nullptr;

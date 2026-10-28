@@ -46,6 +46,7 @@ struct SmsTrigger {
     uint32_t media = 0;    // 0x34a16 record id (+0x20)
     uint8_t subKind = 0;   // +0x14 (1 visual, 2 performance for kind 2)
     uint8_t part = 0;      // +0x15
+    uint8_t part2 = 0xff, part3 = 0xff; // +0x16 / +0x17: the other two categories of a pick-of-three (performance Uniques)
 };
 
 class SmsTable {

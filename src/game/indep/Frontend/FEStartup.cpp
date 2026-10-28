@@ -3,6 +3,7 @@
 #include "game/indep/Frontend/RimCatalog.h"
 
 #include <algorithm>
+#include "game/indep/Frontend/PerfModel.h"
 #include <cstdio>
 #include <functional>
 #include <cstdlib>
@@ -5119,18 +5120,37 @@ bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &ou
         return false;
     const std::string name = triggerName.substr(sizeof(kPrefix) - 1); // STAGE_4_VISUAL_4
     for (const Career::SmsTrigger &t : Career::SmsTable::Get().Triggers()) {
-        if (t.kind != 2 || t.subKind != 1 || t.name != name)
+        if (t.kind != 2 || (t.subKind != 1 && t.subKind != 2) || t.name != name)
             continue;
         out = UniqueInfo();
         out.id = t.message;
         out.claimed = m_profile.Completed(t.message);
         out.open = getenv("NFSU2_UNLOCK_ALL") || Career::SmsOrdinaryDone(m_profile, t.area) >= int(t.value);
-        out.partId = UniquePartId(t.part);
+        out.partId = t.subKind == 2 ? 0xff : UniquePartId(t.part); // 0xff: a performance Unique (pick one of three slots)
         out.supported = out.partId != 0;
         const Career::OwnedCar *car = m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size())
                                           ? &m_profile.cars[m_profile.currentCar] : nullptr;
         if (!out.supported || !car)
             return true;
+        if (t.subKind == 2) { // 0x00270c88: reward category 1..10 -> performance slot; a slot already won is not offered again
+            static const int kSlotOf[] = {-1, 3, 7, 5, 2, 1, 0, 8, 6, 4, 9};
+            for (uint8_t c : {t.part, t.part2, t.part3}) {
+                const int slot = c >= 1 && c <= 10 ? kSlotOf[c] : -1;
+                if (slot < 0 || slot > 8)
+                    continue;
+                if (std::find(car->perfParts.begin(), car->perfParts.end(), uint16_t(PerfModel::kUniqueBase + slot)) != car->perfParts.end())
+                    continue;
+                UniqueInfo::Option o;
+                o.perfSlot = slot;
+                for (const auto &card : kPerfCategories)
+                    if (int(card.partId) == slot)
+                        o.name = m_fe->LanguageText(card.label);
+                if (o.name.empty())
+                    o.name = "PERFORMANCE " + std::to_string(slot);
+                out.options.push_back(std::move(o));
+            }
+            return true;
+        }
         if (t.part == 0x3e) {
             TexturePack pack;
             const std::vector<uint8_t> data = m_fe->ReadGameFile(("CARS\\" + car->model + "\\VINYLS.BIN").c_str());
@@ -5177,6 +5197,29 @@ bool FEStartupSequence::ClaimUnique(const UniqueInfo &info, size_t choice)
         m_profile.currentCar >= int(m_profile.cars.size()))
         return false;
     Career::OwnedCar &car = m_profile.cars[m_profile.currentCar];
+    if (info.options[choice].perfSlot >= 0) {
+        auto summary = [&](const std::vector<uint16_t> &parts) {
+            PlayerCar::Performance pf;
+            const std::vector<uint8_t> rec = m_fe->TunedCarRecord(car.model, parts, car.tune);
+            if (rec.empty())
+                return std::string("?");
+            FENativeInterface::ReadCarPerformance(rec.data(), pf);
+            float peak = 0;
+            for (float t : pf.torque)
+                peak = std::max(peak, t);
+            char buf[96];
+            snprintf(buf, sizeof(buf), "mass %.1f kg, peak torque %.1f Nm", pf.mass, peak * 1000.0f);
+            return std::string(buf);
+        };
+        const std::string before = summary(car.perfParts);
+        car.perfParts.push_back(uint16_t(PerfModel::kUniqueBase + info.options[choice].perfSlot));
+        m_fe->SetPreviewPerfParts(car.perfParts);
+        m_profile.Complete(info.id);
+        const bool saved = Career::SaveCareer(m_profile);
+        printf("[Unique] performance Unique %s (slot %d) fitted to %s%s: %s -> %s\n", info.options[choice].name.c_str(), info.options[choice].perfSlot,
+               car.model.c_str(), saved ? "" : " - save failed", before.c_str(), summary(car.perfParts).c_str());
+        return true;
+    }
     if (!info.options[choice].vinyl.empty()) {
         Career::OwnedCar::VinylLayer layer;
         layer.design = info.options[choice].vinyl;

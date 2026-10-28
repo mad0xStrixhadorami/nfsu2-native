@@ -21,13 +21,16 @@
 //   0x0031c358 category 8   per-wheel       (+0xd0.. from +0x540 / +0x560)
 //   0x0031c478 category 9   handling packs  (+0x264 / +0x268 / +0x26c from +0x590 / +0x5a0)
 // Each category's strength is the sum of the stat floats of its installed parts (0x0031a9e0).
-// Not ported: the single-part flags 0x0031b720 applies and the inertia refresh 0x0031e510.
+// 0x0031b720 applies the car's own bonus tables for the performance Uniques (ISSUES #324).  The port stores a won Unique as a marker
+// in the car's installed-part list, id kUniqueBase + slot (slot = the package category 0..8), so it is saved and passed along with the parts.
+// Not ported: the inertia refresh 0x0031e510.
 namespace PerfModel {
 
 constexpr size_t kRecordSize = 0x890;
 constexpr size_t kFrameOffset = 0x118; // record offset of the code's frame origin
 constexpr size_t kFrameSize = 0x2b0;   // bytes the tuned copy carries
 constexpr int kCategories = 10;
+constexpr uint16_t kUniqueBase = 0xf000; // marker ids of the performance Uniques: kUniqueBase + slot
 
 // 0x0031a9e0: the strength of one category given the installed part ids.  `out` receives the
 // per-stat sums (n values, clamped to 0..1 when their mean leaves that range) and the mean is

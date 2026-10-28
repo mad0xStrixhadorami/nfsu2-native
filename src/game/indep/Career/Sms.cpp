@@ -112,6 +112,8 @@ bool SmsTable::Load(const uint8_t *bundle, size_t size)
             t.media = U32(r, 0xc);
             t.subKind = r[0x14];
             t.part = r[0x15];
+            t.part2 = r[0x16];
+            t.part3 = r[0x17];
             m_triggers.push_back(std::move(t));
         }
     printf("[Career] sms: %zu messages, %zu triggers\n", m_defs.size(), m_triggers.size());
