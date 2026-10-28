@@ -65,10 +65,12 @@ uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uGrade;
 uniform vec3 uCam;
+uniform vec3 uSun;      // towards the sun (time of day, ISSUES #333)
 uniform float uWet;
 uniform float uTheme;   // 1 = Israeli district theme (ISSUES #272)
 uniform float uMatOn;   // 1 = photographic materials bound (ISSUES #274)
-uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277)
+uniform float uDay;     // 1 = Israeli daylight grade (ISSUES #277); continuous with the time of day (#333)
+uniform float uSunset;  // 0 .. 1 while the sun is near the horizon: warms the whole grade (#333)
 uniform float uDebugPave;
 uniform float uFoliage; // 1 while leaves are drawn (ISSUES #314)
 uniform float uTime;
@@ -170,10 +172,11 @@ void main() {
         vec3 tint = hh < 0.5 ? mix(tintA, tintB, hh * 2.0) : mix(tintB, tintC, (hh - 0.5) * 2.0);
         vec3 leaf = c.rgb * tint;
         vec3 Vd = normalize(vWorld - uCam);
-        float back = pow(max(dot(Vd, vec3(0.6228, 0.4521, 0.6430)), 0.0), 3.0); // looking towards the sun: the leaves glow
-        leaf += c.rgb * vec3(0.60, 0.78, 0.14) * back * 0.55 * uDay;
+        float sunGlow = max(uDay, uSunset * 0.85); // the low sun still backlights the leaves (ISSUES #333)
+        float back = pow(max(dot(Vd, uSun), 0.0), 3.0); // looking towards the sun: the leaves glow
+        leaf += c.rgb * mix(vec3(0.60, 0.78, 0.14), vec3(1.0, 0.55, 0.15), uSunset) * back * 0.55 * sunGlow;
         leaf *= 0.80 + 0.30 * fract(sin(dot(floor(vWorld * 3.1), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-        float sheen = pow(max(dot(reflect(Vd, vec3(0.0, 0.0, 1.0)), vec3(0.6228, 0.4521, 0.6430)), 0.0), 28.0) * 0.12 * uDay;
+        float sheen = pow(max(dot(reflect(Vd, vec3(0.0, 0.0, 1.0)), uSun), 0.0), 28.0) * 0.12 * sunGlow;
         c.rgb = leaf + vec3(sheen);
     }
 #ifdef FULL
@@ -369,11 +372,15 @@ void main() {
     }
 #endif // FULL
     // daylight: the baked lighting is a dusk city; lift it towards a hard Mediterranean sun, warm and a little bleached
+    float lift = max(uDay, 0.62 * uSunset); // the sunset street is lit, not merely dark (#333)
     {   // a tone curve, not a gain: shadows lift 2.3x, the highlights stay below white (no blown walls)
         vec3 x = c.rgb * vec3(1.65, 1.58, 1.45);
-        c.rgb = mix(c.rgb, x / (1.0 + x) * 1.28, uDay);
+        c.rgb = mix(c.rgb, x / (1.0 + x) * 1.28, lift);
     }
-    c.rgb = mix(c.rgb, vec3(dot(c.rgb, vec3(0.333))), 0.10 * uDay);
+    c.rgb = mix(c.rgb, vec3(dot(c.rgb, vec3(0.333))), 0.10 * lift);
+    // a low sun warms everything: a faint gold through the afternoon, the full orange by the horizon (ISSUES #333)
+    float warm = 1.0 - smoothstep(0.08, 0.85, uSun.z);
+    c.rgb = mix(c.rgb, c.rgb * vec3(1.12, 0.93, 0.82) + vec3(0.030, 0.010, 0.0), warm * 0.55);
     // grade: a little saturation and a gentle shadow lift so the baked lighting does not crush to black
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
     c.rgb = mix(vec3(l), c.rgb, 1.0 + 0.16 * uGrade);
@@ -439,6 +446,7 @@ void main() {
 
 inline const char *kInteriorFS = R"(#version 120
 uniform float uDay;
+uniform vec3 uSun;      // towards the sun (time of day, ISSUES #333)
 uniform sampler2D uTex;
 uniform vec3 uFogColor;
 uniform float uFogStart;
@@ -594,7 +602,7 @@ void main() {
             vec3 glass = inside * (1.0 - F) * vec3(0.95, 1.0, 1.0) + reflection * F;
             // the sun mirrored in the glass (ISSUES #305): a hot spot on windows that face it, strongest at glancing angles
             vec3 Rg = reflect(d, N);
-            glass += vec3(1.0, 0.93, 0.78) * pow(max(dot(Rg, vec3(0.64, 0.46, 0.66)), 0.0), 160.0) * (1.2 + 3.0 * F) * step(0.5, uDay);
+            glass += vec3(1.0, 0.93, 0.78) * pow(max(dot(Rg, uSun), 0.0), 160.0) * (1.2 + 3.0 * F) * smoothstep(0.25, 0.75, uDay);
             c = mix(c, glass, clamp(mask, 0.0, 0.92));
         }
     }
@@ -643,7 +651,10 @@ uniform float uTime;
 uniform float uBlur;
 uniform vec3 uLamp;   // x headlights, y brake pedal, z reverse (0..1)
 uniform float uGlass; // 1 while the translucent lamp covers are drawn
-uniform float uDay;   // 1 in daylight: the lamps burn less hot against the bright scene
+uniform float uDay;   // 0 at night .. 1 in full daylight: the lamps burn less hot against the bright scene
+uniform vec3 uSun;    // towards the sun (time of day, ISSUES #333)
+uniform vec3 uSunCol; // the sun's colour: white at noon, orange at sunset, dim blue at night
+uniform float uSunset; // 0 .. 1 while the sun is near the horizon
 uniform float uStage; // 1 in the menu showroom (ISSUES #304): studio strip lights instead of the city
 uniform vec3 uStageA, uStageB;
 // Per-car data for grounding and the lamp internals (ISSUES #312): the lowest point of the car, the lamp centres (left / right head, left /
@@ -658,7 +669,6 @@ varying vec3 vPos;
 varying float vGloss;
 varying float vDist;
 
-const vec3 kSun = vec3(0.6228, 0.4521, 0.6430); // the same sun as the sky shader, normalised
 float h13(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.zyx + 31.32);
@@ -702,8 +712,9 @@ vec3 dayEnv(vec3 R) {
     sky = mix(sky, zen, smoothstep(0.18, 0.95, h));
     float cl = fbm2(R.xy / (h + 0.32) * 1.5 + vec2(uTime * 0.01, 0.0));
     sky = mix(sky, vec3(1.0, 1.0, 1.0), smoothstep(0.50, 0.78, cl) * smoothstep(0.02, 0.30, h) * 0.9);
-    float sd = max(dot(R, kSun), 0.0);
-    sky += vec3(1.0, 0.93, 0.78) * (pow(sd, 48.0) * 0.55 + pow(sd, 700.0) * 14.0);
+    float sd = max(dot(R, uSun), 0.0);
+    sky += uSunCol * (pow(sd, 48.0) * 0.55 + pow(sd, 700.0) * 14.0);
+    sky = mix(sky, uSunCol * vec3(0.95, 0.72, 0.62), smoothstep(0.55, 0.0, abs(R.z)) * 0.18 * uSunset);
     float a = atan(R.y, R.x);
     float skyline = 0.07 + 0.11 * vn2(vec2(a * 4.0, 1.0)) + 0.07 * vn2(vec2(a * 13.0, 5.0)) + 0.04 * vn2(vec2(a * 41.0, 9.0));
     float bld = smoothstep(skyline, skyline - 0.025, h) * step(0.0, h);
@@ -728,7 +739,11 @@ vec3 nightEnv(vec3 R) {
 vec3 environment(vec3 R) {
     if (uStage > 0.5)
         return studioEnv(R);
-    return uDay > 0.5 ? dayEnv(R) : nightEnv(R);
+    vec3 e = mix(nightEnv(R), dayEnv(R), smoothstep(0.15, 0.85, uDay));
+    // the low sun smears a warm band along the horizon and a broad glare into the clear coat (ISSUES #333)
+    float sd = max(dot(R, uSun), 0.0);
+    e += uSunCol * uSunset * (pow(sd, 40.0) * 0.9 + exp(-abs(R.z) * 7.0) * 0.18);
+    return e;
 }
 
 // The nearer of the two lamps of a pair and the offset from its centre, split into forward-perpendicular components: x across the car, y up.
@@ -830,7 +845,7 @@ void main() {
     }
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCam - vPos);
-    vec3 L = kSun;
+    vec3 L = uSun;
     if (vGloss > 2.5) {
         // ---- wheels (ISSUES #264): 3 alloy rim, 4 rubber tyre, 5 brake disc ----------------------------------------------
         float NdV = max(dot(N, V), 0.0);
@@ -881,11 +896,13 @@ void main() {
     float NdV = max(dot(Np, V), 0.0);
     float NdL = dot(Np, L);
     float wrap = clamp((NdL + 0.30) / 1.30, 0.0, 1.0);
-    bool bright = uDay > 0.5 || uStage > 0.5; // daylight or the lit showroom
-    vec3 skyAmb = bright ? vec3(0.36, 0.50, 0.78) : vec3(0.05, 0.07, 0.13);
-    vec3 grdAmb = bright ? vec3(0.30, 0.285, 0.27) : vec3(0.05, 0.045, 0.045);
-    vec3 amb = mix(grdAmb, skyAmb, 0.5 + 0.5 * Np.z) * (bright ? 0.62 : 1.0);
-    vec3 sunCol = bright ? vec3(1.0, 0.92, 0.78) : vec3(0.14, 0.16, 0.24);
+    bool bright = uDay > 0.5 || uSunset > 0.35 || uStage > 0.5; // daylight, a low sun, or the lit showroom
+    float dk = smoothstep(0.0, 0.75, uDay);   // continuous day/night ambient (ISSUES #333)
+    vec3 skyAmb = mix(vec3(0.05, 0.07, 0.13), vec3(0.36, 0.50, 0.78), dk);
+    vec3 grdAmb = mix(vec3(0.05, 0.045, 0.045), vec3(0.30, 0.285, 0.27), dk);
+    vec3 amb = mix(grdAmb, skyAmb, 0.5 + 0.5 * Np.z) * mix(1.0, 0.62, dk);
+    // the direct sun still lights the paint at sunset: it is orange and low, not gone (ISSUES #333)
+    vec3 sunCol = mix(vec3(0.14, 0.16, 0.24), uSunCol, smoothstep(-0.04, 0.10, uSun.z));
     float ao = mix(1.0, vAO, 0.6);
     vec3 lit = base.rgb * (amb * ao + sunCol * wrap * (uStage > 0.5 ? 0.6 : 1.0) * 0.95);
     // sitting on the road: the lower panels fall into the shadow of the car itself and pick up the dark asphalt
@@ -938,10 +955,13 @@ inline const char *kSkyFS = R"(#version 120
 varying vec2 vNdc;
 uniform vec3 uF, uR, uU;
 uniform vec2 uTan;
-uniform vec3 uSun;
-uniform vec3 uHorizon;
+uniform vec3 uSun;      // towards the sun (time of day, ISSUES #333)
+uniform vec3 uMoon;     // towards the moon (fixed: the night sky needs one)
+uniform vec3 uHorizon;  // the time of day's haze / fog colour
+uniform vec3 uSunCol;   // the direct light / disc colour: white at noon, orange at sunset
+uniform float uSunset;  // 0 .. 1 while the sun is near the horizon
 uniform float uTime;
-uniform float uDay;
+uniform float uDay;     // 0 night .. 1 full daylight (continuous)
 float h21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -966,30 +986,35 @@ void main() {
     float el = d.z;
     float sd = max(dot(d, uSun), 0.0);
     vec3 col;
-    float day = step(0.5, uDay);
+    float day = clamp(uDay, 0.0, 1.0);
     // --- atmosphere ---
     vec3 zenith = mix(vec3(0.05, 0.10, 0.26), vec3(0.09, 0.27, 0.66), day);
     vec3 mid = mix(vec3(0.12, 0.20, 0.38), vec3(0.28, 0.56, 0.92), day);
     float e = clamp(el, 0.0, 1.0);
-    vec3 haze = uHorizon * vec3(0.94, 0.95, 0.97);
+    vec3 haze = uHorizon * vec3(0.96, 0.97, 0.99);
     col = mix(haze, mid, smoothstep(0.0, 0.17, e));
     col = mix(col, zenith, smoothstep(0.10, 0.80, e));
     col = mix(col, haze, (1.0 - smoothstep(-0.05, 0.0, el)));     // below the horizon: the haze
+    // the golden band of a sunrise / sunset, strongest on the sun's side of the horizon (ISSUES #333)
+    float az = dot(normalize(d.xy + vec2(1e-5)), normalize(uSun.xy + vec2(1e-5))) * 0.5 + 0.5;
+    col = mix(col, vec3(0.98, 0.46, 0.20) * (0.55 + 0.45 * pow(az, 6.0)), uSunset * (0.18 + 0.55 * exp(-e * 6.0)));
     // low sun scatter: a warm band around the sun's azimuth near the horizon, and a Mie halo around the sun itself
     float hz = exp(-e * 7.0);
-    col += vec3(1.0, 0.80, 0.55) * pow(sd, 5.0) * (0.10 + 0.22 * hz) * day;
-    col += vec3(1.0, 0.92, 0.78) * pow(sd, 48.0) * 0.55 * day;
-    col += vec3(1.0, 0.97, 0.90) * pow(sd, 700.0) * 2.4 * day;          // the glare
-    float disc = smoothstep(0.99955, 0.99975, sd);
-    col = mix(col, vec3(1.6, 1.5, 1.3), disc * day);
-    // --- night: stars and a moon ---
-    if (day < 0.5) {
+    col += uSunCol * pow(sd, 5.0) * (0.10 + 0.30 * hz) * (0.25 + 0.75 * day + 0.9 * uSunset);
+    col += uSunCol * pow(sd, 48.0) * 0.55 * max(day, uSunset * 0.85);
+    col += vec3(1.0, 0.97, 0.90) * pow(sd, 700.0) * 2.4 * day * (1.0 - 0.35 * uSunset); // the glare
+    float disc = smoothstep(0.99955, 0.99975, sd) * smoothstep(-0.02, 0.05, el);
+    col = mix(col, uSunCol * 2.2, disc);
+    // --- night: stars and a moon, only once the sun is below the horizon (ISSUES #333) ---
+    float na = 1.0 - smoothstep(-0.14, 0.03, uSun.z); // 0 while the disc is up, 1 well after it sets
+    if (na > 0.01) {
         vec2 sp = d.xy / max(d.z + 0.35, 0.2) * 70.0;
         float st = h21(floor(sp));
         float tw = 0.6 + 0.4 * sin(uTime * (1.5 + st * 4.0) + st * 50.0);
-        col += vec3(0.9, 0.95, 1.0) * step(0.985, st) * tw * smoothstep(0.05, 0.4, el) * 0.8;
-        col = mix(col, vec3(0.85, 0.9, 1.0), smoothstep(0.9993, 0.9996, sd) * 0.9);
-        col += vec3(0.30, 0.38, 0.55) * pow(sd, 90.0) * 0.5;
+        col += vec3(0.9, 0.95, 1.0) * step(0.985, st) * tw * smoothstep(0.05, 0.4, el) * 0.8 * na;
+        float md = max(dot(d, uMoon), 0.0);
+        col = mix(col, vec3(0.88, 0.92, 1.0), smoothstep(0.9993, 0.9996, md) * 0.9 * na);
+        col += vec3(0.30, 0.38, 0.55) * pow(md, 90.0) * 0.5 * na;
     }
     // --- clouds ---
     if (el > 0.0) {
@@ -1003,12 +1028,14 @@ void main() {
         vec2 toSun = normalize(uSun.xy + 1e-4) * 0.07;
         float n2 = fbm((p + toSun) * 1.3);
         float shade = clamp(0.58 + (n - n2) * 8.0 - 0.25 * smoothstep(0.62, 0.8, n), 0.0, 1.1);
-        vec3 lit = mix(vec3(1.02, 0.99, 0.94), vec3(1.0, 0.86, 0.68), (1.0 - day) * 0.0);
-        vec3 shadow = mix(vec3(0.46, 0.54, 0.70), vec3(0.20, 0.24, 0.34), 1.0 - day);
+        vec3 lit = mix(vec3(0.52, 0.50, 0.55), vec3(1.02, 0.99, 0.94), day);
+        lit = mix(lit, uSunCol * 1.05, uSunset * 0.8);
+        vec3 shadow = mix(vec3(0.16, 0.18, 0.26), vec3(0.46, 0.54, 0.70), day);
+        shadow = mix(shadow, uSunCol * 0.35, uSunset * 0.5);
         vec3 cc = mix(shadow, lit, clamp(shade, 0.0, 1.0)) * mix(0.22, 1.0, day);
         // bright rims where the cloud is thin and faces the sun (silver lining)
         float rim = (1.0 - dens) * smoothstep(0.0, 0.5, n - cover + 0.2) * pow(sd, 6.0);
-        cc += vec3(1.0, 0.95, 0.85) * rim * 1.2 * day;
+        cc += mix(vec3(1.0, 0.95, 0.85), uSunCol, uSunset * 0.8) * rim * 1.2 * day;
         float fade = smoothstep(0.0, 0.22, el);                        // dissolve into the haze at the horizon
         float a = dens * fade * mix(0.35, 1.0, day);
         col = mix(col, cc, a);

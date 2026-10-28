@@ -39,6 +39,7 @@
 #include "game/indep/Frontend/ModernUI.h"
 #include "game/indep/Mem.h"
 #include "game/indep/Perf.h"
+#include "game/indep/World/TimeOfDay.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
@@ -400,6 +401,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    Sky::Init(); // time of day, before anything can draw: NFSU2_TIME / NFSU2_TIME_PRESET / NFSU2_TIME_SPEED (ISSUES #333)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
         if (SDL_Init(SDL_INIT_VIDEO) != 0) {
             fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -2090,6 +2092,10 @@ int main(int argc, char **argv)
                 Perf::ToggleOverlay();
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F4 && !ev.key.repeat)
                 Mem::ToggleOverlay();
+            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F5 && !ev.key.repeat)
+                Sky::NextPreset(); // day -> afternoon -> sunset -> night (ISSUES #333)
+            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F6 && !ev.key.repeat)
+                Sky::ToggleRunning(); // freeze / run the clock
             if (ev.type == SDL_TEXTINPUT && startup.KeyboardActive()) // the name-entry keyboard (#204)
                 startup.OnTextInput(ev.text.text);
         }
@@ -2111,6 +2117,11 @@ int main(int argc, char **argv)
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
         Mem::SetTime(double(elapsed) * 0.001);
+        { // the time of day keeps running through the menus too (#333)
+            static Uint32 lastSky = start;
+            Sky::Update(double(now - lastSky) * 0.001);
+            lastSky = now;
+        }
         if ((inWorld || sceneMode) && elapsed - lastMemScan >= 1000) { // a cheap once-a-second refresh (ISSUES #331)
             lastMemScan = elapsed;
             world.UpdateMemory();

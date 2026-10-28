@@ -3,6 +3,7 @@
 // saving and restoring the state SDL caches.
 #include "game/indep/World/TrackWorld.h"
 #include "game/indep/Mem.h"
+#include "game/indep/World/TimeOfDay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -531,9 +532,20 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         return false;
 
     constexpr float kDrawDistance = 900.0f, kNear = 0.3f, kFogStart = 200.0f;
-    // Israeli daylight (ISSUES #277): bright azure sky, pale warm haze; NFSU2_NIGHT=1 keeps the original dusk.
-    const bool day = !getenv("NFSU2_NIGHT");
-    const float fogColour[4] = {day ? 0.82f : 0.55f, day ? 0.87f : 0.62f, day ? 0.93f : 0.72f, 1.0f};
+    // Time of day (ISSUES #333): the sky, fog, sun and the night switches all come from one clock.  The shading
+    // factor is continuous (Sky::State::day), the night effects are the binary switch `day` (lamps, beams, pools).
+    const Sky::State &sky = Sky::Now();
+    const bool day = !sky.night;
+    const float dayK = sky.day;
+    const float fogColour[4] = {sky.fog[0], sky.fog[1], sky.fog[2], 1.0f};
+    if (getenv("NFSU2_TIME_DEBUG") && !inset) {
+        static int last = -1;
+        if (int(sky.hours * 10.0f) != last) {
+            last = int(sky.hours * 10.0f);
+            printf("[Sky] render %.2f h day %.2f sunset %.2f night %d sun %.2f %.2f %.2f\n", sky.hours, sky.day, sky.sunset,
+                   int(sky.night), sky.sun[0], sky.sun[1], sky.sun[2]);
+        }
+    }
 
     GLBridge::Scope scope(renderer);
     if (!m_shadersTried)
@@ -589,11 +601,13 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             GLShader::Set3f(GLShader::Uniform(m_progSky, "uR"), r[0], r[1], r[2]);
             GLShader::Set3f(GLShader::Uniform(m_progSky, "uU"), u[0], u[1], u[2]);
             GLShader::Set2f(GLShader::Uniform(m_progSky, "uTan"), tanHalf * side, tanHalf * aspect);
-            const float sl = std::sqrt(0.62f * 0.62f + 0.45f * 0.45f + 0.64f * 0.64f);
-            GLShader::Set3f(GLShader::Uniform(m_progSky, "uSun"), 0.62f / sl, 0.45f / sl, 0.64f / sl);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uSun"), sky.sun[0], sky.sun[1], sky.sun[2]);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uMoon"), sky.moon[0], sky.moon[1], sky.moon[2]);
+            GLShader::Set3f(GLShader::Uniform(m_progSky, "uSunCol"), sky.sunCol[0], sky.sunCol[1], sky.sunCol[2]);
+            GLShader::Set1f(GLShader::Uniform(m_progSky, "uSunset"), sky.sunset);
             GLShader::Set3f(GLShader::Uniform(m_progSky, "uHorizon"), fogColour[0], fogColour[1], fogColour[2]);
             GLShader::Set1f(GLShader::Uniform(m_progSky, "uTime"), float(SDL_GetTicks()) * 0.001f);
-            GLShader::Set1f(GLShader::Uniform(m_progSky, "uDay"), getenv("NFSU2_SKY_DEBUG") ? 2.0f : (day ? 1.0f : 0.0f));
+            GLShader::Set1f(GLShader::Uniform(m_progSky, "uDay"), getenv("NFSU2_SKY_DEBUG") ? 2.0f : dayK);
             glBegin(GL_QUADS);
             glVertex2f(-1, 1);
             glVertex2f(1, 1);
@@ -604,16 +618,17 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         } else {
             glShadeModel(GL_SMOOTH);
             glBegin(GL_QUADS);
-            if (day)
-                glColor3ub(52, 128, 214);
-            else
-                glColor3ub(70, 100, 150);
+            // the fallback gradient follows the same clock, warmed at sunset (ISSUES #333)
+            auto mixc = [&](float r1, float g1, float b1, float warm) {
+                const float r = (70.0f + (r1 - 70.0f) * dayK + warm * 60.0f) * (1.0f / 255.0f);
+                const float g = (100.0f + (g1 - 100.0f) * dayK - warm * 14.0f) * (1.0f / 255.0f);
+                const float b = (150.0f + (b1 - 150.0f) * dayK - warm * 40.0f) * (1.0f / 255.0f);
+                glColor3f(std::clamp(r, 0.0f, 1.0f), std::clamp(g, 0.0f, 1.0f), std::clamp(b, 0.0f, 1.0f));
+            };
+            mixc(52, 128, 214, sky.sunset * 0.20f);
             glVertex2f(-1, 1);
             glVertex2f(1, 1);
-            if (day)
-                glColor3ub(206, 224, 242);
-            else
-                glColor3ub(140, 158, 184);
+            mixc(206, 224, 242, sky.sunset);
             glVertex2f(1, -1);
             glVertex2f(-1, -1);
             glEnd();
@@ -653,6 +668,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     // updates the fog range when it changed (it used to re-set ~35 uniforms and re-bind 13 textures on every switch).
     struct WorldUniforms {
         int foliage = -1, timeLoc = -1, spotPos0 = -1, spotPos1 = -1, spotDir = -1, spotOn = -1, dbgPave = -1, glow = -1, tex = -1, fogColor = -1, fogStart = -1, fogEnd = -1, grade = -1, cam = -1, theme = -1, day = -1, matOn = -1, wet = -1;
+        int sun = -1, sunset = -1; // the time of day (ISSUES #333)
         int mc[MaterialLibrary::kColours], mn[MaterialLibrary::kNormals];
         float lastFogStart = -1.0f, lastFogEnd = -1.0f;
     };
@@ -666,6 +682,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         u.fogStart = GLShader::Uniform(prog, "uFogStart"), u.fogEnd = GLShader::Uniform(prog, "uFogEnd");
         u.grade = GLShader::Uniform(prog, "uGrade"), u.cam = GLShader::Uniform(prog, "uCam"), u.theme = GLShader::Uniform(prog, "uTheme");
         u.day = GLShader::Uniform(prog, "uDay"), u.dbgPave = GLShader::Uniform(prog, "uDebugPave"), u.matOn = GLShader::Uniform(prog, "uMatOn"), u.wet = GLShader::Uniform(prog, "uWet");
+        u.sun = GLShader::Uniform(prog, "uSun"), u.sunset = GLShader::Uniform(prog, "uSunset");
         for (int i = 0; i < MaterialLibrary::kColours; ++i) {
             char name[8];
             snprintf(name, sizeof(name), "uMC%d", i);
@@ -689,7 +706,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         GLShader::Set1f(u.grade, getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(u.cam, cam.x, cam.y, cam.z);
         GLShader::Set1f(u.theme, getenv("NFSU2_NO_THEME") ? 0.0f : 1.0f);
-        GLShader::Set1f(u.day, day ? 1.0f : 0.0f);
+        GLShader::Set1f(u.day, dayK);
+        GLShader::Set3f(u.sun, sky.sun[0], sky.sun[1], sky.sun[2]);
+        GLShader::Set1f(u.sunset, sky.sunset);
         GLShader::Set1f(u.matOn, mats ? 1.0f : 0.0f);
         for (int i = 0; i < MaterialLibrary::kColours; ++i)
             GLShader::Set1i(u.mc[i], 2 + i);
@@ -701,7 +720,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         float on = 0.0f, p0[3] = {0, 0, 0}, p1[3] = {0, 0, 0}, dir[3] = {1, 0, 0};
         for (const Car &car : m_cars)
             if (car.haveHead[0] && car.haveHead[1] && car.lampHead > 0.02f) {
-                on = car.lampHead * (day ? 0.10f : 1.0f);
+                on = car.lampHead * (0.10f + 0.90f * (1.0f - dayK)); // headlights fade in as the sun sets (#333)
                 for (int k = 0; k < 3; ++k)
                     p0[k] = car.headPos[0][k], p1[k] = car.headPos[1][k];
                 const float fl = std::sqrt(car.fwd[0] * car.fwd[0] + car.fwd[1] * car.fwd[1] + 1e-6f);
@@ -762,15 +781,15 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         ++Perf::g.programSwitches;
         GLShader::Set1i(GLShader::Uniform(m_progInterior, "uTex"), 0);
         GLShader::Set3f(GLShader::Uniform(m_progInterior, "uFogColor"), fogColour[0], fogColour[1], fogColour[2]);
-        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDay"), day ? 1.0f : 0.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDay"), dayK);
+        GLShader::Set3f(GLShader::Uniform(m_progInterior, "uSun"), sky.sun[0], sky.sun[1], sky.sun[2]);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogStart"), curFogStart);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uFogEnd"), curFogEnd);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGrade"), getenv("NFSU2_NO_GRADE") ? 0.0f : 1.0f);
         GLShader::Set3f(GLShader::Uniform(m_progInterior, "uCam"), cam.x, cam.y, cam.z);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uTime"), float(SDL_GetTicks()) * 0.001f);
         GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDebug"), getenv("NFSU2_INTERIOR_DEBUG") ? float(atof(getenv("NFSU2_INTERIOR_DEBUG"))) : 0.0f);
-        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : (day ? 0.12f : 0.42f));
-        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uDay"), day ? 1.0f : 0.0f);
+        GLShader::Set1f(GLShader::Uniform(m_progInterior, "uLit"), getenv("NFSU2_LIT_ROOMS") ? float(atof(getenv("NFSU2_LIT_ROOMS"))) : (0.12f + 0.30f * (1.0f - dayK)));
     };
 
     // Upload render triangles once: grouped by texture, one draw range per texture.
@@ -807,8 +826,6 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         if (render.empty())
             return;
         ++Perf::g.bufferBinds; // counts cell uploads (should be 0 in steady state)
-        if (!getenv("NFSU2_NIGHT")) // daylight: the street lamps' light cones are a night effect, they show as glowing shards by day
-            render.erase(std::remove_if(render.begin(), render.end(), [](const RTri &t) { return IsBeamTexture(t.tex); }), render.end());
         if (render.empty())
             return;
         std::stable_sort(render.begin(), render.end(), [](const RTri &a, const RTri &b) { return a.tex < b.tex; });
@@ -858,6 +875,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     };
     auto addRanges = [&](GLCell &cell, bool far) {
         for (GLRange &r : cell.ranges) {
+            // the street lamps' light cones are a night effect; skipped at draw time so F5 can switch at runtime (#333)
+            if (!sky.night && IsBeamTexture(r.hash))
+                continue;
             if (!r.texture) // paged out by the residency manager: decode it again now (#332)
                 r.texture = GLTexture(r.hash);
             const int g = r.mode != 0 ? (far ? kBlendFar : kBlendNear) : (m_progInterior && r.interior != 0) ? kInterior : (far ? kOpaqueFar : kOpaqueNear);
@@ -893,7 +913,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 GLShader::Set1f(GLShader::Uniform(m_progInterior, "uGlassOnly"), b.interior == 2 ? 1.0f : 0.0f);
             if (g == kBlendNear || g == kBlendFar) {
                 glBlendFunc(GL_SRC_ALPHA, b.mode == 2 ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
-                GLShader::Set1f(curU->glow, b.mode == 2 && day ? 0.2f : 1.0f); // daylight: additive light pools / glows are faint
+                GLShader::Set1f(curU->glow, b.mode == 2 ? 1.0f - 0.8f * dayK : 1.0f); // daylight: additive light pools / glows are faint (#333)
             }
             if (b.tex != boundTex) {
                 glBindTexture(GL_TEXTURE_2D, b.tex);
@@ -1113,10 +1133,10 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), &v[0].r);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
             };
-            if (day) { // the sun's shadow: the car's silhouette thrown away from the sun (the sun is ~40 degrees up, so a 1 m body falls ~1.3 m)
-                constexpr float kSunX = 0.62f, kSunY = 0.45f, kSunZ = 0.64f;
-                const float reach = 1.0f / kSunZ;
-                blob(cx - kSunX * reach * 0.95f, cy - kSunY * reach * 0.95f, centreGround + 0.05f, car.halfLen * 1.02f, car.halfWid * 1.08f, uint8_t(alpha * 0.58f));
+            if (sky.day > 0.45f) { // the sun's shadow: the car's silhouette thrown away from the real sun (#333)
+                const float reach = 1.0f / std::max(sky.sun[2], 0.20f);
+                blob(cx - sky.sun[0] * reach * 0.95f, cy - sky.sun[1] * reach * 0.95f, centreGround + 0.05f, car.halfLen * 1.02f,
+                     car.halfWid * 1.08f, uint8_t(alpha * 0.58f * std::clamp(1.2f - reach * 0.25f, 0.35f, 1.0f)));
             }
             // dark contact patches where the tyres meet the road: the weight of the car
             if (car.wheelOf) {
@@ -1150,7 +1170,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (bd > 700.0f)
                 continue;
             // the camera that stands inside the column (the car on a marker) must not be flooded: it fades out as you close in
-            const float near = std::clamp((bd - b.radius * 0.8f) / (b.radius * 2.5f), 0.10f, 1.0f) * (day ? 0.75f : 1.0f);
+            const float near = std::clamp((bd - b.radius * 0.8f) / (b.radius * 2.5f), 0.10f, 1.0f) * (0.75f + 0.25f * (1.0f - dayK));
             glBegin(GL_QUAD_STRIP);
             for (int i = 0; i <= kSides; ++i) {
                 const float a = float(i % kSides) * 6.2831853f / kSides;
@@ -1166,15 +1186,13 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glDisable(GL_BLEND);
     }
 
-    DrawCarsGL(cam, fogColour, day, kFogStart, kDrawDistance, false);
+    DrawCarsGL(cam, fogColour, kFogStart, kDrawDistance, false);
     // The sun on screen for the god rays and lens reflections (ISSUES #305): its direction in camera space through the same frustum.
     {
-        const float sl = std::sqrt(0.62f * 0.62f + 0.45f * 0.45f + 0.64f * 0.64f);
-        const float s3[3] = {0.62f / sl, 0.45f / sl, 0.64f / sl};
-        const float xc = s3[0] * r[0] + s3[1] * r[1] + s3[2] * r[2], yc = s3[0] * u[0] + s3[1] * u[1] + s3[2] * u[2],
-                    zc = s3[0] * f[0] + s3[1] * f[1] + s3[2] * f[2];
+        const float xc = sky.sun[0] * r[0] + sky.sun[1] * r[1] + sky.sun[2] * r[2], yc = sky.sun[0] * u[0] + sky.sun[1] * u[1] + sky.sun[2] * u[2],
+                    zc = sky.sun[0] * f[0] + sky.sun[1] * f[1] + sky.sun[2] * f[2];
         m_raysK = 0.0f;
-        if (day && zc > 0.05f && !inset) {
+        if (dayK > 0.15f && zc > 0.05f && !inset) { // a low sun still throws its shafts through the streets (#333)
             const float nx = xc / (zc * tanHalf) * side, ny = yc / (zc * tanHalf * aspect);
             m_sunUV[0] = 0.5f + 0.5f * nx, m_sunUV[1] = 0.5f + 0.5f * ny;
             // fade out as the sun swings far off to the side of the view
@@ -1185,7 +1203,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         }
     }
     if (const char *forced = getenv("NFSU2_RAYS_SUN")) // dev aid: "u,v" puts the sun there (uv, 0..1) whatever the camera sees
-        if (day && !inset && sscanf(forced, "%f,%f", &m_sunUV[0], &m_sunUV[1]) == 2)
+        if (dayK > 0.15f && !inset && sscanf(forced, "%f,%f", &m_sunUV[0], &m_sunUV[1]) == 2)
             m_raysK = 1.0f;
     if (!inset)
         PostProcess(width, height);
@@ -1196,7 +1214,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
 
 // Cars: rebuilt every frame from client memory, one draw per texture run (ISSUES #263 / #284).  `reflect` mirrors them in the
 // floor plane z = 0 for the showroom stage (ISSUES #304): a flipped modelview, no lamp glows.
-void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool day, float kFogStart, float kDrawDistance, bool reflect)
+void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], float kFogStart, float kDrawDistance, bool reflect)
 {
     static std::vector<Vertex> scratch;
     if (reflect) {
@@ -1231,7 +1249,11 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
         const GLint lampLoc = GLShader::Uniform(m_progCar, "uLamp");
         const GLint glassLoc = GLShader::Uniform(m_progCar, "uGlass");
         GLShader::Set1f(glassLoc, 0.0f);
-        GLShader::Set1f(GLShader::Uniform(m_progCar, "uDay"), day ? 1.0f : 0.0f);
+        const Sky::State &sky = Sky::Now();
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uDay"), sky.day);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uSun"), sky.sun[0], sky.sun[1], sky.sun[2]);
+        GLShader::Set3f(GLShader::Uniform(m_progCar, "uSunCol"), sky.sunCol[0], sky.sunCol[1], sky.sunCol[2]);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uSunset"), sky.sunset);
         GLShader::Set1f(GLShader::Uniform(m_progCar, "uStage"), m_stageEnv);
         GLShader::Set3f(GLShader::Uniform(m_progCar, "uStageA"), m_stageA[0], m_stageA[1], m_stageA[2]);
         GLShader::Set3f(GLShader::Uniform(m_progCar, "uStageB"), m_stageB[0], m_stageB[1], m_stageB[2]);
@@ -1315,9 +1337,9 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
         GLShader::DisableAttrib(3);
         GLShader::Use(0);
         if (!reflect) {
-            DrawCarLights(cam, day);
-            DrawCarFlames(cam, day);
-            DrawCarSirens(cam, day);
+            DrawCarLights(cam);
+            DrawCarFlames(cam);
+            DrawCarSirens(cam);
             DrawTyreEffects(cam);
         }
     } else {
@@ -1489,7 +1511,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
 
     // 1. the reflection, below the floor plane
     if (!sp.overlay)
-        DrawCarsGL(cam, fog, false, 400.0f, 900.0f, true);
+        DrawCarsGL(cam, fog, 400.0f, 900.0f, true);
     // 2. the floor: a dark glossy disc that lets the reflection through near the car and fades into the backdrop
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_ALPHA_TEST);
@@ -1532,7 +1554,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_ALPHA_TEST);
     // 3. the car itself
-    DrawCarsGL(cam, fog, false, 400.0f, 900.0f, false);
+    DrawCarsGL(cam, fog, 400.0f, 900.0f, false);
     m_stageEnv = 0.0f;
     m_raysK = 0.0f;
     if (sp.overlay)
@@ -1545,7 +1567,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
 // Glows and light on the road for the car lamps (ISSUES #284): a soft additive halo around each lit lens (facing the
 // viewer, so a tail lamp does not glow through the car), and at night warm headlight pools and a red wash behind a braking
 // car. The lens triangles themselves are emissive in the car shader.
-void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
+void TrackWorld::DrawCarLights(const Camera &cam) const
 {
     if (getenv("NFSU2_NO_LAMP_GLOW"))
         return;
@@ -1557,7 +1579,7 @@ void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    const float dayK = day ? 0.55f : 1.0f;
+    const float dayK = 1.0f - 0.45f * Sky::Now().day;
     auto halo = [&](const float p[3], float r, float g, float b, float radius, float alpha) {
         if (alpha <= 0.01f)
             return;
@@ -1608,7 +1630,7 @@ void TrackWorld::DrawCarLights(const Camera &cam, bool day) const
                 halo(p, 1.0f, 0.06f + 0.08f * b, 0.03f + 0.04f * b, 0.14f + 0.30f * b, (0.16f + 0.40f * b) * seen * dayK);
             }
         }
-        if (day)
+        if (!Sky::Now().night)
             continue;
         // Night: headlight pools ahead of the car and the red wash behind a braking one, flat on the road.
         const float carZ = car.xf[11];
@@ -1768,7 +1790,7 @@ void TrackWorld::UpdateFlames(float dt)
     m_flames.erase(std::remove_if(m_flames.begin(), m_flames.end(), [](const Flame &f) { return f.age >= f.life; }), m_flames.end());
 }
 
-void TrackWorld::DrawCarFlames(const Camera &cam, bool day) const
+void TrackWorld::DrawCarFlames(const Camera &cam) const
 {
     if (!m_progFlame || getenv("NFSU2_NO_FLAMES"))
         return;
@@ -1792,7 +1814,7 @@ void TrackWorld::DrawCarFlames(const Camera &cam, bool day) const
                 cellLoc = GLShader::Uniform(m_progFlame, "uCell"), cellScaleLoc = GLShader::Uniform(m_progFlame, "uCellScale");
     GLShader::Set1f(GLShader::Uniform(m_progFlame, "uTime"), m_flameClock);
     GLShader::Set1i(GLShader::Uniform(m_progFlame, "uTex"), 0);
-    const float dayK = day ? 0.8f : 1.0f;
+    const float dayK = 1.0f - 0.20f * Sky::Now().day;
     const unsigned fireTex = const_cast<TrackWorld *>(this)->GLTexture(0xb3095eb7u);   // SFX_FIREB
     const unsigned glareTex = const_cast<TrackWorld *>(this)->GLTexture(0x17e5ebd2u);  // SFX_FLARE_GLOWA
 
@@ -1935,7 +1957,7 @@ void TrackWorld::DrawCarFlames(const Camera &cam, bool day) const
 
 // ---- Police sirens (ISSUES #318): the light bar flashes red and blue in double bursts; every flash glows on the lens, throws a coloured
 // pool on the road and shows at the grille and the rear deck as well.
-void TrackWorld::DrawCarSirens(const Camera &cam, bool day) const
+void TrackWorld::DrawCarSirens(const Camera &cam) const
 {
     if (!m_progFlame || getenv("NFSU2_NO_SIRENS"))
         return;
@@ -1959,7 +1981,7 @@ void TrackWorld::DrawCarSirens(const Camera &cam, bool day) const
     GLShader::Set1f(GLShader::Uniform(m_progFlame, "uMode"), 3.0f);
     GLShader::Set1f(GLShader::Uniform(m_progFlame, "uTime"), m_flameClock);
     GLShader::Set1i(GLShader::Uniform(m_progFlame, "uTex"), 0);
-    const float dayK = day ? 0.55f : 1.0f;
+    const float dayK = 1.0f - 0.45f * Sky::Now().day;
     auto glow = [&](float px, float py, float pz, float radius, float r, float g, float b, float a) {
         float dx = px - cam.x, dy = py - cam.y, dz = pz - cam.z;
         const float dl = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));

@@ -92,9 +92,9 @@ public:
     void SetWarmBudget(int ms) { m_warmBudgetMs = ms; }
     bool Warming() const { return m_warmAll && !m_scene && !m_cells.empty(); }
     float WarmFraction() const { return m_warmKeys.empty() ? 0.0f : float(m_warmIdx) / float(m_warmKeys.size()); }
-    void DrawCarLights(const Camera &cam, bool day) const;
-    void DrawCarFlames(const Camera &cam, bool day) const;
-    void DrawCarSirens(const Camera &cam, bool day) const;
+    void DrawCarLights(const Camera &cam) const;
+    void DrawCarFlames(const Camera &cam) const;
+    void DrawCarSirens(const Camera &cam) const;
 
     // Height of the highest walkable surface (normal mostly up) at (x, y) that is not above zMax.
     bool GroundHeight(float x, float y, float zMax, float &z, float *normal = nullptr) const;
@@ -487,7 +487,7 @@ private:
     void PostProcess(int w, int h);
     float m_sunUV[2] = {0.5f, 2.0f}, m_raysK = 0.0f; // the sun on screen (uv) and the god-ray / lens-reflection strength (ISSUES #305)
     float m_stageEnv = 0.0f, m_stageA[3] = {}, m_stageB[3] = {}; // the car shader's studio environment (RenderStage)
-    void DrawCarsGL(const Camera &cam, const float fogColour[4], bool day, float kFogStart, float kDrawDistance, bool reflect);
+    void DrawCarsGL(const Camera &cam, const float fogColour[4], float kFogStart, float kDrawDistance, bool reflect);
     float m_fxMotion = 0, m_fxNitro = 0, m_fxCar[4] = {0, 0, 0, 0}, m_fxCenter[2] = {0.5f, 0.6f};
     void ReleasePost();
     unsigned m_glShadow = 0; // soft contact-shadow texture (procedural)

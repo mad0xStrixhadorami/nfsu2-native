@@ -12,7 +12,7 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
 ![commits](https://img.shields.io/badge/commits-377%2B-lightgrey?style=flat-square)
-![log](https://img.shields.io/badge/ISSUES.md-332%20entries-informational?style=flat-square)
+![log](https://img.shields.io/badge/ISSUES.md-333%20entries-informational?style=flat-square)
 
 <img src="docs/media/race_drive.gif" width="760" alt="Pre-race cinematic, countdown and launch in the Israeli-themed city"/>
 
@@ -72,7 +72,7 @@ switchable off with environment variables (see the table at the bottom) if you w
 <td colspan="2" align="center"><img src="docs/media/transitions.gif" width="50%" alt="Screen transitions"/><br/><sub><b>Screen transitions</b> — menu → loading → game, with a glowing diagonal wipe between screens and a loading backdrop that keeps moving (<code>NFSU2_NO_TRANSITIONS=1</code> turns the wipes off).</sub></td>
 </tr>
 <tr>
-<td colspan="2" align="center"><img src="docs/media/night_race.gif" width="50%" alt="Night racing"/><br/><sub><b>Night racing</b> (<code>NFSU2_NIGHT=1</code>) — emissive headlights and tail lights, glass covers, light pools on the road, dusk sky with stars.</sub></td>
+<td colspan="2" align="center"><img src="docs/media/night_race.gif" width="50%" alt="Night racing"/><br/><sub><b>Night racing</b> — emissive headlights and tail lights, glass covers, light pools on the road, a dusk sky with stars; one clock now runs day → afternoon → sunset → night (<code>F5</code>, <code>NFSU2_TIME=&lt;hours&gt;</code>).</sub></td>
 </tr>
 </table>
 
@@ -157,7 +157,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **332 entries** in [`ISSUES.md`](ISSUES.md) |
+| Findings, decodes and design notes logged | **333 entries** in [`ISSUES.md`](ISSUES.md) |
 | Commits | **377+** |
 | C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
@@ -183,7 +183,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules, events started from the street |
 | Car customisation | 🟡 mostly | Parts, performance packages, tuning sliders, dyno, vinyls, decals, paint, rims, spinners, neon |
 | Garage / shops (3D) | 🟡 partial | The garage room and the four street shops (body, paint, performance, specialty) render their own 3D interior over the city without a reload, with a part-following camera; the original street-shop plumbing and per-shop car placement are stand-ins (#330) |
-| Graphics | 🟢 beyond original | Custom shaders, shader sky, god rays, MSAA, widescreen Hor+, working car lights and glass |
+| Graphics | 🟢 beyond original | Custom shaders, shader sky, god rays, MSAA, widescreen Hor+, working car lights and glass, a full time-of-day clock (day / afternoon / sunset / night, `F5`) |
 | Audio | 🟡 partial | Engine, skid, turbo, wind and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
 | Car shows / magazine covers, tutorial tips, Uniques | 🟡 playable | Car-show spots win magazine covers (#309), tip spots deliver SMS (#308), the seven Unique spots of a region offer a part / rim / vinyl or a performance slot (#320-#325); the original's 3D preview and prices are not ported |
@@ -217,6 +217,8 @@ NFSU2_DATA=/path/to/your/disc ./build/nfsu2           # play
 | Q / E | L1 / R1 |
 | F3 | Performance overlay |
 | F4 | Memory / residency overlay |
+| F5 | Next time of day: day → afternoon → sunset → night |
+| F6 | Freeze / resume the time-of-day clock |
 | F10 | Quit |
 
 The window is 16:9 by default and resizable. The 3D world widens with the window (no stretching), while the
@@ -234,7 +236,8 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `NFSU2_DRIVE="3500-9000:up,..."` | Hold buttons for a time window (hand-driven tests) |
 | `NFSU2_SPAWN=x,y,yaw` | Teleport the player (dev aid) |
 | `NFSU2_WORLD_FLY=1` + `NFSU2_WORLD_CAM=x,y,z,yaw,pitch` | Free camera; `NFSU2_FLY_SPIN=<rad/s>` turns it, `NFSU2_FLY_ORBIT="cx,cy,r,zLook,rad/s"` circles a point |
-| `NFSU2_NIGHT=1` | Night / dusk look instead of Israeli daylight |
+| `NFSU2_TIME=<hours>` / `NFSU2_TIME_PRESET=day\|afternoon\|sunset\|night` | Set the hour (the presets are 12.5 / 16.0 / 17.8 / 21.0 h); `F5` cycles them |
+| `NFSU2_TIME_SPEED=<h/s>` / `F6` | Run the time-of-day clock (`0.02` = a day in 20 minutes); `F6` freezes / resumes; `NFSU2_NIGHT=1` = 21:00 |
 | `NFSU2_NO_SHADERS=1` | Fixed-function fallback |
 | `NFSU2_CLASSIC_SKY=1` / `NFSU2_NO_RAYS=1` | Old sky gradient / no god rays and lens reflections (`NFSU2_RAYS=<k>` sets the strength) |
 | `NFSU2_NO_STAGE=1` / `NFSU2_CLASSIC_LOADING=1` / `NFSU2_CLASSIC_UI=1` | Original menu backdrop and car preview / original loading screens / original UI look |
@@ -260,7 +263,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
    collision mesh, road/traffic graphs, the car database, part database, GLOBALB career tables, FNG UI
    packages and the audio banks.
 4. **Rewrite, don't emulate.** Each decoded behaviour becomes normal C++ with a `// 0xADDRESS` comment to
-   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (332 entries so far — read it,
+   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (333 entries so far — read it,
    it is the real project diary).
 5. **Reuse where legal and sensible.** The engine core shared with the CC0 *Most Wanted* decompilation
    ([`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw)) is vendored in `third_party/nfsmw`.
