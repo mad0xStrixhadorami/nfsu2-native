@@ -185,7 +185,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Audio | 🟡 partial | Engine, skid, turbo, wind and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
 | Car shows / magazine covers, tutorial tips, Uniques | 🟡 playable | Car-show spots win magazine covers (#309), tip spots deliver SMS (#308), the seven Unique spots of a region offer a part / rim / vinyl or a performance slot (#320-#325); the original's 3D preview and prices are not ported |
-| Reverse lamps, turn signals | 🔴 open | Documented in `ISSUES.md` (#287) |
+| Reverse lamps, turn signals | ⛔ not in the original | The PS2 cars ship no such solids (`ISSUES.md` #329) |
 
 If you want **one number** for "can I play the game": roughly **half of the single-player game is reachable
 and playable natively today** (menus → Quick Race → free roam → career flow → customisation), with the long
