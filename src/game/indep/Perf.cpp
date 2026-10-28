@@ -212,6 +212,7 @@ void EndFrame()
     }
 }
 
+uint64_t RssBytes() { return Rss(); }
 bool OverlayOn() { return g_overlay; }
 void ToggleOverlay() { g_overlay = !g_overlay; }
 uint64_t Allocations() { return g_allocs.load(std::memory_order_relaxed); }

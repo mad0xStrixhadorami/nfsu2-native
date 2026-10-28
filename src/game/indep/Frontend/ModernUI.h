@@ -74,7 +74,8 @@ public:
     void DrawWipe(int w, int h, float t);
     void DrawFade(int w, int h, float alpha);
     // The profiler's overlay (a corner panel of monospaced-looking lines).
-    void DrawOverlay(int w, int h, const char lines[][96], int count);
+    // A debug panel of text lines, top right by default (the profiler) or top left (the memory telemetry, #331).
+    void DrawOverlay(int w, int h, const char lines[][96], int count, bool left = false);
     // The loading screen (ISSUES #301): assets/ui/loading.jpg full-window with a slow drift, a stage label, a smooth progress bar with
     // a percentage and a rotating hint.  `fraction` is the overall progress 0..1.  Returns false when the art / font is missing.
     bool DrawLoading(int w, int h, const char *stage, float fraction, float seconds);

@@ -731,11 +731,11 @@ void ModernUI::DrawWipe(int w, int h, float t)
     Quad({xt - core, 0}, {xt + core, 0}, {xb + core, H}, {xb - core, H}, Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade), Alpha(white, 0.9f * fade));
 }
 
-void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count)
+void ModernUI::DrawOverlay(int w, int h, const char lines[][96], int count, bool left)
 {
     if (!m_font || count <= 0)
         return;
-    const float s = float(h) / 720.0f, panel = 400 * s, px = float(w) - panel - 8 * s, py = 96 * s, lh = 21 * s; // top right, under the timer row
+    const float s = float(h) / 720.0f, panel = 400 * s, px = left ? 8 * s : float(w) - panel - 8 * s, py = 96 * s, lh = 21 * s; // top right by default, under the timer row
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
     Rect(px - 8 * s, py - 6 * s, panel + 8 * s, lh * float(count) + 12 * s, {0, 0, 0, 175}, {0, 0, 0, 175});
     for (int i = 0; i < count; ++i) {

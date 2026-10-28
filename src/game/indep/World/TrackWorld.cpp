@@ -1116,6 +1116,8 @@ void TrackWorld::UnloadScene()
     // Drops the room overlay and resumes the city underneath (ISSUES #330): cells, collision mesh,
     // textures, panorama and vertex arena were never touched, so nothing is re-streamed.
     ReleaseRoom();
+    m_room.clear(); // the CPU cells go too: the shop is re-parsed on the next entry anyway (#331)
+    m_roomTriCount = 0;
     m_scene = m_roomMode = false;
     printf("[World] scene unloaded, the city resumes\n");
 }

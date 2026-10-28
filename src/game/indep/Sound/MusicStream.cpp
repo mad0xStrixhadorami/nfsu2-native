@@ -4,10 +4,12 @@
 #include <cstdio>
 #include <cstring>
 
+#include "game/indep/Mem.h"
 #include "platform/linux/PlatformFile.h"
 
 namespace {
 const int kEaXaCoef[8] = {0, 240, 460, 392, 0, 0, -208, -220};
+constexpr uint32_t kMemMusic = 0xf1000020u; // the stream's buffers in the memory telemetry (ISSUES #331)
 
 uint32_t BE32(const uint8_t *p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint32_t LE32(const uint8_t *p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
@@ -74,6 +76,8 @@ bool MusicStream::Open(const ZipFileSystem &fs, const char *path)
     if (!m_device)
         return false;
     SDL_PauseAudioDevice(m_device, 0);
+    // The tune is streamed, not resident: report the decode buffers and the queue as the sound cost (#331).
+    Mem::Put(kMemMusic, Mem::kSound, "music stream (buffers + queue)", 0, Mem::kNormal, false);
     printf("[Music] %s: %lld bytes\n", path, (long long)m_file.size);
     return true;
 }
@@ -118,6 +122,10 @@ void MusicStream::Update()
 {
     if (!m_device)
         return;
+    Mem::Put(kMemMusic, Mem::kSound, nullptr,
+             m_block.capacity() + (m_pcm[0].capacity() + m_pcm[1].capacity() + m_out.capacity()) * sizeof(int16_t) +
+                 SDL_GetQueuedAudioSize(m_device),
+             Mem::kNormal, false);
     const Uint32 target = Uint32(m_rate * 4 * 3 / 4); // 0.75 s of 16-bit stereo
     for (int guard = 0; guard < 64 && SDL_GetQueuedAudioSize(m_device) < target; ++guard) {
         uint8_t head[8];

@@ -37,6 +37,7 @@
 #include "game/indep/Career/Hotspots.h"
 #include "game/indep/Frontend/Magazines.h"
 #include "game/indep/Frontend/ModernUI.h"
+#include "game/indep/Mem.h"
 #include "game/indep/Perf.h"
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
@@ -1895,6 +1896,7 @@ int main(int argc, char **argv)
             };
             dump(treeRoot->GetFirstObject(), 0, 0);
         }
+        world.UpdateMemory(); // the residency report has the world's numbers from the first frame (#331)
         inWorld = true;
     };
     if (getenv("NFSU2_DYNO_BENCH")) { // dev aid (ISSUES #293): every car flat out on a bare plane: times vs the dyno model
@@ -2070,6 +2072,11 @@ int main(int argc, char **argv)
 
 
     Perf::Init();
+    if (getenv("NFSU2_MEM_OVERLAY")) // start with the residency overlay on (screenshots, #331)
+        Mem::ToggleOverlay();
+    // --mem-report: boot the normal flow, then print the residency report of the loaded world and quit.
+    const bool memReport = argc > 1 && strcmp(argv[1], "--mem-report") == 0;
+    Uint32 lastMemScan = 0;
     for (bool running = true; running;) {
         Perf::BeginFrame();
         SDL_Event ev;
@@ -2078,6 +2085,8 @@ int main(int argc, char **argv)
                 running = false;
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F3 && !ev.key.repeat)
                 Perf::ToggleOverlay();
+            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F4 && !ev.key.repeat)
+                Mem::ToggleOverlay();
             if (ev.type == SDL_TEXTINPUT && startup.KeyboardActive()) // the name-entry keyboard (#204)
                 startup.OnTextInput(ev.text.text);
         }
@@ -2098,6 +2107,21 @@ int main(int argc, char **argv)
         music.Update();
         Uint32 now = SDL_GetTicks();
         Uint32 elapsed = now - start;
+        Mem::SetTime(double(elapsed) * 0.001);
+        if ((inWorld || sceneMode) && elapsed - lastMemScan >= 1000) { // a cheap once-a-second refresh (ISSUES #331)
+            lastMemScan = elapsed;
+            world.UpdateMemory();
+        }
+        static Uint32 worldAt = 0; // when the world (or the dev scene) first became drawable
+        if ((inWorld || sceneMode) && !worldAt)
+            worldAt = elapsed;
+        const Uint32 reportAfter = Uint32(getenv("NFSU2_MEM_REPORT_MS") ? atoi(getenv("NFSU2_MEM_REPORT_MS")) : 3000);
+        if (memReport && worldAt && elapsed - worldAt >= reportAfter) {
+            world.UpdateMemory();
+            Mem::Print(stdout);
+            fflush(stdout);
+            running = false;
+        }
 
         bool releaseInjectedPadAfterUpdate = false;
         // Optional one-update input tap for testing screen transitions (NFSU2_PRESS_MS / NFSU2_PAD_MASK).
@@ -2196,6 +2220,7 @@ int main(int argc, char **argv)
                     shopScene = false;
                     sceneMode = false;
                     world.UnloadScene();
+                    world.UpdateMemory();
                     car.Place(streetPose.x, streetPose.y, streetPose.z, streetPose.yaw);
                     camera.x = streetPose.camX, camera.y = streetPose.camY, camera.z = streetPose.camZ;
                     camera.yaw = streetPose.camYaw, camera.pitch = streetPose.camPitch;
@@ -2238,6 +2263,7 @@ int main(int argc, char **argv)
                                 streetPose = {car.X(), car.Y(), car.Z(), car.Yaw(),
                                               camera.x, camera.y, camera.z, camera.yaw, camera.pitch};
                                 car.Place(0.0f, 5.4f, 0.15f, -1.5707963f); // on the front disc, nose toward the entrance
+                                world.UpdateMemory(); // the room's cells / arena join the residency report now (#331)
                                 camera = TrackWorld::Camera(); // the garage rig takes over while the screen is up
                                 camera.x = 0.0f, camera.y = -2.0f, camera.z = 1.8f, camera.yaw = 1.5707963f, camera.pitch = -0.1f;
                             } else {
@@ -3395,13 +3421,20 @@ int main(int argc, char **argv)
                 wash(0, 0, 0, c * 3);
         }
 
-        if (Perf::OverlayOn() && modernUi.Ready()) {
-            char lines[10][96];
-            const int n = Perf::OverlayLines(lines, 10);
+        if ((Perf::OverlayOn() || Mem::OverlayOn()) && modernUi.Ready()) {
             SDL_RenderSetLogicalSize(ren, 0, 0);
             int ow, oh;
             SDL_GetRendererOutputSize(ren, &ow, &oh);
-            modernUi.DrawOverlay(ow, oh, lines, n);
+            if (Perf::OverlayOn()) {
+                char lines[10][96];
+                const int n = Perf::OverlayLines(lines, 10);
+                modernUi.DrawOverlay(ow, oh, lines, n);
+            }
+            if (Mem::OverlayOn()) { // the residency panel, top left (#331)
+                char lines[20][96];
+                const int n = Mem::OverlayLines(lines, 20);
+                modernUi.DrawOverlay(ow, oh, lines, n, true);
+            }
         }
         // NFSU2_SCREENSHOT=file.bmp: save the frame after NFSU2_SCREENSHOT_MS (default 1500) and quit.
         if (const char *shot = getenv("NFSU2_SCREENSHOT")) {

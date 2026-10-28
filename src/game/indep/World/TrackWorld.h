@@ -253,6 +253,9 @@ public:
     const std::vector<float> &RoadTriangles() const { return m_roadTris; }
     size_t TriangleCount() const { return m_triangleCount; }
     size_t InstanceCount() const { return m_instances; }
+    // Re-registers the resident RAM / VRAM of the world with the memory telemetry (ISSUES #331). Cheap
+    // enough for a once-a-second refresh: it walks the cell maps, not the triangles.
+    void UpdateMemory();
 
 private:
     struct Tri {

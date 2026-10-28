@@ -12,7 +12,7 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
 ![commits](https://img.shields.io/badge/commits-377%2B-lightgrey?style=flat-square)
-![log](https://img.shields.io/badge/ISSUES.md-330%20entries-informational?style=flat-square)
+![log](https://img.shields.io/badge/ISSUES.md-331%20entries-informational?style=flat-square)
 
 <img src="docs/media/race_drive.gif" width="760" alt="Pre-race cinematic, countdown and launch in the Israeli-themed city"/>
 
@@ -89,6 +89,7 @@ switchable off with environment variables (see the table at the bottom) if you w
 | **Hybrid UI theme** | The original FEng menus keep their layout but are recoloured to the HUD palette | #290 |
 | **Pause dialog** | Glass panel on Esc: resume, restart, options, main menu, quit | #281 |
 | **Built-in profiler** | `F3`: frame time, CPU sections, GPU timer queries, a bound-ness verdict; draw-call batching and a single vertex arena took the city from 27 to a locked 60 fps | #282, #283 |
+| **Memory telemetry** | `F4`: every resident texture, vertex arena, cell list, car and sound buffer with its cost, priority and last use; `--mem-report` prints the loaded world's report and quits (the groundwork for a budgeted residency manager) | #331 |
 
 ## Atmosphere
 
@@ -155,7 +156,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **330 entries** in [`ISSUES.md`](ISSUES.md) |
+| Findings, decodes and design notes logged | **331 entries** in [`ISSUES.md`](ISSUES.md) |
 | Commits | **377+** |
 | C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
@@ -214,6 +215,7 @@ NFSU2_DATA=/path/to/your/disc ./build/nfsu2           # play
 | X / Left Shift | Handbrake while driving (starts a drift); pad square in menus |
 | Q / E | L1 / R1 |
 | F3 | Performance overlay |
+| F4 | Memory / residency overlay |
 | F10 | Quit |
 
 The window is 16:9 by default and resizable. The 3D world widens with the window (no stretching), while the
@@ -238,6 +240,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
 | `NFSU2_NO_THEME=1` / `NFSU2_NO_PROPS=1` / `NFSU2_NO_SHIKUN=1` | Turn the Israeli theme, street props or generated apartment blocks off |
 | `NFSU2_MSAA=0/2/4/8` | Multisampling |
 | `NFSU2_PERF=1` | Print the profiler every 2 s (`F3` shows it on screen) |
+| `NFSU2_MEM_OVERLAY=1` / `--mem-report` | Start with the residency panel (`F4`) on / print the loaded world's memory report and quit (`NFSU2_MEM_REPORT_MS` delays it) |
 | `NFSU2_SCREENSHOT=f.bmp` | Save the whole window and quit |
 | `NFSU2_MEMCARD=dir` | Use a scratch save directory |
 | `NFSU2_PACKAGE=UI_Main.fng` | Open a front-end screen directly |
@@ -255,7 +258,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
    collision mesh, road/traffic graphs, the car database, part database, GLOBALB career tables, FNG UI
    packages and the audio banks.
 4. **Rewrite, don't emulate.** Each decoded behaviour becomes normal C++ with a `// 0xADDRESS` comment to
-   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (330 entries so far — read it,
+   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (331 entries so far — read it,
    it is the real project diary).
 5. **Reuse where legal and sensible.** The engine core shared with the CC0 *Most Wanted* decompilation
    ([`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw)) is vendored in `third_party/nfsmw`.

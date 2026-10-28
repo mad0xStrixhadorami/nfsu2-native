@@ -2,6 +2,7 @@
 // is drawn between SDL batches with fixed-function GL 1.5 (vertex buffers, depth test, linear fog),
 // saving and restoring the state SDL caches.
 #include "game/indep/World/TrackWorld.h"
+#include "game/indep/Mem.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,10 @@
 #include "game/indep/World/Shaders.h"
 
 namespace {
+// Telemetry ids of the world's singletons (textures use their GL names; ISSUES #331).
+constexpr uint32_t kMemCityCells = 0xf1000001u, kMemRoomCells = 0xf1000002u, kMemPacks = 0xf1000003u, kMemCars = 0xf1000004u;
+constexpr uint32_t kMemArena = 0xf1000005u, kMemRoomArena = 0xf1000006u, kMemSkins = 0xf1000007u;
+
 struct Vertex {
     float x, y, z, u, v;
     uint8_t r, g, b, a;
@@ -35,11 +40,14 @@ void TrackWorld::ReleaseGL()
         if (m_roomArena) // a room over the world goes with the world (ISSUES #330)
             GLBridge::DeleteBuffers(1, &m_roomArena);
         GLBridge::DeleteVertexArray(m_roomArenaVao);
-        for (auto &[hash, tex] : m_glTextures)
+        for (auto &[hash, tex] : m_glTextures) {
             glDeleteTextures(1, &tex);
+            Mem::Drop(tex);
+        }
     }
     m_arena = m_arenaVao = 0;
     m_arenaCap = m_arenaUsed = 0;
+    Mem::Drop(kMemArena), Mem::Drop(kMemRoomArena); // the residency report forgets them with the world (#331)
     m_roomArena = m_roomArenaVao = 0;
     m_roomArenaCap = m_roomArenaUsed = 0;
     m_glCells.clear();
@@ -61,11 +69,52 @@ void TrackWorld::ReleaseRoom()
     }
     m_roomArena = m_roomArenaVao = 0;
     m_roomArenaCap = m_roomArenaUsed = 0;
+    Mem::Drop(kMemRoomArena);
     m_glRoom.clear();
 }
 
 // Texture by name hash from the stream's texture packs, decoded and uploaded on first use;
 // missing ones map to a white texture so the vertex colour shows.
+void TrackWorld::UpdateMemory()
+{
+    // What the world keeps resident (ISSUES #331): the RAM side here (cell geometry not yet handed to the GPU, the
+    // compressed texture packs, the composed car skins, the cars' world-space copies) and the VRAM arenas; the
+    // textures register themselves in GLTexture.
+    size_t city = 0;
+    for (const auto &kv : m_cells)
+        city += kv.second.tris.capacity() * sizeof(Tri) + kv.second.render.capacity() * sizeof(RTri);
+    Mem::Put(kMemCityCells, Mem::kGeometry, "city cells", city, Mem::kHigh, false);
+    size_t room = 0;
+    int roomCells = 0;
+    for (const auto &kv : m_room) {
+        room += kv.second.tris.capacity() * sizeof(Tri) + kv.second.render.capacity() * sizeof(RTri);
+        ++roomCells;
+    }
+    if (roomCells)
+        Mem::Put(kMemRoomCells, Mem::kGeometry, "shop room cells", room, Mem::kLow, false);
+    else
+        Mem::Drop(kMemRoomCells);
+    size_t packs = 0;
+    for (const auto &p : m_tpkData)
+        packs += p->capacity();
+    Mem::Put(kMemPacks, Mem::kGeometry, "texture packs (compressed)", packs, Mem::kHigh, false);
+    size_t skins = 0;
+    for (const auto &kv : m_skinPixels)
+        skins += kv.second.capacity(); // RGBA bytes
+    Mem::Put(kMemSkins, Mem::kGeometry, "composed car skins", skins, Mem::kPinned, false);
+    size_t cars = 0;
+    for (const auto &c : m_cars)
+        cars += c.tris.capacity() * sizeof(Tri) + c.render.capacity() * sizeof(RTri);
+    Mem::Put(kMemCars, Mem::kCars, "cars in the world", cars, Mem::kNormal, false);
+    if (m_arena)
+        Mem::Put(kMemArena, Mem::kArena, "city vertex arena", m_arenaCap * sizeof(Vertex), Mem::kPinned, true, m_arenaUsed * sizeof(Vertex));
+    if (m_roomArena)
+        Mem::Put(kMemRoomArena, Mem::kArena, "shop room vertex arena", m_roomArenaCap * sizeof(Vertex), Mem::kLow, true,
+                 m_roomArenaUsed * sizeof(Vertex));
+    else
+        Mem::Drop(kMemRoomArena);
+}
+
 unsigned TrackWorld::GLTexture(uint32_t hash)
 {
     if (!m_glWhite) {
@@ -75,6 +124,7 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &white);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        Mem::Put(m_glWhite, Mem::kTexture, "white", 4, Mem::kPinned, true);
     }
     if (!hash)
         return m_glWhite;
@@ -82,8 +132,10 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
     for (uint32_t stale : m_glTextureStale) {
         auto old = m_glTextures.find(stale);
         if (old != m_glTextures.end()) {
-            if (old->second != m_glWhite)
+            if (old->second != m_glWhite) {
                 glDeleteTextures(1, &old->second);
+                Mem::Drop(old->second); // a rebuilt skin (#331)
+            }
             m_glTextures.erase(old);
         }
     }
@@ -106,6 +158,7 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         m_glTextureMode[id] = 0;
         m_glTextures[hash] = id;
+        Mem::Put(id, Mem::kTexture, "car skin (composed)", size_t(CarSkin::kSize) * CarSkin::kSize * 4 + 300000, Mem::kPinned, true);
         return id;
     }
     auto it = m_glTextures.find(hash);
@@ -126,6 +179,7 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         m_glTextureMode[cid] = 0;
         m_glTextures[hash] = cid;
+        Mem::Put(cid, Mem::kTexture, "imported car texture", size_t(custom->second.w) * custom->second.h * 4, Mem::kPinned, true);
         return cid;
     }
     unsigned id = m_glWhite;
@@ -150,6 +204,7 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         m_glTextureMode[id] = 2; // additive
         m_glTextures[hash] = id;
+        Mem::Put(id, Mem::kTexture, "light beam (procedural)", size_t(w) * h * 4, Mem::kHigh, true);
         return id;
     }
     auto src = m_textures.find(hash);
@@ -185,6 +240,10 @@ unsigned TrackWorld::GLTexture(uint32_t hash)
         m_glTextureMode[id] = !blended ? 0 : info->alphaBlend == 2 ? 2 : 1;
         if (info->alphaUsage == 1 && info->name.rfind("ORG_", 0) == 0 && !getenv("NFSU2_NO_FOLIAGE"))
             m_glFoliage.insert(id);
+        // VRAM with the driver-generated mip chain (~4/3 of the base level, ISSUES #331).
+        char name[48];
+        snprintf(name, sizeof name, "%s", info->name.c_str());
+        Mem::Put(id, Mem::kTexture, name, size_t(decoded.width) * decoded.height * 4 * 4 / 3, Mem::kHigh, true);
     }
     m_glTextures[hash] = id;
     return id;
@@ -784,6 +843,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 glBindTexture(GL_TEXTURE_2D, b.tex);
                 boundTex = b.tex;
                 ++Perf::g.textureBinds;
+                Mem::Touch(b.tex); // last use, for the residency manager (#331)
             }
             GLBridge::MultiDrawArrays(GL_TRIANGLES, b.first.data(), b.count.data(), GLsizei(b.first.size()));
             ++Perf::g.drawCalls, ++Perf::g.multiDraws;
@@ -1161,7 +1221,9 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
                 size_t last = first;
                 while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
                     ++last;
-                glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
+                const unsigned carTex = GLTexture(car.render[first].tex);
+                glBindTexture(GL_TEXTURE_2D, carTex);
+                Mem::Touch(carTex);
                 glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
                 first = last;
             }
@@ -1257,7 +1319,9 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], bool da
                 size_t last = first;
                 while (last < car.render.size() && car.render[last].tex == car.render[first].tex)
                     ++last;
-                glBindTexture(GL_TEXTURE_2D, GLTexture(car.render[first].tex));
+                const unsigned carTex = GLTexture(car.render[first].tex);
+                glBindTexture(GL_TEXTURE_2D, carTex);
+                Mem::Touch(carTex);
                 glDrawArrays(GL_TRIANGLES, GLint(first * 3), GLsizei((last - first) * 3));
                 first = last;
             }

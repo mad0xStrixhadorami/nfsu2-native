@@ -24,4 +24,6 @@ void ToggleOverlay();
 int OverlayLines(char lines[][96], int maxLines);
 // Global allocation counters (operator new / delete are instrumented).
 uint64_t Allocations();
+// Resident set size of the process (the memory telemetry of #331 reports it beside our own numbers).
+uint64_t RssBytes();
 } // namespace Perf
