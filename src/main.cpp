@@ -971,6 +971,8 @@ int main(int argc, char **argv)
     // The modern pause dialog (ISSUES #281): 0 closed, 1 menu, 2 confirm 'back to the main menu', 3 confirm 'quit the game'.
     int modernPause = 0, modernSel = 0;
     bool modernYes = false, modernLeave = false;
+    FEStartupSequence::UniqueInfo uniqueInfo; // the visual Unique being offered (modernPause 8, ISSUES #319)
+    int uniqueSel = 0;
     bool optionsPush = false;
     bool optionsFromModern = false; // the options carousel was opened from the dialog: Back returns to the dialog, not to UI_Pause
     int optionsGuard = 0; // frames after the dialog's OPTIONS opens UI_Pause.fng: its Continue also hears that Accept press and would resume at once
@@ -1568,6 +1570,18 @@ int main(int argc, char **argv)
                     }
                 }
                 printf("[Triggers] %zu car shows open\n", openShows);
+                size_t openUniques = 0;
+                for (const Career::Trigger &t : trig.All()) {
+                    FEStartupSequence::UniqueInfo ui;
+                    if (t.kind == Career::Trigger::kUniqueVisual && startup.UniqueFor(t.name, ui) && ui.open && !ui.claimed && ui.supported) {
+                        TrackWorld::Beacon b;
+                        b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 255, b.g = 150, b.b = 40;
+                        beacons.push_back(b);
+                        printf("[Triggers] unique %s at %.1f %.1f z %.1f (%zu parts)\n", t.name.c_str(), t.x, t.y, t.z, ui.options.size());
+                        ++openUniques;
+                    }
+                }
+                printf("[Triggers] %zu visual uniques open\n", openUniques);
             }
             world.SetBeacons(beacons);
         }
@@ -2239,6 +2253,29 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            // Visual Unique spots (#319): driving into an open one offers its level-4 parts; Enter fits the highlighted part.
+            {
+                static const Career::Trigger *uniqueArmed = nullptr;
+                if (!pausePkg && !cribPkg && !modernPause && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
+                    const Career::Trigger *inside = nullptr;
+                    for (const Career::Trigger &t : Career::TriggerTable::Get().All())
+                        if (t.kind == Career::Trigger::kUniqueVisual && t.Contains(car.X(), car.Y()))
+                            inside = &t;
+                    if (!inside)
+                        uniqueArmed = nullptr;
+                    else if (inside != uniqueArmed) {
+                        uniqueArmed = inside;
+                        FEStartupSequence::UniqueInfo ui;
+                        if (startup.UniqueFor(inside->name, ui) && ui.open && !ui.claimed) {
+                            if (ui.options.empty())
+                                printf("[Unique] %s: nothing to offer (category %s)\n", inside->name.c_str(),
+                                       ui.supported ? "has no level-4 part for this car" : "not ported");
+                            else
+                                uniqueInfo = ui, uniqueSel = 0, modernPause = 8;
+                        }
+                    }
+                }
+            }
             // The modern pause dialog: Esc opens it (Resume / Restart / Options / Main Menu / Quit Game).
             const bool useModernPause = modernUi.Ready() && !getenv("NFSU2_CLASSIC_PAUSE");
             if (useModernPause) {
@@ -2261,6 +2298,18 @@ int main(int argc, char **argv)
                     }
                     if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart | (modernPause == 5 ? FENativeInterface::kPadAccept : 0u)))
                         modernPause = modernPause == 6 ? 1 : 0;
+                } else if (modernPause == 8) { // a Unique: Up / Down choose a part, Enter fits it, Esc leaves it for later
+                    const int n = int(uniqueInfo.options.size());
+                    if (pressed & FENativeInterface::kPadUp)
+                        uniqueSel = (uniqueSel + n - 1) % n;
+                    if (pressed & FENativeInterface::kPadDown)
+                        uniqueSel = (uniqueSel + 1) % n;
+                    if (pressed & (FENativeInterface::kPadBack | FENativeInterface::kPadStart))
+                        modernPause = 0;
+                    else if (pressed & FENativeInterface::kPadAccept) {
+                        startup.ClaimUnique(uniqueInfo, size_t(uniqueSel));
+                        modernPause = 0;
+                    }
                 } else if (modernPause == 7) { // BUSTED / ESCAPED: Enter closes the result
                     if (pressed & (FENativeInterface::kPadAccept | FENativeInterface::kPadStart | FENativeInterface::kPadBack)) {
                         pursuit.Dismiss();
@@ -3173,6 +3222,15 @@ int main(int argc, char **argv)
                 snprintf(l3, sizeof(l3), "Purse|$%u", engage.purse);
                 const char *lines[] = {l0, l1, l2, l3};
                 modernUi.DrawEngage(w, h, "EVENT", engage.name, lines, 4, engageSel, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (modernPause == 8 && modernUi.Ready()) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int w, h;
+                SDL_GetRendererOutputSize(ren, &w, &h);
+                std::vector<const char *> names;
+                for (const FEStartupSequence::UniqueInfo::Option &o : uniqueInfo.options)
+                    names.push_back(o.name.c_str());
+                modernUi.DrawDialog(w, h, "UNIQUE PART", names.data(), int(names.size()), uniqueSel, false, "", false, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             } else if (modernPause == 7) {
                 // the pursuit result is drawn with the pursuit HUD above

@@ -139,6 +139,21 @@ public:
     bool ShowFor(const std::string &triggerName, ShowInfo &out) const;
     void WinShow(const ShowInfo &info); // files the picture in the profile and saves
     std::vector<ShowInfo> WonShows() const; // every magazine picture won so far, in table order
+    // Visual Uniques (ISSUES #319): TRIGGER_START_STAGE_n_VISUAL_k.  The spot opens once the area's ordinary events done reach the trigger's value;
+    // the reward is one level-4 part of the trigger's category (0x00270b40 maps the category to a part id) for the current car.
+    struct UniqueInfo {
+        uint32_t id = 0;       // the 0x34a1b key hash (+8): claimed once it is in the profile
+        bool open = false, claimed = false, supported = false;
+        uint8_t partId = 0;
+        struct Option {
+            uint32_t type = 0;
+            uint16_t index = 0;
+            std::string name;
+        };
+        std::vector<Option> options;
+    };
+    bool UniqueFor(const std::string &triggerName, UniqueInfo &out) const;
+    bool ClaimUnique(const UniqueInfo &info, size_t choice); // fits the part, marks the reward claimed and saves
     int OrdinaryDone(int area) const;
     bool PeekCareerMenuSwitchIs(const char *name) const { return m_careerMenuSwitch && !strcmp(m_careerMenuSwitch, name); }
     const char *TakeCareerMenuSwitch()

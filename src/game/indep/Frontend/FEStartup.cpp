@@ -5081,6 +5081,72 @@ bool FEStartupSequence::ShowFor(const std::string &triggerName, ShowInfo &out) c
     return false;
 }
 
+// 0x00270b40: the 0x34a1b unique category -> the shop's part id.  Only the body-part categories are offered; 0x0d (-> 0x1d) and 0x3e
+// (the 0x18 tier-4 branch of 0x0026f5d0) are not ported.
+static uint8_t UniquePartId(uint8_t category)
+{
+    switch (category) {
+    case 0xb: return 9;
+    case 0xc: return 0xc;
+    case 0x16: return 6;
+    default: return 0;
+    }
+}
+
+bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &out) const
+{
+    static const char kPrefix[] = "TRIGGER_START_";
+    if (!m_profile.valid || triggerName.compare(0, sizeof(kPrefix) - 1, kPrefix) != 0)
+        return false;
+    const std::string name = triggerName.substr(sizeof(kPrefix) - 1); // STAGE_4_VISUAL_4
+    for (const Career::SmsTrigger &t : Career::SmsTable::Get().Triggers()) {
+        if (t.kind != 2 || t.subKind != 1 || t.name != name)
+            continue;
+        out = UniqueInfo();
+        out.id = t.message;
+        out.claimed = m_profile.Completed(t.message);
+        out.open = getenv("NFSU2_UNLOCK_ALL") || Career::SmsOrdinaryDone(m_profile, t.area) >= int(t.value);
+        out.partId = UniquePartId(t.part);
+        out.supported = out.partId != 0;
+        const Career::OwnedCar *car = m_profile.currentCar >= 0 && m_profile.currentCar < int(m_profile.cars.size())
+                                          ? &m_profile.cars[m_profile.currentCar] : nullptr;
+        if (!out.supported || !car)
+            return true;
+        const uint32_t type = out.partId == 0xc ? UniversalPartsType(out.partId) : bStringHash(car->model.c_str());
+        const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
+        for (size_t i = 0; i < parts.size(); ++i)
+            if (parts[i].level == 4 && !parts[i].carbon && parts[i].partId == out.partId) {
+                UniqueInfo::Option o;
+                o.type = type, o.index = uint16_t(i), o.name = parts[i].name;
+                out.options.push_back(std::move(o));
+            }
+        return true;
+    }
+    return false;
+}
+
+bool FEStartupSequence::ClaimUnique(const UniqueInfo &info, size_t choice)
+{
+    if (!m_profile.valid || info.claimed || choice >= info.options.size() || m_profile.currentCar < 0 ||
+        m_profile.currentCar >= int(m_profile.cars.size()))
+        return false;
+    Career::OwnedCar &car = m_profile.cars[m_profile.currentCar];
+    const CarPart &part = m_fe->Parts().Parts(info.options[choice].type)[info.options[choice].index];
+    RememberFittedParts(m_profile, car);
+    switch (part.partId) {
+    case 0xc: car.spoiler = uint8_t(part.style), car.spoilerCarbon = part.carbon; break;
+    case 9: car.hood = uint8_t(part.style), car.hoodCarbon = part.carbon; break;
+    case 6: car.wideBody = uint8_t(part.style); break;
+    default: return false;
+    }
+    AddOwnedPart(m_profile, PartsShopKey(part));
+    m_profile.Complete(info.id);
+    const bool saved = Career::SaveCareer(m_profile);
+    printf("[Unique] %s fitted to %s (part %u style %u)%s\n", part.name.c_str(), car.model.c_str(), part.partId, unsigned(part.style),
+           saved ? "" : " - save failed");
+    return true;
+}
+
 void FEStartupSequence::WinShow(const ShowInfo &info)
 {
     if (!info.media || m_profile.Completed(info.media->id))
