@@ -5089,9 +5089,19 @@ static uint8_t UniquePartId(uint8_t category)
     case 0xb: return 9;
     case 0xc: return 0xc;
     case 0x16: return 6;
+    case 0xd: return 0x1d; // unique rims: not a catalogue part id, see UniqueRims()
     default: return 0;
     }
 }
+
+// Category 0x0d = the level-4 records of the WHEELS pack (ISSUES #321).  Their brand attribute (0xebb03e66) names the brand: Gianelle 5-O
+// (STYLE02), Oasis Tear Drop (STYLE06), Lexani Roma (STYLE10) and Enfinity (STYLE12).  The other four (Chunk, Detailed, Fanner, Livia) belong to
+// the NFSU brand, whose wheel files carry no styles, so they are left out.
+struct UniqueRim {
+    const char *brand, *name;
+    uint8_t style;
+};
+static const UniqueRim kUniqueRims[] = {{"GIANELLE", "5-O", 2}, {"OASIS", "TEAR DROP", 6}, {"LEXANI", "ROMA", 10}, {"LEXANI", "ENFINITY", 12}};
 
 bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &out) const
 {
@@ -5112,6 +5122,14 @@ bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &ou
                                           ? &m_profile.cars[m_profile.currentCar] : nullptr;
         if (!out.supported || !car)
             return true;
+        if (t.part == 0xd) {
+            for (const UniqueRim &r : kUniqueRims) {
+                UniqueInfo::Option o;
+                o.name = r.name, o.rimBrand = r.brand, o.rimStyle = r.style;
+                out.options.push_back(std::move(o));
+            }
+            return true;
+        }
         const uint32_t type = out.partId == 0xc ? UniversalPartsType(out.partId) : bStringHash(car->model.c_str());
         const std::vector<CarPart> &parts = m_fe->Parts().Parts(type);
         for (size_t i = 0; i < parts.size(); ++i)
@@ -5131,6 +5149,15 @@ bool FEStartupSequence::ClaimUnique(const UniqueInfo &info, size_t choice)
         m_profile.currentCar >= int(m_profile.cars.size()))
         return false;
     Career::OwnedCar &car = m_profile.cars[m_profile.currentCar];
+    if (!info.options[choice].rimBrand.empty()) {
+        car.rimBrand = info.options[choice].rimBrand;
+        car.rimStyle = info.options[choice].rimStyle;
+        m_profile.Complete(info.id);
+        const bool saved = Career::SaveCareer(m_profile);
+        printf("[Unique] %s rims (%s style %d) fitted to %s%s\n", info.options[choice].name.c_str(), car.rimBrand.c_str(), car.rimStyle,
+               car.model.c_str(), saved ? "" : " - save failed");
+        return true;
+    }
     const CarPart &part = m_fe->Parts().Parts(info.options[choice].type)[info.options[choice].index];
     RememberFittedParts(m_profile, car);
     switch (part.partId) {

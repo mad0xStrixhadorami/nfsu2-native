@@ -1,6 +1,7 @@
 #include "game/indep/Frontend/RimCatalog.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -51,6 +52,13 @@ bool RimCatalog::Build(const TexturePack &pack)
         std::sort(m_styles[b].begin(), m_styles[b].end());
         any = any || !m_styles[b].empty();
     }
+    if (getenv("NFSU2_RIM_DUMP"))
+        for (size_t b = 1; b < kBrands.size(); ++b) {
+            printf("[Rims] %s:", kBrands[b].key);
+            for (int st : m_styles[b])
+                printf(" %d", st);
+            printf("\n");
+        }
     m_built = true;
     return any;
 }

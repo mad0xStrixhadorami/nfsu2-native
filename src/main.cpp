@@ -41,6 +41,7 @@
 #include "game/indep/Career/Sms.h"
 #include "game/indep/Career/Sponsors.h"
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/Frontend/RimCatalog.h"
 #include "game/indep/Frontend/VinylCatalog.h"
 #include "game/indep/Frontend/PostRaceResults.h"
 #include "game/indep/Sound/CarAudioTable.h"
@@ -1067,6 +1068,13 @@ int main(int argc, char **argv)
                     region = r.region;
         }
         currentRegion = region;
+        if (getenv("NFSU2_RIM_DUMP")) { // dev aid: the styles every rim brand ships (ISSUES #321)
+            TexturePack rimPack;
+            const std::vector<uint8_t> rimData = fe.ReadGameFile("CARS\\WHEELS\\TEXTURES.BIN");
+            RimCatalog rimCat;
+            if (rimPack.Parse(rimData.data(), rimData.size()))
+                rimCat.Build(rimPack);
+        }
         pausePkg = nullptr;
         cribPkg = nullptr;
         resultsPkg = nullptr;

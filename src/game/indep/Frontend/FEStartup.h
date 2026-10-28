@@ -149,6 +149,8 @@ public:
             uint32_t type = 0;
             uint16_t index = 0;
             std::string name;
+            std::string rimBrand; // category 0x0d (unique rims): the brand key and style instead of a catalogue part
+            uint8_t rimStyle = 0;
         };
         std::vector<Option> options;
     };
