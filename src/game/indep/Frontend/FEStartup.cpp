@@ -5089,7 +5089,8 @@ static uint8_t UniquePartId(uint8_t category)
     case 0xb: return 9;
     case 0xc: return 0xc;
     case 0x16: return 6;
-    case 0xd: return 0x1d; // unique rims: not a catalogue part id, see UniqueRims()
+    case 0xd: return 0x1d; // unique rims: not a catalogue part id, see kUniqueRims
+    case 0x3e: return 0x40; // unique vinyls: see kUniqueVinyls
     default: return 0;
     }
 }
@@ -5102,6 +5103,14 @@ struct UniqueRim {
     uint8_t style;
 };
 static const UniqueRim kUniqueRims[] = {{"GIANELLE", "5-O", 2}, {"OASIS", "TEAR DROP", 6}, {"LEXANI", "ROMA", 10}, {"LEXANI", "ENFINITY", 12}};
+
+// Category 0x3e = the five level-4 records of group 0x18 in the VINYL type (ISSUES #323).  The car's VINYLS.BIN ships them as
+// <CAR>_UNIQUE_<n>_<NAME> (the record order is the texture number: OCTO 1 ... EVIL EYE 12).
+struct UniqueVinyl {
+    int number;
+    const char *name;
+};
+static const UniqueVinyl kUniqueVinyls[] = {{1, "OCTO"}, {3, "FISHFROG"}, {4, "EYEPILE"}, {8, "DRAG-SECT"}, {12, "EVIL EYE"}};
 
 bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &out) const
 {
@@ -5122,6 +5131,25 @@ bool FEStartupSequence::UniqueFor(const std::string &triggerName, UniqueInfo &ou
                                           ? &m_profile.cars[m_profile.currentCar] : nullptr;
         if (!out.supported || !car)
             return true;
+        if (t.part == 0x3e) {
+            TexturePack pack;
+            const std::vector<uint8_t> data = m_fe->ReadGameFile(("CARS\\" + car->model + "\\VINYLS.BIN").c_str());
+            if (!pack.Parse(data.data(), data.size()))
+                return true;
+            for (const UniqueVinyl &v : kUniqueVinyls) {
+                const std::string want = car->model + "_UNIQUE_" + std::to_string(v.number) + "_";
+                for (size_t i = 0; i < pack.Count(); ++i) {
+                    const std::string &n = pack.At(i).name;
+                    if (n.compare(0, want.size(), want) != 0 || n.size() <= want.size() || (n.size() > 2 && n.compare(n.size() - 2, 2, "_M") == 0))
+                        continue;
+                    UniqueInfo::Option o;
+                    o.name = v.name, o.vinyl = n.substr(car->model.size() + 1);
+                    out.options.push_back(std::move(o));
+                    break;
+                }
+            }
+            return true;
+        }
         if (t.part == 0xd) {
             for (const UniqueRim &r : kUniqueRims) {
                 UniqueInfo::Option o;
@@ -5149,6 +5177,19 @@ bool FEStartupSequence::ClaimUnique(const UniqueInfo &info, size_t choice)
         m_profile.currentCar >= int(m_profile.cars.size()))
         return false;
     Career::OwnedCar &car = m_profile.cars[m_profile.currentCar];
+    if (!info.options[choice].vinyl.empty()) {
+        Career::OwnedCar::VinylLayer layer;
+        layer.design = info.options[choice].vinyl;
+        if (int(car.vinyls.size()) < Career::OwnedCar::kMaxVinylLayers)
+            car.vinyls.push_back(layer);
+        else
+            car.vinyls.back() = layer; // all four layers used: the Unique replaces the top one
+        m_profile.Complete(info.id);
+        const bool saved = Career::SaveCareer(m_profile);
+        printf("[Unique] %s vinyl (%s) fitted to %s as layer %zu%s\n", info.options[choice].name.c_str(), layer.design.c_str(), car.model.c_str(),
+               car.vinyls.size(), saved ? "" : " - save failed");
+        return true;
+    }
     if (!info.options[choice].rimBrand.empty()) {
         car.rimBrand = info.options[choice].rimBrand;
         car.rimStyle = info.options[choice].rimStyle;

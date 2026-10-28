@@ -1068,6 +1068,13 @@ int main(int argc, char **argv)
                     region = r.region;
         }
         currentRegion = region;
+        if (const char *vc = getenv("NFSU2_VINYL_DUMP")) { // dev aid: every texture name of a car's vinyl pack (ISSUES #323)
+            TexturePack vp;
+            const std::vector<uint8_t> vd = fe.ReadGameFile((std::string("CARS\\") + vc + "\\VINYLS.BIN").c_str());
+            if (vp.Parse(vd.data(), vd.size()))
+                for (size_t i = 0; i < vp.Count(); ++i)
+                    printf("[Vinyl] %s\n", vp.At(i).name.c_str());
+        }
         if (getenv("NFSU2_RIM_DUMP")) { // dev aid: the styles every rim brand ships (ISSUES #321)
             TexturePack rimPack;
             const std::vector<uint8_t> rimData = fe.ReadGameFile("CARS\\WHEELS\\TEXTURES.BIN");

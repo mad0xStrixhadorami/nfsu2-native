@@ -151,6 +151,7 @@ public:
             std::string name;
             std::string rimBrand; // category 0x0d (unique rims): the brand key and style instead of a catalogue part
             uint8_t rimStyle = 0;
+            std::string vinyl;    // category 0x3e (unique vinyls): the pack texture name without the car prefix, e.g. "UNIQUE_3_FISHFR"
         };
         std::vector<Option> options;
     };
