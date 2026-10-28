@@ -974,6 +974,7 @@ int main(int argc, char **argv)
     bool modernYes = false, modernLeave = false;
     FEStartupSequence::UniqueInfo uniqueInfo; // the visual Unique being offered (modernPause 8, ISSUES #319)
     int uniqueSel = 0;
+    std::vector<Minimap::Dot> poiDots; // free-roam event / car show / Unique spots for the HUD minimap (filled with the beacons)
     bool optionsPush = false;
     bool optionsFromModern = false; // the options carousel was opened from the dialog: Back returns to the dialog, not to UI_Pause
     int optionsGuard = 0; // frames after the dialog's OPTIONS opens UI_Pause.fng: its Continue also hears that Accept press and would resume at once
@@ -1545,6 +1546,7 @@ int main(int argc, char **argv)
         // Career hot spots (ISSUES #269): the shops, car lots and the crib stand as light columns in free roam.
         {
             std::vector<TrackWorld::Beacon> beacons;
+            poiDots.clear();
             if (raceConfig.type == 9 || getenv("NFSU2_HOTSPOTS")) {
                 char hotPath[96];
                 snprintf(hotPath, sizeof(hotPath), "TRACKS\\ROUTES%s\\PATHSFREEROAM.BIN", region.c_str());
@@ -1571,6 +1573,7 @@ int main(int argc, char **argv)
                         TrackWorld::Beacon b;
                         b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 255, b.g = 235, b.b = 170;
                         beacons.push_back(b);
+                        poiDots.push_back({t.x, t.y, 255, 235, 170});
                         ++openEvents;
                     }
                 printf("[Triggers] %zu event locators open\n", openEvents);
@@ -1581,6 +1584,7 @@ int main(int argc, char **argv)
                         TrackWorld::Beacon b;
                         b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 190, b.g = 90, b.b = 255;
                         beacons.push_back(b);
+                        poiDots.push_back({t.x, t.y, 190, 90, 255});
                         ++openShows;
                     }
                 }
@@ -1592,6 +1596,7 @@ int main(int argc, char **argv)
                         TrackWorld::Beacon b;
                         b.x = t.x, b.y = t.y, b.radius = 4.0f, b.r = 255, b.g = 150, b.b = 40;
                         beacons.push_back(b);
+                        poiDots.push_back({t.x, t.y, 255, 150, 40});
                         printf("[Triggers] unique %s at %.1f %.1f z %.1f (%zu parts)\n", t.name.c_str(), t.x, t.y, t.z, ui.options.size());
                         ++openUniques;
                     }
@@ -2959,6 +2964,21 @@ int main(int argc, char **argv)
                     const float windowWant = 240.0f + std::min(190.0f, std::fabs(car.Speed()) * 3.4f); // zooms out with speed
                     windowSm += (windowWant - windowSm) * std::min(1.0f, 3.0f * std::max(dt, 0.001f));
                     const float window = windowSm;
+                    if (race.IsFreeRun()) { // shops and open event / show / Unique spots inside the map window (#327)
+                        const float reach = window * 0.46f;
+                        auto near = [&](float x, float y) { return std::fabs(x - car.X()) < reach && std::fabs(y - car.Y()) < reach; };
+                        for (const Career::Hotspot &h : Career::HotspotTable::Get().All())
+                            if (near(h.x, h.y))
+                                switch (h.kind()) {
+                                case Career::Hotspot::kCrib: dots.push_back({h.x, h.y, 80, 255, 120}); break;
+                                case Career::Hotspot::kCarLot: dots.push_back({h.x, h.y, 255, 220, 60}); break;
+                                case Career::Hotspot::kPerformance: dots.push_back({h.x, h.y, 255, 70, 60}); break;
+                                default: dots.push_back({h.x, h.y, 70, 190, 255}); break;
+                                }
+                        for (const Minimap::Dot &d : poiDots)
+                            if (near(d.x, d.y))
+                                dots.push_back(d);
+                    }
                     // The Unbound-style map (ISSUES #296): drawn natively by ModernUI with the modern HUD; the FEng map is hidden then.
                     mapNative = modernUi.Ready() && race.ModernHud() && !getenv("NFSU2_CLASSIC_MAP");
                     mapWindow = window, mapRotate = mode == 2;
