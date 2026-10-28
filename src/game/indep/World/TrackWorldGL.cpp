@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 
 #include <SDL_opengl.h>
 
@@ -113,6 +114,58 @@ void TrackWorld::UpdateMemory()
                  m_roomArenaUsed * sizeof(Vertex));
     else
         Mem::Drop(kMemRoomArena);
+}
+
+size_t TrackWorld::TrimTextures(size_t budget, double maxAge)
+{
+    // The residency manager (#332): textures are decoded lazily from the resident packs and are only referenced
+    // by the cells' ranges, so paging one out is safe as long as the range that needs it learns to decode again
+    // (addRanges). Evict least recently used first, never a pinned one (the skins, the imported car texture).
+    const size_t resident = Mem::Bytes(Mem::kTexture);
+    if (!budget || resident <= budget || m_glTextures.empty())
+        return 0;
+    static Mem::Row rows[4096]; // reused: the trim runs at most once a second
+    const int n = Mem::Oldest(Mem::kTexture, maxAge, rows, int(sizeof rows / sizeof rows[0]));
+    if (n <= 0)
+        return 0;
+    std::unordered_map<unsigned, uint32_t> byName; // GL name -> hash; the trim is rare, rebuilding it is cheap
+    byName.reserve(m_glTextures.size());
+    for (const auto &kv : m_glTextures)
+        byName[kv.second] = kv.first;
+    std::unordered_set<unsigned> dead;
+    size_t freed = 0;
+    int count = 0;
+    const size_t need = resident - budget;
+    for (int i = 0; i < n && freed < need; ++i) {
+        unsigned name = rows[i].id;
+        auto it = byName.find(name);
+        if (it == byName.end() || name == m_glWhite)
+            continue; // not one of ours, or the 1x1 white every untextured range shares
+        m_glTextures.erase(it->second);
+        m_glTextureMode.erase(name);
+        m_glFoliage.erase(name);
+        glDeleteTextures(1, &name);
+        Mem::Drop(rows[i].id);
+        dead.insert(rows[i].id);
+        freed += rows[i].bytes;
+        ++count;
+    }
+    if (!count)
+        return 0;
+    auto forget = [&](GLCell &cell) {
+        for (GLRange &r : cell.ranges)
+            if (dead.count(r.texture))
+                r.texture = 0; // decoded again when the cell is next in view
+    };
+    for (auto &kv : m_glCells)
+        forget(kv.second);
+    for (auto &kv : m_glRoom)
+        forget(kv.second);
+    forget(m_glPanorama);
+    Mem::NoteTrim(freed, count);
+    printf("[Mem] texture trim: %d textures, %.1f MB paged out (%.1f of %.1f MB resident)\n", count,
+           double(freed) / 1048576.0, double(resident - freed) / 1048576.0, double(resident) / 1048576.0);
+    return freed;
 }
 
 unsigned TrackWorld::GLTexture(uint32_t hash)
@@ -766,7 +819,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (i == 0 || render[i].tex != render[i - 1].tex) {
                 unsigned tex = GLTexture(render[i].tex);
                 auto mode = m_glTextureMode.find(tex);
-                cell.ranges.push_back({tex, base + int(scratch.size()), 0, mode == m_glTextureMode.end() ? 0 : mode->second,
+                cell.ranges.push_back({tex, render[i].tex, base + int(scratch.size()), 0,
+                                       mode == m_glTextureMode.end() ? 0 : mode->second,
                                        render[i].tex ? InteriorClassOf(render[i].tex) : 0});
             }
             for (const RVertex &v : render[i].v)
@@ -802,8 +856,10 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 b.first.clear(), b.count.clear();
         }
     };
-    auto addRanges = [&](const GLCell &cell, bool far) {
-        for (const GLRange &r : cell.ranges) {
+    auto addRanges = [&](GLCell &cell, bool far) {
+        for (GLRange &r : cell.ranges) {
+            if (!r.texture) // paged out by the residency manager: decode it again now (#332)
+                r.texture = GLTexture(r.hash);
             const int g = r.mode != 0 ? (far ? kBlendFar : kBlendNear) : (m_progInterior && r.interior != 0) ? kInterior : (far ? kOpaqueFar : kOpaqueNear);
             const uint64_t key = (uint64_t(r.texture) << 8) | uint64_t(r.mode << 2) | uint64_t(r.interior);
             auto it = batchIndex[g].find(key);
@@ -912,7 +968,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
     const float coneSlope = tanHalf * 1.05f;
     // Reused every frame (capacity kept): no heap allocation in the render loop.
-    static std::vector<const GLCell *> nearCells, farCells;
+    static std::vector<GLCell *> nearCells, farCells;
     nearCells.clear();
     farCells.clear();
     const float kFullShaderRange = getenv("NFSU2_FULL_RANGE") ? float(atof(getenv("NFSU2_FULL_RANGE"))) : 150.0f;
@@ -933,9 +989,9 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 (m_scene || dist < kFullShaderRange ? nearCells : farCells).push_back(&cell);
         }
     resetBatches();
-    for (const GLCell *cell : nearCells)
+    for (GLCell *cell : nearCells)
         addRanges(*cell, false);
-    for (const GLCell *cell : farCells)
+    for (GLCell *cell : farCells)
         addRanges(*cell, true);
     // Opaque and punch-through first (the full shader near, the lite one far, then the window facades with the interior program),
     // then blended / additive with depth writes off.

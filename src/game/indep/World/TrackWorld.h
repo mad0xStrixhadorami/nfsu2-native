@@ -256,6 +256,10 @@ public:
     // Re-registers the resident RAM / VRAM of the world with the memory telemetry (ISSUES #331). Cheap
     // enough for a once-a-second refresh: it walks the cell maps, not the triangles.
     void UpdateMemory();
+    // The residency manager (#332): while the tracked texture VRAM is over `budget`, pages out the least
+    // recently used unpinned textures (`maxAge` seconds idle) and returns the bytes released. A cell whose
+    // texture was paged out decodes it again the next time it is drawn, so this is a cache, not a leak.
+    size_t TrimTextures(size_t budget, double maxAge);
 
 private:
     struct Tri {
@@ -456,7 +460,8 @@ private:
     int m_panoramaVertices = 0;
     // OpenGL vertex buffers per cell, built on first use (TrackWorldGL.cpp).
     struct GLRange {
-        unsigned texture; // GL texture name (a white 1x1 for untextured triangles)
+        unsigned texture; // GL texture name (a white 1x1 for untextured triangles, 0 = paged out)
+        uint32_t hash;    // the texture it came from: a paged-out range is decoded again on the next draw (#332)
         int first, count;
         int mode;         // 0 opaque / punch-through, 1 alpha blend, 2 additive
         int interior = 0; // 1 = window facade (interior mapping), 2 = curtain-wall glass (the whole texture is glass)

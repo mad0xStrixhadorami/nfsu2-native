@@ -34,6 +34,7 @@ int Count(Kind kind);
 const char *KindName(Kind kind);
 
 struct Row {
+    uint32_t id;      // the registry key: a GL name for textures
     const char *name;
     size_t bytes, used;
     int priority;
@@ -42,6 +43,16 @@ struct Row {
 };
 // The largest items of `kind` (or of every kind with kind < 0), biggest first.  Returns how many were written.
 int Top(int kind, Row *out, int max);
+// The eviction order of a kind (#332): the items that are not pinned and have not been used for `minAge`
+// seconds, least recently used first (never-used items age from their creation).  Pinned items are skipped.
+int Oldest(Kind kind, double minAge, Row *out, int max);
+
+// The residency budget the manager trims to, and what it has trimmed this session (the reports show both).
+void SetBudget(size_t bytes);
+size_t Budget();
+void NoteTrim(size_t bytes, int items);
+size_t TrimmedBytes();
+int TrimmedItems();
 void Print(FILE *out); // the --mem-report body: totals per kind and the biggest items
 
 // The live overlay (F4, or NFSU2_MEM_OVERLAY=1): totals and the biggest items, one line each.

@@ -2077,6 +2077,9 @@ int main(int argc, char **argv)
     // --mem-report: boot the normal flow, then print the residency report of the loaded world and quit.
     const bool memReport = argc > 1 && strcmp(argv[1], "--mem-report") == 0;
     Uint32 lastMemScan = 0;
+    // The texture budget of the residency manager (#332): 192 MB by default, 0 = never trim.
+    const int texBudgetMB = getenv("NFSU2_TEX_BUDGET_MB") ? atoi(getenv("NFSU2_TEX_BUDGET_MB")) : 192;
+    const double texIdle = getenv("NFSU2_TEX_IDLE") ? atof(getenv("NFSU2_TEX_IDLE")) : 10.0;
     for (bool running = true; running;) {
         Perf::BeginFrame();
         SDL_Event ev;
@@ -2111,6 +2114,12 @@ int main(int argc, char **argv)
         if ((inWorld || sceneMode) && elapsed - lastMemScan >= 1000) { // a cheap once-a-second refresh (ISSUES #331)
             lastMemScan = elapsed;
             world.UpdateMemory();
+            // Texture budget (#332): page the least recently used textures out while over it; the cells decode
+            // them again when they are next in view.  NFSU2_TEX_BUDGET_MB=0 disables the manager.
+            if (texBudgetMB >= 0) {
+                Mem::SetBudget(size_t(texBudgetMB) * 1048576);
+                world.TrimTextures(size_t(texBudgetMB) * 1048576, texIdle);
+            }
         }
         static Uint32 worldAt = 0; // when the world (or the dev scene) first became drawable
         if ((inWorld || sceneMode) && !worldAt)
