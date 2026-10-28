@@ -34,6 +34,10 @@ bool Vinyls::Compose(uint8_t paintR, uint8_t paintG, uint8_t paintB, const std::
         for (size_t i = 0; i < m_pack->Count(); ++i)
             if (m_pack->At(i).nameHash == hash)
                 info = &m_pack->At(i);
+        if (!info) // the pack's names are cut at 24 characters but hashed whole (UNIQUE_3_FISHFR = ..._FISHFROG): match the cut text too
+            for (size_t i = 0; i < m_pack->Count(); ++i)
+                if (m_pack->At(i).name == name)
+                    info = &m_pack->At(i);
         DecodedTexture img;
         if (!info || !m_pack->Decode(*info, img) || img.width != kSize || img.height != kSize) {
             ok = false;
