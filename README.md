@@ -133,7 +133,7 @@ This port keeps the original assets but renders them through **custom GLSL progr
 
 ## Free-roam career layer
 
-The region data hides a whole trigger layer (#303): named locators in `PATHSFREEROAM.BIN`. Every career event record names the locator it starts at, so the 221 events now have real places on the map — drive into the marker and the event is offered; Accept starts the race. The same layer holds the car-show spots, the unique-part events and the tutorial-tip spots (decoded, not yet ported).
+The region data hides a whole trigger layer (#303): named locators in `PATHSFREEROAM.BIN`. Every career event record names the locator it starts at, so the 221 events now have real places on the map — drive into the marker and the event is offered; Accept starts the race. The same layer holds the car-show spots, the unique-part events (ported: #320-#325) and the tutorial-tip spots (ported: #308).
 
 ## Camera
 
@@ -184,7 +184,8 @@ Honest numbers first, because "percent complete" means different things for a de
 | Graphics | 🟢 beyond original | Custom shaders, shader sky, god rays, MSAA, widescreen Hor+, working car lights and glass |
 | Audio | 🟡 partial | Engine, skid, turbo, wind and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
-| Car-show / magazine screens, Uniques shop, tutorial pop-ups, reverse lamps | 🔴 open | Documented in `ISSUES.md` (#247, #303) |
+| Car shows / magazine covers, tutorial tips, Uniques | 🟡 playable | Car-show spots win magazine covers (#309), tip spots deliver SMS (#308), the seven Unique spots of a region offer a part / rim / vinyl or a performance slot (#320-#325); the original's 3D preview and prices are not ported |
+| Reverse lamps, turn signals | 🔴 open | Documented in `ISSUES.md` (#287) |
 
 If you want **one number** for "can I play the game": roughly **half of the single-player game is reachable
 and playable natively today** (menus → Quick Race → free roam → career flow → customisation), with the long
