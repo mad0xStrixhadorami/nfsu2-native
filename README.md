@@ -11,8 +11,8 @@ Every frame you see is produced by readable C++ and OpenGL running directly on y
 ![language](https://img.shields.io/badge/C%2B%2B17-SDL2%20%2B%20OpenGL-blue?style=flat-square)
 ![emulation](https://img.shields.io/badge/emulation-none-brightgreen?style=flat-square)
 ![status](https://img.shields.io/badge/status-playable%20prototype-yellow?style=flat-square)
-![commits](https://img.shields.io/badge/commits-360%2B-lightgrey?style=flat-square)
-![log](https://img.shields.io/badge/ISSUES.md-318%20entries-informational?style=flat-square)
+![commits](https://img.shields.io/badge/commits-377%2B-lightgrey?style=flat-square)
+![log](https://img.shields.io/badge/ISSUES.md-330%20entries-informational?style=flat-square)
 
 <img src="docs/media/race_drive.gif" width="760" alt="Pre-race cinematic, countdown and launch in the Israeli-themed city"/>
 
@@ -155,8 +155,8 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **318 entries** in [`ISSUES.md`](ISSUES.md) |
-| Commits | **360+** |
+| Findings, decodes and design notes logged | **330 entries** in [`ISSUES.md`](ISSUES.md) |
+| Commits | **377+** |
 | C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
 | Triangles in view in the city | ≈ 1.1 million per frame, ≈ 560 draw calls |
@@ -180,7 +180,7 @@ Honest numbers first, because "percent complete" means different things for a de
 | Police pursuit | 🟡 playable | Patrols, heat 1–5, roadblocks, bust / escape and a bounty in free roam; no spike strips, helicopters or bust animation |
 | Career mode | 🟡 mostly | Events, areas, sponsors, SMS inbox, car lot, crib, progression rules, events started from the street |
 | Car customisation | 🟡 mostly | Parts, performance packages, tuning sliders, dyno, vinyls, decals, paint, rims, spinners, neon |
-| Garage / shops (3D) | 🟡 partial | Garage room renders with a part-following camera; per-shop filtering not done |
+| Garage / shops (3D) | 🟡 partial | The garage room and the four street shops (body, paint, performance, specialty) render their own 3D interior over the city without a reload, with a part-following camera; the original street-shop plumbing and per-shop car placement are stand-ins (#330) |
 | Graphics | 🟢 beyond original | Custom shaders, shader sky, god rays, MSAA, widescreen Hor+, working car lights and glass |
 | Audio | 🟡 partial | Engine, skid, turbo, wind and UI sounds; music streams; full mix not final |
 | Online / network | ⛔ out of scope | Needs EA servers that no longer exist |
@@ -255,7 +255,7 @@ UI keeps its original 4:3 layout, pillar-boxed.
    collision mesh, road/traffic graphs, the car database, part database, GLOBALB career tables, FNG UI
    packages and the audio banks.
 4. **Rewrite, don't emulate.** Each decoded behaviour becomes normal C++ with a `// 0xADDRESS` comment to
-   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (307 entries so far — read it,
+   its original. Bugs and findings are recorded in [`ISSUES.md`](ISSUES.md) (330 entries so far — read it,
    it is the real project diary).
 5. **Reuse where legal and sensible.** The engine core shared with the CC0 *Most Wanted* decompilation
    ([`dbalatoni13/nfsmw`](https://github.com/dbalatoni13/nfsmw)) is vendored in `third_party/nfsmw`.

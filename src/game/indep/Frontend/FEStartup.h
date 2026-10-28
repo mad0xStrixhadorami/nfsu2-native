@@ -490,6 +490,7 @@ private:
     FEIconScroller m_vinylLayerScroller;
     std::vector<FEObject *> m_vinylLayerCards;
     bool m_cribShop = false; // a shop screen opened from the career crib (Back returns there)
+    int m_shopKind = -1; // the hotspot kind that opened the shop (Career::Hotspot::Kind; -1 = not a street shop, #330)
     std::string m_lastMenu;  // the package that finished loading last (main.cpp resolves the crib menu by it)
     bool m_dynoFresh = false; // the next chart load measures a new run
     std::vector<FEObject *> m_dynoDots;

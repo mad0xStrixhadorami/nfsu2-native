@@ -92,11 +92,13 @@ bool TrackWorld::Shade(Tri &w, float r, float g, float b)
 template <typename F> void TrackWorld::ForNearbyTris(float x, float y, F &&f) const
 {
     // Triangles are bucketed by centroid, so a large one can overlap the neighbouring cells.
+    // In the room overlay the room's cell map holds the geometry (#330).
+    const std::unordered_map<int64_t, Cell> &cells = m_roomMode ? m_room : m_cells;
     const int gx = int(std::floor(x / kCellSize)), gy = int(std::floor(y / kCellSize));
     for (int cx = gx - 1; cx <= gx + 1; ++cx)
         for (int cy = gy - 1; cy <= gy + 1; ++cy) {
-            auto it = m_cells.find(CellKey(cx, cy));
-            if (it != m_cells.end())
+            auto it = cells.find(CellKey(cx, cy));
+            if (it != cells.end())
                 for (const Tri &t : it->second.tris)
                     if (t.phys)
                         f(t);
@@ -206,8 +208,9 @@ bool TrackWorld::GroundHeight(float x, float y, float zMax, float &z, float *nor
         return true;
     }
     // The game's own surface first (the collision mesh); the render triangles only where it has no
-    // face at all (the ISSUES #133 hybrid let a tunnel roof count as ground, #145).
-    if (m_groundSource != 1 && CollisionGround(x, y, zMax, z, normal))
+    // face at all (the ISSUES #133 hybrid let a tunnel roof count as ground, #145). In a room the
+    // city's collision mesh does not apply (#330).
+    if (m_groundSource != 1 && !m_roomMode && CollisionGround(x, y, zMax, z, normal))
         return true;
     if (m_groundSource == 2)
         return false;
@@ -328,6 +331,8 @@ bool TrackWorld::PropWall(const float *a, const float *b, float *normal) const
 
 bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, int onlyGroup) const
 {
+    if (m_roomMode) // in a room over the resident city the shop has no collision mesh of its own (#330)
+        return false;
     if (onlyGroup < 0 && PropWall(a, b, normal))
         return true;
     const float lo[2] = {std::min(a[0], b[0]) - 0.5f, std::min(a[1], b[1]) - 0.5f};
@@ -411,10 +416,61 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, in
     return false;
 }
 
+bool TrackWorld::RoomWall(const float *a, const float *b, float *normal) const
+{
+    // The room over the city has no collision mesh: its walls are the scene's own render triangles
+    // (ISSUES #330). One cell holds the whole shop, and a shop is a few thousand triangles, so the
+    // camera's clearance bisection stays cheap. Möller-Trumbore, nearest hit wins.
+    const auto it = m_room.find(CellKey(0, 0));
+    if (it == m_room.end())
+        return false;
+    const float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 1e-8f)
+        return false;
+    float best = 1.0f, n[3] = {0.0f, 0.0f, 0.0f};
+    for (const Tri &t : it->second.tris) {
+        const float e1[3] = {t.v[3] - t.v[0], t.v[4] - t.v[1], t.v[5] - t.v[2]};
+        const float e2[3] = {t.v[6] - t.v[0], t.v[7] - t.v[1], t.v[8] - t.v[2]};
+        const float p[3] = {d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]};
+        const float det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+        if (std::fabs(det) < 1e-7f)
+            continue;
+        const float inv = 1.0f / det;
+        const float s[3] = {a[0] - t.v[0], a[1] - t.v[1], a[2] - t.v[2]};
+        const float u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) * inv;
+        if (u < -1e-4f || u > 1.0f + 1e-4f)
+            continue;
+        const float q[3] = {s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]};
+        const float v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) * inv;
+        if (v < -1e-4f || u + v > 1.0f + 1e-4f)
+            continue;
+        const float tt = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) * inv;
+        if (tt <= 0.0f || tt >= best)
+            continue;
+        float tn[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        const float nl = std::sqrt(tn[0] * tn[0] + tn[1] * tn[1] + tn[2] * tn[2]);
+        if (nl < 1e-7f)
+            continue;
+        tn[0] /= nl, tn[1] /= nl, tn[2] /= nl;
+        if (tn[0] * d[0] + tn[1] * d[1] + tn[2] * d[2] > 0.0f) // face the segment start
+            tn[0] = -tn[0], tn[1] = -tn[1], tn[2] = -tn[2];
+        best = tt, n[0] = tn[0], n[1] = tn[1], n[2] = tn[2];
+    }
+    if (best >= 1.0f)
+        return false;
+    if (normal)
+        normal[0] = n[0], normal[1] = n[1], normal[2] = n[2];
+    return true;
+}
+
 bool TrackWorld::HitsWall(float ax, float ay, float az, float bx, float by, float bz, float *normal) const
 {
     if (m_flat)
         return false;
+    if (m_roomMode) { // the shop's walls are its render geometry (#330)
+        const float a[3] = {ax, ay, az}, b[3] = {bx, by, bz};
+        return RoomWall(a, b, normal);
+    }
     // Walls are the collision mesh's wall faces (0x00337888 collects the flag-0x02 faces of the cells
     // the move crosses; barrier groups only while the race enabled them, #147). The scenery's own steep render
     // triangles (kerbs, poles, tunnel linings) are not walls: they stopped the car at low ledges (#146).
@@ -924,22 +980,35 @@ bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNu
     return false;
 }
 
-bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
+bool TrackWorld::LoadScene(const std::vector<uint8_t> &file, bool keepWorld)
 {
     const uint8_t *d = file.data();
     const size_t n = file.size();
-    ReleaseGL();
-    m_cells.clear();
-    m_panorama.clear();
-    m_panoramaVertices = 0;
-    m_barriers.clear();
-    // The texture packs stay: the cars' own packs (tyres, badges) were added before the scene replaced the world.
-    m_collision.clear();
-    m_csections.clear();
-    m_csectionGrid.clear();
-    m_collisionFaces = 0;
-    m_scene = false;
-    m_triangleCount = m_instances = 0;
+    if (keepWorld) {
+        // The room overlay (ISSUES #330): a street shop's interior drawn over the city still
+        // resident. The city's cells, collision mesh, textures and vertex arena are all untouched;
+        // the render and ground queries switch to the m_room cell map while m_roomMode.
+        ReleaseRoom();
+        m_roomMode = true;
+        m_scene = false;
+        m_roomTriCount = 0;
+    } else {
+        ReleaseGL();
+        m_cells.clear();
+        m_panorama.clear();
+        m_panoramaVertices = 0;
+        m_barriers.clear();
+        // The texture packs stay: the cars' own packs (tyres, badges) were added before the scene replaced the world.
+        m_collision.clear();
+        m_csections.clear();
+        m_csectionGrid.clear();
+        m_collisionFaces = 0;
+        m_scene = false;
+        m_roomMode = false;
+        m_room.clear();
+        m_roomTriCount = 0;
+        m_triangleCount = m_instances = 0;
+    }
     ForEachChunk(d, 0, n, [&](uint32_t id, size_t body, size_t len) {
         if (id != 0xb3300000)
             return;
@@ -973,8 +1042,10 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
                        ti.bitsPerPixel, ti.alphaUsage, ti.alphaBlend);
             }
     const std::vector<SolidMesh::NamedSolid> solids = SolidMesh::DecodeNamedSolids(d, n);
+    size_t sceneTris = 0, sceneInstances = 0;
+    auto &cells = keepWorld ? m_room : m_cells; // the room overlay keeps the city cells; the old scene mode replaces them (#330)
     for (const SolidMesh::NamedSolid &s : solids) {
-        ++m_instances;
+        ++sceneInstances;
         if (getenv("NFSU2_SCENE_DEBUG")) {
             float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
             for (const SolidMesh::Triangle &t : s.tris)
@@ -1020,18 +1091,33 @@ bool TrackWorld::LoadScene(const std::vector<uint8_t> &file)
             }
             // One cell for the whole scene: its polygons are room-sized, so the 64 m centroid binning would let the
             // view-cone test drop half of a floor.
-            Cell &cell = m_cells[CellKey(0, 0)];
+            Cell &cell = cells[CellKey(0, 0)];
             cell.tris.push_back(w);
-            cell.tris.back().phys = 0;
+            cell.tris.back().phys = 1; // the room floor answers the ground query (the car's shadow, #330; there is no collision mesh inside a shop)
             cell.render.push_back(rt);
-            ++m_triangleCount;
+            ++sceneTris;
         }
     }
     m_scene = true;
     m_start = Camera();
     m_start.z = 1.6f;
-    printf("[World] scene: %zu solids, %zu triangles, %zu textures\n", solids.size(), m_triangleCount, m_textures.size());
+    if (keepWorld) {
+        m_roomTriCount = sceneTris;
+        printf("[World] scene over the city: %zu solids, %zu triangles, %zu textures\n", sceneInstances, sceneTris, m_textures.size());
+        return sceneTris > 0;
+    }
+    m_triangleCount = sceneTris, m_instances = sceneInstances;
+    printf("[World] scene: %zu solids, %zu triangles, %zu textures\n", sceneInstances, m_triangleCount, m_textures.size());
     return m_triangleCount > 0;
+}
+
+void TrackWorld::UnloadScene()
+{
+    // Drops the room overlay and resumes the city underneath (ISSUES #330): cells, collision mesh,
+    // textures, panorama and vertex arena were never touched, so nothing is re-streamed.
+    ReleaseRoom();
+    m_scene = m_roomMode = false;
+    printf("[World] scene unloaded, the city resumes\n");
 }
 
 bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<const std::vector<uint8_t> *> &neighbours)
@@ -1049,6 +1135,9 @@ bool TrackWorld::Load(const std::vector<uint8_t> &stream, const std::vector<cons
     m_triangleCount = m_instances = 0;
     m_borrowedSolids = 0;
     m_scene = false;
+    m_roomMode = false;
+    m_room.clear();
+    m_roomTriCount = 0;
     m_roadTris.clear();
     m_roadTriZ.clear();
 
@@ -1581,10 +1670,11 @@ void TrackWorld::Render(SDL_Renderer *renderer, const Camera &cam, int width, in
     for (const Car &car : m_cars)
         lists.push_back(&car.tris);
     const size_t carLists = lists.size();
+    const std::unordered_map<int64_t, Cell> &cells = m_roomMode ? m_room : m_cells; // the room overlay draws the shop (#330)
     for (int gx = ccx - reach; gx <= ccx + reach; ++gx)
         for (int gy = ccy - reach; gy <= ccy + reach; ++gy) {
-            auto it = m_cells.find(CellKey(gx, gy));
-            if (it == m_cells.end())
+            auto it = cells.find(CellKey(gx, gy));
+            if (it == cells.end())
                 continue;
             float mx = (gx + 0.5f) * kCellSize - cam.x, my = (gy + 0.5f) * kCellSize - cam.y;
             float dist = std::sqrt(mx * mx + my * my);

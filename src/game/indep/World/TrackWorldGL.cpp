@@ -32,16 +32,36 @@ void TrackWorld::ReleaseGL()
         if (m_arena)
             GLBridge::DeleteBuffers(1, &m_arena);
         GLBridge::DeleteVertexArray(m_arenaVao);
+        if (m_roomArena) // a room over the world goes with the world (ISSUES #330)
+            GLBridge::DeleteBuffers(1, &m_roomArena);
+        GLBridge::DeleteVertexArray(m_roomArenaVao);
         for (auto &[hash, tex] : m_glTextures)
             glDeleteTextures(1, &tex);
     }
     m_arena = m_arenaVao = 0;
     m_arenaCap = m_arenaUsed = 0;
+    m_roomArena = m_roomArenaVao = 0;
+    m_roomArenaCap = m_roomArenaUsed = 0;
     m_glCells.clear();
+    m_glRoom.clear();
     m_glPanorama = GLCell();
     m_glTextures.clear();
     m_glShadow = 0;
     ReleasePost();
+}
+
+// The room overlay's own GL state (ISSUES #330): a small vertex arena besides the city's, plus its
+// buffer-backed cell views. The city's arena, cells and textures stay resident.
+void TrackWorld::ReleaseRoom()
+{
+    if (m_glState == 1) {
+        if (m_roomArena)
+            GLBridge::DeleteBuffers(1, &m_roomArena);
+        GLBridge::DeleteVertexArray(m_roomArenaVao);
+    }
+    m_roomArena = m_roomArenaVao = 0;
+    m_roomArenaCap = m_roomArenaUsed = 0;
+    m_glRoom.clear();
 }
 
 // Texture by name hash from the stream's texture packs, decoded and uploaded on first use;
@@ -644,16 +664,24 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     // Upload render triangles once: grouped by texture, one draw range per texture.
     // The vertex arena: one GL buffer sized for every cell's triangles (known now: the render lists are still on the CPU), plus a VAO
     // holding the fixed-function array state.  Cells are written into it lazily the first time they are drawn.
-    if (!m_arena) {
-        size_t total = m_panorama.size() * 3;
-        for (const auto &kv : m_cells)
+    // Which arena the uploads go to (ISSUES #330): the room overlay keeps the city's arena resident
+    // and carries its cells in a second, small one, referenced while m_roomMode.
+    struct ArenaCtx {
+        unsigned &buffer, &vao;
+        size_t &cap, &used;
+    };
+    ArenaCtx arena = m_roomMode ? ArenaCtx{m_roomArena, m_roomArenaVao, m_roomArenaCap, m_roomArenaUsed}
+                                : ArenaCtx{m_arena, m_arenaVao, m_arenaCap, m_arenaUsed};
+    if (!arena.buffer) {
+        size_t total = m_roomMode ? 0 : m_panorama.size() * 3; // the city arena also sizes the panorama backdrop
+        for (const auto &kv : m_roomMode ? m_room : m_cells)
             total += kv.second.render.size() * 3;
-        m_arenaCap = total + total / 20 + 1024;
-        GLBridge::GenBuffers(1, &m_arena);
-        GLBridge::BindArrayBuffer(m_arena);
-        GLBridge::ArrayBufferData(ptrdiff_t(m_arenaCap * sizeof(Vertex)), nullptr);
-        m_arenaVao = GLBridge::GenVertexArray();
-        GLBridge::BindVertexArray(m_arenaVao);
+        arena.cap = total + total / 20 + 1024;
+        GLBridge::GenBuffers(1, &arena.buffer);
+        GLBridge::BindArrayBuffer(arena.buffer);
+        GLBridge::ArrayBufferData(ptrdiff_t(arena.cap * sizeof(Vertex)), nullptr);
+        arena.vao = GLBridge::GenVertexArray();
+        GLBridge::BindVertexArray(arena.vao);
         glEnableClientState(GL_VERTEX_ARRAY);
         glEnableClientState(GL_COLOR_ARRAY);
         glEnableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -661,7 +689,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, u)));
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, r)));
         GLBridge::BindVertexArray(0);
-        printf("[GL] vertex arena %.0f MB for %zu vertices\n", double(m_arenaCap * sizeof(Vertex)) / 1048576.0, m_arenaCap);
+        printf("[GL] vertex arena %.0f MB for %zu vertices\n", double(arena.cap * sizeof(Vertex)) / 1048576.0, arena.cap);
     }
     auto upload = [&](GLCell &cell, std::vector<RTri> &render) {
         if (render.empty())
@@ -674,7 +702,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         std::stable_sort(render.begin(), render.end(), [](const RTri &a, const RTri &b) { return a.tex < b.tex; });
         scratch.clear();
         cell.ranges.clear();
-        const int base = int(m_arenaUsed);
+        const int base = int(arena.used);
         for (size_t i = 0; i < render.size(); ++i) {
             if (i == 0 || render[i].tex != render[i - 1].tex) {
                 unsigned tex = GLTexture(render[i].tex);
@@ -686,15 +714,15 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
                 scratch.push_back({v.x, v.y, v.z, v.u, v.v, v.r, v.g, v.b, v.a});
             cell.ranges.back().count += 3;
         }
-        if (m_arenaUsed + scratch.size() > m_arenaCap) { // cannot happen (the arena is sized for everything); skip safely
+        if (arena.used + scratch.size() > arena.cap) { // cannot happen (the arena is sized for everything); skip safely
             cell.ranges.clear();
             std::vector<RTri>().swap(render);
             return;
         }
-        GLBridge::BindArrayBuffer(m_arena);
-        GLBridge::ArrayBufferSubData(ptrdiff_t(m_arenaUsed * sizeof(Vertex)), ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
-        m_arenaUsed += scratch.size();
-        cell.buffer = m_arena;
+        GLBridge::BindArrayBuffer(arena.buffer);
+        GLBridge::ArrayBufferSubData(ptrdiff_t(arena.used * sizeof(Vertex)), ptrdiff_t(scratch.size() * sizeof(Vertex)), scratch.data());
+        arena.used += scratch.size();
+        cell.buffer = arena.buffer;
         cell.vertices = int(scratch.size());
         std::vector<RTri>().swap(render); // the GPU copy is the render data from now on
     };
@@ -790,10 +818,11 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         }
     }
     // Panorama backdrop (PAN_* instances): far projection, no fog, no depth -- the world covers it.
-    upload(m_glPanorama, m_panorama);
-    GLBridge::BindVertexArray(m_arenaVao);
-    GLBridge::BindArrayBuffer(m_arena);
-    if (m_glPanorama.buffer) {
+    // Skipped in a scene (the shop room has none; the city's stays resident, #330).
+    if (m_glPanorama.buffer && !m_scene) {
+        GLBridge::BindVertexArray(m_arenaVao);
+        GLBridge::BindArrayBuffer(m_arena);
+        upload(m_glPanorama, m_panorama);
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -813,7 +842,12 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
         glMatrixMode(GL_MODELVIEW);
     }
 
-    // World cells in range and inside the horizontal view cone.
+    // World cells in range and inside the horizontal view cone. In a room (the room overlay #330)
+    // the room's cell map replaces the city's cells here (the room cell is key 0, 0).
+    std::unordered_map<int64_t, Cell> &cells = m_roomMode ? m_room : m_cells;
+    std::unordered_map<int64_t, GLCell> &glCells = m_roomMode ? m_glRoom : m_glCells;
+    GLBridge::BindVertexArray(arena.vao);
+    GLBridge::BindArrayBuffer(arena.buffer);
     const int reach = int(std::ceil(kDrawDistance / kCellSize));
     const int ccx = int(std::floor(cam.x / kCellSize)), ccy = int(std::floor(cam.y / kCellSize));
     const float coneSlope = tanHalf * 1.05f;
@@ -824,8 +858,8 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     const float kFullShaderRange = getenv("NFSU2_FULL_RANGE") ? float(atof(getenv("NFSU2_FULL_RANGE"))) : 150.0f;
     for (int gx = ccx - reach; gx <= ccx + reach; ++gx)
         for (int gy = ccy - reach; gy <= ccy + reach; ++gy) {
-            auto it = m_cells.find(CellKey(gx, gy));
-            if (it == m_cells.end() || it->second.tris.empty())
+            auto it = cells.find(CellKey(gx, gy));
+            if (it == cells.end() || it->second.tris.empty())
                 continue;
             float mx = (gx + 0.5f) * kCellSize - cam.x, my = (gy + 0.5f) * kCellSize - cam.y;
             float along = mx * cy + my * sy, across = std::fabs(mx * sy - my * cy);
@@ -833,7 +867,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
             if (!m_scene && (dist > kDrawDistance + kCellSize || along < -kCellSize ||
                              across > along * coneSlope + kCellSize * 0.75f))
                 continue;
-            GLCell &cell = m_glCells[it->first];
+            GLCell &cell = glCells[it->first];
             upload(cell, it->second.render);
             if (cell.buffer)
                 (m_scene || dist < kFullShaderRange ? nearCells : farCells).push_back(&cell);
@@ -986,7 +1020,7 @@ bool TrackWorld::RenderGL(SDL_Renderer *renderer, const Camera &cam, int width, 
     }
 
     // Hot-spot beacons: a translucent light column per marker, brighter at the foot, within 700 m.
-    if (!m_beacons.empty()) {
+    if (!m_beacons.empty() && !m_scene) { // hot-spot beacons live on the street; the shop room hides them (#330)
         GLShader::Use(0);
         glDisable(GL_TEXTURE_2D);
         glEnable(GL_BLEND);

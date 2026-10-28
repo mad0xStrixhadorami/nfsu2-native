@@ -204,7 +204,10 @@ struct Garage {
         const float dx = lx - cx, dy = ly - cy, dz = lz - cz;
         c.yaw = std::atan2(dy, dx);
         c.pitch = std::atan2(dz, std::max(1e-3f, std::hypot(dx, dy)));
-        c.fov = fov;
+        // A shop's room is narrower than the crib, so the clearance pulls the camera in and the pose would crop the
+        // car: widen the lens by the same factor, as a dolly zoom, so the shot keeps its framing (capped, #330).
+        const float lens = 2.0f * std::atan(std::tan(fov * 0.5f * 0.0174532925f) / std::clamp(clear.frac, 0.35f, 1.0f)) / 0.0174532925f;
+        c.fov = std::min(lens, 92.0f);
         return c;
     }
 };

@@ -988,6 +988,10 @@ int main(int argc, char **argv)
     // Career crib (UI_CareerCrib.fng): the career hub over a career free-roam session (ISSUES #141).
     FEPackage *cribPkg = nullptr;
     bool shopFromWorld = false;       // the open shop screen was entered from a free-roam hot spot (#269)
+    bool shopScene = false;           // the shop's room (TrackWorld::LoadScene keepWorld) draws over the resident city (#330)
+    struct StreetPose {               // where the car and the camera stood when the shop opened
+        float x, y, z, yaw, camX, camY, camZ, camYaw, camPitch;
+    } streetPose{};
     const Career::Trigger *engageArmed = nullptr; // an event locator stays disarmed until the car leaves its zone (ISSUES #303)
     FEStartupSequence::EngageInfo engage;
     const Career::Trigger *tipArmed = nullptr; // a tip spot delivers its message once per visit (ISSUES #308)
@@ -2171,7 +2175,7 @@ int main(int argc, char **argv)
             } else if (!pausePkg) {
                 optionsFromModern = false;
             }
-            if (cribPkg && pauseAction == FEStartupSequence::kPauseResume && sceneMode) {
+            if (cribPkg && pauseAction == FEStartupSequence::kPauseResume && sceneMode && !shopScene) {
                 // Leaving the garage room: stream the city region back in (the explore session, HUD and all).
                 engine->UnloadPackage(cribPkg);
                 cribPkg = nullptr;
@@ -2188,6 +2192,15 @@ int main(int argc, char **argv)
                 shopFromWorld = false;
                 engine->UnloadPackage(cribPkg);
                 cribPkg = nullptr;
+                if (shopScene) { // a street shop's room: drop it and put the car back on the street, no region reload (#330)
+                    shopScene = false;
+                    sceneMode = false;
+                    world.UnloadScene();
+                    car.Place(streetPose.x, streetPose.y, streetPose.z, streetPose.yaw);
+                    camera.x = streetPose.camX, camera.y = streetPose.camY, camera.z = streetPose.camZ;
+                    camera.yaw = streetPose.camYaw, camera.pitch = streetPose.camPitch;
+                    printf("[Hotspot] left the shop room, back at %.1f %.1f\n", streetPose.x, streetPose.y);
+                }
                 // Explore mode needs the race HUD (the crib session was started without one).
                 hud = engine->PushPackage(currentHudName.c_str(), 0, 0xff);
                 if (!hud)
@@ -2212,6 +2225,26 @@ int main(int argc, char **argv)
                         printf("[Hotspot] %s: nothing to open (profile has %zu cars)\n", inside->name.c_str(), startup.CareerProfile().cars.size());
                     if (screen) {
                         printf("[Hotspot] entered %s -> %s\n", inside->name.c_str(), screen);
+                        // The street shops open their own 3D room (the hotspot's scene file, e.g.
+                        // PERFSHOP01.BIN) over the city still resident: with keepWorld the exit
+                        // needs no region reload (ISSUES #330). The crib's separate career-start
+                        // session and the car lot keep their old interactions.
+                        const Career::Hotspot::Kind k = inside->kind();
+                        if (k != Career::Hotspot::kCrib && k != Career::Hotspot::kCarLot) {
+                            const std::string file = "FRONTEND\\PLATFORMS\\" + inside->scene;
+                            if (world.LoadScene(ReadGameFile(*fs, file.c_str()), true)) {
+                                shopScene = true;
+                                sceneMode = true;
+                                streetPose = {car.X(), car.Y(), car.Z(), car.Yaw(),
+                                              camera.x, camera.y, camera.z, camera.yaw, camera.pitch};
+                                car.Place(0.0f, 5.4f, 0.15f, -1.5707963f); // on the front disc, nose toward the entrance
+                                camera = TrackWorld::Camera(); // the garage rig takes over while the screen is up
+                                camera.x = 0.0f, camera.y = -2.0f, camera.z = 1.8f, camera.yaw = 1.5707963f, camera.pitch = -0.1f;
+                            } else {
+                                printf("[Hotspot] %s: scene %s not available, the screen opens over the street\n",
+                                       inside->name.c_str(), inside->scene.c_str());
+                            }
+                        }
                         if (hud)
                             engine->UnloadPackage(hud);
                         hud = nullptr;
@@ -2943,6 +2976,15 @@ int main(int argc, char **argv)
                     }
                     camera = garageRig.Update(world, shot, shown->X(), shown->Y(), car.Z(), shown->Yaw(), halfLen / 2.1f,
                                               float(now) * 0.001f, dt > 0.0f ? dt : 0.016f);
+                    if (getenv("NFSU2_GARAGE_DEBUG")) {
+                        static float lastCam = -1e9f;
+                        if (float(now) * 0.001f - lastCam > 2.0f) {
+                            lastCam = float(now) * 0.001f;
+                            printf("[Garage] shot %d car %.2f %.2f %.2f yaw %.2f cam %.2f %.2f %.2f dist %.2f frac %.2f\n", int(shot),
+                                   shown->X(), shown->Y(), car.Z(), shown->Yaw(), camera.x, camera.y, camera.z,
+                                   std::hypot(camera.x - shown->X(), camera.y - shown->Y()), garageRig.clear.frac);
+                        }
+                    }
                     if (const char *ga = getenv("NFSU2_GARAGE_YAW")) { // dev aid: a fixed camera angle (radians from the front view)
                         const float a = -1.5707963f + float(atof(ga));
                         camera.x = shown->X() + std::cos(a) * 7.0f, camera.y = shown->Y() + std::sin(a) * 7.0f;

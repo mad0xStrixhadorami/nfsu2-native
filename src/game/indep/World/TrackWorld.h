@@ -63,7 +63,11 @@ public:
     // Replace the world with a standalone scene file (FRONTEND\\PLATFORMS\\*.BIN: an 0x80134000 solid list plus
     // its own 0xb3300000 texture pack, e.g. the career garage CRIB01.BIN, ISSUES #251). The solids keep their
     // 0x134011 header transforms; there is no collision mesh. Returns false when no solid decoded.
-    bool LoadScene(const std::vector<uint8_t> &file);
+    // keepWorld (ISSUES #330): true leaves the loaded city resident and draws the scene as a room
+    // over it (a street shop's interior), on its own vertex arena. UnloadScene() drops the room and
+    // resumes drawing / physics on the city, with no region reload.
+    bool LoadScene(const std::vector<uint8_t> &file, bool keepWorld = false);
+    void UnloadScene();
     // A drivable spot to start from: the centre of a road instance near the middle of the map.
     Camera StartCamera() const { return m_start; }
     // Race start grids from Tracks\Routes<region>\TrackPosMarkersAll.bin (chunk 0x34146, 48-byte
@@ -484,11 +488,22 @@ private:
     struct CustomTex { int w = 0, h = 0; std::vector<uint32_t> rgba; uint8_t gloss = 0; };
     std::map<uint32_t, CustomTex> m_customTex;
     std::map<uint32_t, std::vector<uint32_t>> m_skinPixels; // composed 512 x 512 skins by texture hash
+    bool RoomWall(const float *a, const float *b, float *normal) const; // the room's render triangles as walls (#330)
     void ReleaseGL();
+    void ReleaseRoom(); // the room overlay's GL state (the city's stays, #330)
     std::unordered_map<uint32_t, unsigned> m_glTextures;
     std::unordered_map<unsigned, int> m_glTextureMode; // GL texture -> GLRange::mode
     unsigned m_glWhite = 0;
     std::unordered_map<int64_t, GLCell> m_glCells;
+    // The room overlay's view of the same things (ISSUES #330): the scene's cells and arena when it
+    // draws over a resident city (LoadScene keepWorld). Without keepWorld the scene cell lives in
+    // m_cells itself, as before, on the main arena.
+    std::unordered_map<int64_t, Cell> m_room;
+    std::unordered_map<int64_t, GLCell> m_glRoom;
+    unsigned m_roomArena = 0, m_roomArenaVao = 0;
+    size_t m_roomArenaCap = 0, m_roomArenaUsed = 0;
+    bool m_roomMode = false; // the room draws over the resident city
+    size_t m_roomTriCount = 0;
     std::unordered_set<unsigned> m_glFoliage; // GL texture ids of leaves (ORG_* with punch-through alpha), drawn with the wind and leaf shading (ISSUES #314)
     // One vertex arena for every cell (ISSUES #282): cells are sub-allocated lazily, drawn with batched multi-draws under one VAO.
     unsigned m_arena = 0, m_arenaVao = 0;

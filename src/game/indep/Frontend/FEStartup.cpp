@@ -1995,9 +1995,12 @@ void FEStartupSequence::HandleCustomizeCategoryLoaded(FEPackage *pkg)
         {0x7a9b397a, 0x8513f2c0}, // Performance Tuning / Dyno
     };
     std::vector<FEIconScroller::Def> defs;
+    // A street body shop (PARTSSHOP01, ISSUES #330) lists only the body-parts card.
+    const bool bodyOnly = m_shopKind == int(Career::Hotspot::kBodyShop);
     for (size_t i = 0; i < sizeof(kOptions) / sizeof(kOptions[0]); ++i)
-        defs.push_back({kOptions[i].tex, kOptions[i].label, false});
-    printf("[Customize] category picker: %zu options (body parts, paint)\n", defs.size());
+        if (!bodyOnly || i == 0)
+            defs.push_back({kOptions[i].tex, kOptions[i].label, false});
+    printf("[Customize] category picker: %zu options (body parts, paint)%s\n", defs.size(), bodyOnly ? " -- body shop" : "");
     m_scroller.Setup(pkg, defs, m_customizeCategorySel);
 }
 
@@ -4725,6 +4728,7 @@ void FEStartupSequence::ApplyPaint(size_t part, uint32_t set, uint32_t index)
 const char *FEStartupSequence::EnterShop(int kind)
 {
     using Career::Hotspot;
+    m_shopKind = kind;
     switch (kind) {
     case Hotspot::kCrib:
         return "UI_CareerCrib.fng";
@@ -4734,15 +4738,26 @@ const char *FEStartupSequence::EnterShop(int kind)
     case Hotspot::kGraphics:
     case Hotspot::kPerformance:
     case Hotspot::kSpecialty:
-        // The shops are not told apart yet: each opens the customise category list for the current car, as the
-        // crib's Change Parts does (the per-shop category filter is not decoded).
+        // Per-shop category screens (ISSUES #330): each street shop opens its own category list for
+        // the current car.  The original's street-shop screen plumbing (which of 0x002b5d70's screens
+        // a shop engages) is not decoded yet; the port picks the screen by the hotspot's scene name
+        // (Hotspot::kind) -- WORKAROUND, as in the crib's Change Parts path.
         if (m_profile.valid && !m_profile.cars.empty() && ShopCar() == nullptr)
             m_profile.currentCar = 0;
         if (Career::OwnedCar *car = ShopCar()) {
             ApplyOwnedCarPreview(*car);
             m_cribShop = true;
             m_backStack.clear();
-            return "UI_ChooseCustomizeCategory.fng";
+            switch (kind) {
+            case Hotspot::kGraphics:
+                return "UI_ChoosePaintCategory.fng"; // Paint / Vinyls / Decals
+            case Hotspot::kPerformance:
+                return "UI_ChoosePerformanceCategory.fng"; // the nine performance parts + Tuning / Dyno
+            case Hotspot::kSpecialty:
+                return "UI_ICEMAIN.fng"; // Neon / Window Tint
+            default:
+                return "UI_ChooseCustomizeCategory.fng"; // the body shop: card 0 only (Change Body Parts)
+            }
         }
         return nullptr;
     default:
