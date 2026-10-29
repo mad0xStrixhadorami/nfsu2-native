@@ -45,10 +45,28 @@ public:
         const char *const *notes = nullptr; // one line under the list for the selected item
         int count = 0, selected = 0;
         bool enabledOnline = false;         // the row index 3 (Online) is shown dimmed when false
+        std::string kicker = "NEED FOR SPEED", title = "UNDERGROUND 2"; // the wordmark (the garage uses its own)
+        const bool *disabled = nullptr;      // per row: dimmed (nullptr: only Online on the main menu)
         std::string player, car, carSub;
         int money = -1, reputation = -1;    // < 0: not shown
     };
     void DrawMainMenu(int w, int h, const MainMenu &m, float seconds);
+    // The post-race results and reward screens (ISSUES #362).
+    struct ResultRow {
+        std::string name, car, time;
+        bool player = false;
+    };
+    struct Results {
+        std::vector<ResultRow> rows;
+        int place = 0;               // the player's finishing place (0: unknown)
+        std::string heading = "RACE COMPLETE", detail;   // detail: best lap / score line
+        bool reward = false;         // the reward card instead of the table
+        int money = 0, reputation = 0;
+        std::string player;
+    };
+    void DrawResults(int w, int h, const Results &r, float seconds);
+    // The race-start countdown (ISSUES #363): `left` seconds to go (3 .. 0), or `goAge` seconds since the green light (< 0: none).
+    void DrawCountdown(int w, int h, float left, float goAge);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);
@@ -82,6 +100,8 @@ public:
     // to hide); DrawWipe then draws that frame over whatever has been drawn since, cut away by a slanted, glowing light edge that sweeps left to
     // right as t goes 0 -> 1; DrawFade lays black over the frame (alpha 0..1).
     void CaptureFrame();
+    // The garage's shot title (ISSUES #359): a slanted yellow blade sweeps across the frame, the title cuts in behind it and holds, then fades.
+    void DrawShotTitle(int w, int h, const char *title, const char *sub, float age, float dir, bool entry);
     void DrawWipe(int w, int h, float t);
     void DrawFade(int w, int h, float alpha);
     // The profiler's overlay (a corner panel of monospaced-looking lines).

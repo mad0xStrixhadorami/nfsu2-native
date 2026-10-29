@@ -64,6 +64,7 @@
 #include "game/indep/World/RaceSession.h"
 #include "game/indep/World/TrackWorld.h"
 #include "platform/linux/PlatformMemory.h"
+#include "game/indep/World/CarPartAnim.h"
 #include "platform/linux/PlatformFile.h"
 
 static std::vector<uint8_t> ReadGameFile(const ZipFileSystem &fs, const char *gamePath);
@@ -812,6 +813,11 @@ int main(int argc, char **argv)
     std::string stageName;
     std::vector<std::string> stagePacks;
     size_t stageSig = 0;
+    size_t stageCarIdx = size_t(-1);
+    CarPartAnims stageAnims;
+    std::string stageAnimsCar;
+    float stageFlourishT0 = -100.0f;
+    float stageDoors = 0.0f; // seconds into the doors' opening clip (the showroom's flourish, ISSUES #364)
     float stageSwitch = -10.0f; // seconds (frontend clock) of the last car change, for the fade-in
     // The magazine covers (ISSUES #309), loaded on first use.
     Magazines magazines;
@@ -845,6 +851,23 @@ int main(int argc, char **argv)
                 for (uint8_t v : c4)
                     sig = mix(sig, v);
         }
+        // the doors swing open for a moment when the showroom shows (the original's door curve, #358) and close again
+        if (stageAnimsCar != sc.name) {
+            stageAnimsCar = sc.name;
+            stageAnims.Load(ReadGameFile(*fs, ("CARS\\" + sc.name + "\\PARTS_ANIMATIONS.BIN").c_str()));
+        }
+        float stageAng[5] = {0, 0, 0, 0, 0};
+        if (const CarPartAnims::Clip *dl = stageAnims.Find("LEFT_DOOR_REG"))
+            if (const CarPartAnims::Clip *dr = stageAnims.Find("RIGHT_DOOR_REG")) {
+                const float since = seconds - stageFlourishT0; // seconds since the menu (or this car) appeared
+                const bool open = since > 0.7f && since < 4.2f && !getenv("NFSU2_NO_STAGE_DOORS");
+                static float lastSec = 0.0f;
+                const float dts = std::clamp(seconds - lastSec, 0.0f, 0.1f);
+                lastSec = seconds;
+                stageDoors = std::clamp(stageDoors + (open ? 1.0f : -1.0f) * dts * 0.7f, 0.0f, dl->Duration());
+                stageAng[3] = std::fabs(dl->At(stageDoors)), stageAng[4] = std::fabs(dr->At(stageDoors));
+            }
+        sig = mix(sig, size_t(stageAng[3] * 90.0f));
         if (sig != stageSig || sc.name != stageName) {
             stageWorld->ClearCars();
             for (const char *shared : {"CARS\\TEXTURES.BIN", "CARS\\WHEELS\\TEXTURES.BIN"})
@@ -878,15 +901,55 @@ int main(int argc, char **argv)
                 if (composed)
                     stageWorld->SetCarSkin(idx, slot, std::move(skin));
             }
+            stageCarIdx = idx;
+            if (sc.parts)
+                stageWorld->SetCarParts(idx, sc.parts, sc.hinge);
+            stageWorld->SetCarPartAngles(idx, stageAng);
             stageWorld->SetCarTransform(idx, m);
             if (sc.name != stageName)
-                stageSwitch = seconds;
+                stageSwitch = seconds, stageFlourishT0 = seconds;
             stageName = sc.name, stageSig = sig;
             printf("[Stage] car %s on the showroom stage\n", sc.name.c_str());
         }
         return true;
     };
+    // The icon-carousel screens (Career, mode select, options, customize ...) as the flat native list (ISSUES #361); true when one was drawn.
+    auto drawNativeList = [&](int lw, int lh, float tsec) -> bool {
+        if (!modernUi.Ready() || getenv("NFSU2_CLASSIC_MENU") || startup.IsMessageDialogOpen())
+            return false;
+        std::string listPkg;
+        std::vector<std::string> listLabels;
+        std::vector<char> listDis;
+        size_t listSel = 0;
+        if (!startup.ScrollerMenuState(listPkg, listLabels, listDis, listSel))
+            return false;
+        static const struct { const char *pkg, *kicker, *title; } kTitles[] = {
+            {"UI_StartCareer.fng", "NEED FOR SPEED", "CAREER"}, {"UI_QRModeSelect.fng", "QUICK RACE", "MODE SELECT"},
+            {"UI_OptionsMain.fng", "NEED FOR SPEED", "OPTIONS"}, {"UI_ChooseCustomizeCategory.fng", "GARAGE", "CUSTOMIZE"},
+            {"UI_ChoosePerformanceCategory.fng", "GARAGE", "PERFORMANCE"}, {"UI_ProfileManager.fng", "NEED FOR SPEED", "PROFILE"}};
+        ModernUI::MainMenu lm;
+        for (const auto &t : kTitles)
+            if (strcasecmp(t.pkg, listPkg.c_str()) == 0)
+                lm.kicker = t.kicker, lm.title = t.title;
+        for (std::string &lb : listLabels) // the font has no TM / R glyphs: the original text shows them as '?'
+            lb.erase(std::remove(lb.begin(), lb.end(), '?'), lb.end());
+        std::vector<const char *> items;
+        std::unique_ptr<bool[]> deadB(new bool[listLabels.size()]);
+        for (size_t k = 0; k < listLabels.size(); ++k)
+            items.push_back(listLabels[k].c_str()), deadB[k] = listDis[k] != 0;
+        lm.items = items.data(), lm.count = int(items.size()), lm.selected = int(listSel), lm.disabled = deadB.get();
+        size_t ms = 0;
+        startup.MainMenuState(ms, lm.player, lm.money, lm.reputation);
+        SDL_RenderSetLogicalSize(ren, 0, 0);
+        modernUi.DrawMainMenu(lw, lh, lm, tsec);
+        SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+        return true;
+    };
     auto drawStage = [&](float seconds, bool carScreen) -> bool {
+        static bool wasMenuStage = false;
+        if (!carScreen && !wasMenuStage)
+            stageFlourishT0 = seconds; // the main menu just came up: restart the doors' flourish
+        wasMenuStage = !carScreen;
         if (!syncStageCar(seconds))
             return false;
         TrackWorld::StageParams sp;
@@ -996,6 +1059,20 @@ int main(int argc, char **argv)
     std::vector<float> aiStartS;
     std::vector<uint8_t> inGameCommon, inGameRace, inGameDrift, inGameFreeRoam;
     bool inWorld = false, flyCamera = false, sceneMode = false;
+    // The garage's 3D transitions (ISSUES #359): when the shot changes the camera swoops in (orbit, dolly, height and a lens punch) with a
+    // radial blur, and a title card sweeps across.
+    struct GarageTrans {
+        float start = -100.0f, dur = 1.3f, dir = 1.0f;
+        int shot = -1;
+        bool entry = true;
+        const char *title = "", *sub = "";
+    } garageTrans;
+    ModernUI::Results resultsView;   // the native results / reward screen's data (ISSUES #362)
+    float resultsShownAt = 0.0f;
+    float garageFx = 0.0f;
+    int garageBayIndex = -1;       // the world car that holds the player's engine
+    float garagePlayerM[12] = {};  // the player car's last transform
+    float garageHoodOpen = 0.0f;   // the hood's opening angle, for the engine bay // the blur strength the transition asks of the speed effect
     FEPackage *pausePkg = nullptr; // UI_Pause.fng while the race is paused (ISSUES.md #122)
     // The modern pause dialog (ISSUES #281): 0 closed, 1 menu, 2 confirm 'back to the main menu', 3 confirm 'quit the game'.
     int modernPause = 0, modernSel = 0;
@@ -1535,6 +1612,9 @@ int main(int argc, char **argv)
                          fe.ColorForPaint(fe.PreviewExhaustSet(), fe.PreviewExhaustPaint(),
                                           SDL_Color{150, 150, 150, 255}));
             playerSkinIndex = int(playerCarIndex);
+            garageBayIndex = -1;
+            if (!car.EngineBayModel().empty() && !getenv("NFSU2_NO_ENGINE_BAY")) // the engine under the garage's open hood (ISSUES #360)
+                garageBayIndex = int(world.AddCar(&car.EngineBayModel(), &car.EngineBayTextures(), SDL_Color{255, 255, 255, 255})); // white: the engine's own textures show
             playerSkinKey.clear(); // the per-frame check below composes the skin
             if (const char *spawn = getenv("NFSU2_SPAWN")) // dev aid: x,y,yaw (rad) -- put the player there (any grid)
                 sscanf(spawn, "%f,%f,%f", &camera.x, &camera.y, &camera.yaw), camera.z = getenv("NFSU2_SPAWN_Z") ? float(atof(getenv("NFSU2_SPAWN_Z"))) : 20.0f;
@@ -2657,6 +2737,8 @@ int main(int argc, char **argv)
                     FENativeInterface::SetString(rewardPkg, 0x18d97a23, text);
                     FENativeInterface::SetString(rewardPkg, 0xeb406fec, rw.player.c_str());
                     resultsPkg = rewardPkg; // the screen takes the results' place until Accept
+                    resultsView.reward = true, resultsView.money = rw.money, resultsView.reputation = rw.respect, resultsView.player = rw.player;
+                    resultsShownAt = float(now) * 0.001f;
                     printf("[Reward] %s won $%d and %d reputation (P%d)\n", rw.player.c_str(), rw.money, rw.respect, rw.place);
                     finishAccept = false;
                 } else {
@@ -2805,6 +2887,32 @@ int main(int argc, char **argv)
                     hud = nullptr;
                     resultsPkg = engine->PushPackage("UI_PostRaceResults.fng", 0, 0xff);
                     FillPostRaceResults(resultsPkg, rows);
+                    resultsView = ModernUI::Results();
+                    resultsShownAt = float(now) * 0.001f;
+                    for (size_t ri = 0; ri < rows.size(); ++ri) {
+                        ModernUI::ResultRow rr;
+                        rr.name = rows[ri].name == "YOU" ? (startup.PlayerName().empty() ? "YOU" : startup.PlayerName()) : rows[ri].name;
+                        rr.car = rows[ri].car;
+                        rr.player = rows[ri].name == "YOU";
+                        if (rows[ri].time >= 0) {
+                            const int cs = int(rows[ri].time * 100.0f + 0.5f);
+                            char tb[24];
+                            snprintf(tb, sizeof(tb), "%d:%02d.%02d", cs / 6000, (cs / 100) % 60, cs % 100);
+                            rr.time = tb;
+                        } else
+                            rr.time = "DNF";
+                        if (rr.player)
+                            resultsView.place = int(ri) + 1;
+                        resultsView.rows.push_back(rr);
+                    }
+                    if (race.IsDrift())
+                        resultsView.detail = "DRIFT SCORE " + std::to_string(driftScore);
+                    else if (race.BestLap() > 0) {
+                        const int cs = int(race.BestLap() * 100.0f + 0.5f);
+                        char tb[40];
+                        snprintf(tb, sizeof(tb), "BEST LAP  %d:%02d.%02d", cs / 6000, (cs / 100) % 60, cs % 100);
+                        resultsView.detail = tb;
+                    }
                     printf("[Race] results:");
                     for (const PostRaceRow &r : rows)
                         printf("  %s %.2f", r.name.c_str(), r.time);
@@ -3073,6 +3181,15 @@ int main(int argc, char **argv)
                     if (sceneMode && i > 0)
                         m[3] = m[7] = m[11] = 1.0e5f; // the garage shows only the player's car (row-major 3x4: translation in 3/7/11)
                     world.SetCarTransform(i, m);
+                    if (i == 0)
+                        memcpy(garagePlayerM, m, sizeof(garagePlayerM));
+                }
+                if (garageBayIndex >= 0) { // the engine follows the player's car (after the loop, which hides every car past the player in the garage)
+                    float bm[12];
+                    memcpy(bm, garagePlayerM, sizeof(bm));
+                    if (!(sceneMode && cribPkg && garageHoodOpen > 0.05f))
+                        bm[3] = bm[7] = bm[11] = 1.0e5f;
+                    world.SetCarTransform(size_t(garageBayIndex), bm);
                 }
                 // Chase camera (ISSUES #285): a spring rig behind the car; see World/CameraRig.h.
                 // Options > Player > Camera: 0 Bumper / 1 Hood / 2 Close / 3 Far / 4 Super Far (distance, height).
@@ -3148,8 +3265,90 @@ int main(int argc, char **argv)
                         }
                         halfLen = sized;
                     }
+                    if (getenv("NFSU2_GARAGE_TOUR")) // dev aid: cycle through the shots (one every 3.2 s), for recordings
+                        shot = GarageShot(int(float(now) * 0.001f / 3.2f) % int(GarageShot::Count));
                     camera = garageRig.Update(world, shot, shown->X(), shown->Y(), car.Z(), shown->Yaw(), halfLen / 2.1f,
                                               float(now) * 0.001f, dt > 0.0f ? dt : 0.016f);
+                    {
+                        static const char *const kTitle[] = {"THE GARAGE", "FRONT BUMPER", "REAR BUMPER", "EXHAUST", "SIDE SKIRTS", "SPOILER", "HOOD & ENGINE",
+                                                             "ROOF", "HEADLIGHTS", "TAILLIGHTS", "WHEELS", "UNDERGLOW", "PAINT & LIVERY"};
+                        static const char *const kSub[] = {"YOUR CAR", "STYLE", "STYLE", "SOUND AND LOOK", "AERO", "AERO", "PERFORMANCE", "STYLE", "LIGHTING", "LIGHTING",
+                                                           "RIMS AND BRAKES", "NEON", "COLOUR"};
+                        const float tnow = float(now) * 0.001f;
+                        if (int(shot) != garageTrans.shot) {
+                            const bool first = garageTrans.shot < 0 || tnow - garageTrans.start > 600.0f;
+                            garageTrans.entry = first;
+                            garageTrans.shot = int(shot);
+                            garageTrans.start = tnow;
+                            garageTrans.dur = first ? 2.2f : 1.25f;
+                            garageTrans.dir = (int(shot) & 1) ? 1.0f : -1.0f;
+                            garageTrans.title = kTitle[int(shot)], garageTrans.sub = kSub[int(shot)];
+                        }
+                        const float u = std::clamp((tnow - garageTrans.start) / garageTrans.dur, 0.0f, 1.0f);
+                        garageFx = 0.0f;
+                        if (u < 1.0f && !getenv("NFSU2_NO_GARAGE_TRANSITIONS")) {
+                            // easeOutBack: arrives a touch past the mark and settles
+                            const float c1 = 1.35f, c3 = c1 + 1.0f, q = u - 1.0f;
+                            const float e = 1.0f + c3 * q * q * q + c1 * q * q;
+                            const float rem = 1.0f - e;
+                            const float fwdX = std::cos(camera.yaw) * std::cos(camera.pitch), fwdY = std::sin(camera.yaw) * std::cos(camera.pitch),
+                                        fwdZ = std::sin(camera.pitch);
+                            const float cx = shown->X(), cy = shown->Y(), cz = car.Z() + 0.7f;
+                            // the point the rig is looking at: the closest point of its view ray to the car
+                            const float along = std::max(1.0f, (cx - camera.x) * fwdX + (cy - camera.y) * fwdY + (cz - camera.z) * fwdZ);
+                            const float fx = camera.x + fwdX * along, fy = camera.y + fwdY * along, fz = camera.z + fwdZ * along;
+                            const float ent = garageTrans.entry ? 1.0f : 0.0f;
+                            const float orbit = rem * garageTrans.dir * (1.25f + 0.9f * ent);
+                            const float dist = 1.0f + rem * (0.85f + 1.4f * ent);
+                            const float co = std::cos(orbit), so = std::sin(orbit);
+                            const float rx = camera.x - cx, ry = camera.y - cy;
+                            camera.x = cx + (rx * co - ry * so) * dist;
+                            camera.y = cy + (rx * so + ry * co) * dist;
+                            camera.z += rem * (1.5f + 3.5f * ent);
+                            camera.fov += rem * (26.0f + 14.0f * ent);
+                            const float ddx = fx - camera.x, ddy = fy - camera.y, ddz = fz - camera.z;
+                            camera.yaw = std::atan2(ddy, ddx);
+                            camera.pitch = std::atan2(ddz, std::hypot(ddx, ddy));
+                            garageFx = std::clamp(rem * 1.3f, 0.0f, 1.0f);
+                        }
+                    }
+                    // The shops open the car (ISSUES #358): the hood, boot and doors play the original's key curves from
+                    // CARS\\<car>\\PARTS_ANIMATIONS.BIN forwards to open and backwards to close.
+                    if (playerSkinIndex >= 0) {
+                        static CarPartAnims partAnims;
+                        static std::string partAnimsCar;
+                        static float partT[5] = {0, 0, 0, 0, 0};
+                        const std::string cn = fe.PreviewCarName();
+                        if (cn != partAnimsCar) {
+                            partAnimsCar = cn;
+                            partAnims.Load(ReadGameFile(*fs, ("CARS\\" + cn + "\\PARTS_ANIMATIONS.BIN").c_str()));
+                            for (float &v : partT)
+                                v = 0.0f;
+                        }
+                        bool want[5] = {false, false, false, false, false};
+                        if (shown == &car) {
+                            switch (shot) {
+                            case GarageShot::Overview: want[3] = want[4] = true; break; // the doors swing open for the showroom
+                            case GarageShot::Hood: want[1] = true; break;
+                            case GarageShot::RearBumper: case GarageShot::Exhaust: case GarageShot::Spoiler: case GarageShot::Taillight: want[2] = true; break;
+                            default: break;
+                            }
+                            if (const char *op = getenv("NFSU2_GARAGE_OPEN")) { // dev aid: "hood,trunk,doors" forces panels open
+                                want[1] = strstr(op, "hood") != nullptr, want[2] = strstr(op, "trunk") != nullptr;
+                                want[3] = want[4] = strstr(op, "doors") != nullptr;
+                            }
+                        }
+                        static const char *const kClip[5] = {"", "HOOD_REG", "TRUNK_REG", "LEFT_DOOR_REG", "RIGHT_DOOR_REG"};
+                        float ang[5] = {0, 0, 0, 0, 0};
+                        for (int p = 1; p <= 4; ++p)
+                            if (const CarPartAnims::Clip *cl = partAnims.Find(kClip[p])) {
+                                partT[p] = std::clamp(partT[p] + (want[p] ? 1.0f : -1.0f) * (dt > 0.0f ? dt : 0.016f) * 0.8f, 0.0f, cl->Duration());
+                                ang[p] = std::fabs(cl->At(partT[p]));
+                            }
+                        world.SetCarParts(size_t(playerSkinIndex), &car.TrianglePart(), reinterpret_cast<const float(*)[3]>(car.PartHinge(0)));
+                        world.SetCarPartAngles(size_t(playerSkinIndex), ang);
+                        garageHoodOpen = ang[1];
+                    }
                     if (getenv("NFSU2_GARAGE_DEBUG")) {
                         static float lastCam = -1e9f;
                         if (float(now) * 0.001f - lastCam > 2.0f) {
@@ -3366,7 +3565,7 @@ int main(int argc, char **argv)
                 // The speed effect (ISSUES #298): from ~30 km/h, full by ~140; nitrous and the intro / menus change it.
                 static float fxSm = 0, nosSm = 0;
                 const bool racing = inWorld && !sceneMode && !race.InIntro() && !flyCamera && !cribPkg;
-                const float want = racing ? std::clamp((std::fabs(car.Speed()) - 8.0f) / 30.0f, 0.0f, 1.0f) : 0.0f;
+                const float want = racing ? std::clamp((std::fabs(car.Speed()) - 8.0f) / 30.0f, 0.0f, 1.0f) : (cribPkg && sceneMode ? garageFx * 0.75f : 0.0f);
                 const float wantNos = racing && car.NitrousActive() ? 1.0f : 0.0f;
                 const float k = std::min(1.0f, 4.0f * std::max(0.001f, float(now - lastFxTicks) * 0.001f));
                 lastFxTicks = now;
@@ -3405,7 +3604,51 @@ int main(int argc, char **argv)
                 SDL_RenderFillRect(ren, &bottom);
             }
             SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
-            engine->Render();
+            // The garage menu (ISSUES #361): the crib's FEng carousel stays the logic, the flat native list draws it.
+            size_t garageSel = 0;
+            std::vector<std::string> garageLabels;
+            std::vector<char> garageDis;
+            const bool nativeGarage = cribPkg && sceneMode && modernUi.Ready() && !pausePkg && !modernPause && !getenv("NFSU2_CLASSIC_MENU") &&
+                                      startup.LastMenu() && strcasecmp(startup.LastMenu(), "UI_CareerCrib.fng") == 0 &&
+                                      cribPkg->GetName() && strcasecmp(cribPkg->GetName(), "UI_CareerCrib.fng") == 0 &&
+                                      startup.CribMenuState(garageSel, garageLabels, garageDis);
+            bool nativeGarageList = false;
+            if (!nativeGarage && cribPkg && sceneMode && !pausePkg && !modernPause) {
+                int glw, glh;
+                SDL_GetRendererOutputSize(ren, &glw, &glh);
+                nativeGarageList = drawNativeList(glw, glh, float(now) * 0.001f);
+            }
+            fe.SetVerticalNav(nativeGarage || nativeGarageList);
+            if (nativeGarage) {
+                std::vector<const char *> items;
+                std::vector<char> dead = garageDis;
+                std::unique_ptr<bool[]> deadB(new bool[dead.size()]);
+                for (size_t k = 0; k < garageLabels.size(); ++k)
+                    items.push_back(garageLabels[k].c_str()), deadB[k] = dead[k] != 0;
+                ModernUI::MainMenu gm;
+                gm.items = items.data(), gm.count = int(items.size()), gm.selected = int(garageSel), gm.disabled = deadB.get();
+                gm.kicker = "CAREER", gm.title = "THE GARAGE";
+                size_t ms = 0;
+                gm.car = fe.CarDisplayName(fe.PreviewCarName());
+                gm.carSub = "ON THE TURNTABLE";
+                startup.MainMenuState(ms, gm.player, gm.money, gm.reputation);
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawMainMenu(w, h, gm, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (nativeGarageList) {
+                // drawn above
+            } else if (resultsPkg && modernUi.Ready() && !getenv("NFSU2_CLASSIC_MENU") && (!resultsView.rows.empty() || resultsView.reward)) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawResults(w, h, resultsView, float(now) * 0.001f - resultsShownAt);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else
+                engine->Render();
+            if (modernUi.Ready() && hud && !pausePkg && !cribPkg && !flyCamera && race.ModernHud() && !race.InIntro() && !race.IsFreeRun() &&
+                !getenv("NFSU2_CLASSIC_HUD") && (race.CountdownLeft() > 0.0f || race.GoAge() >= 0.0f)) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawCountdown(w, h, race.CountdownLeft(), race.GoAge());
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
             if (modernUi.Ready() && hud && !pausePkg && !cribPkg && !flyCamera && race.ModernHud() && !race.InIntro() &&
                 race.GetPhase() != RaceSession::kFinished) { // the redesigned race HUD (ISSUES #276)
                 SDL_RenderSetLogicalSize(ren, 0, 0);
@@ -3506,6 +3749,11 @@ int main(int argc, char **argv)
                     names.push_back(o.name.c_str());
                 modernUi.DrawDialog(w, h, "UNIQUE PART", names.data(), int(names.size()), uniqueSel, false, "", false, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (cribPkg && sceneMode && modernUi.Ready() && garageTrans.shot >= 0 && !getenv("NFSU2_NO_GARAGE_TRANSITIONS") &&
+                       float(now) * 0.001f - garageTrans.start < 2.4f) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawShotTitle(w, h, garageTrans.title, garageTrans.sub, float(now) * 0.001f - garageTrans.start, garageTrans.dir, garageTrans.entry);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             } else if (modernPause == 7) {
                 // the pursuit result is drawn with the pursuit HUD above
             } else if (modernPause && modernUi.Ready()) {
@@ -3560,6 +3808,12 @@ int main(int argc, char **argv)
             const bool nativeMenu = staged && !getenv("NFSU2_CLASSIC_MENU") && !fe.PreviewScreenOpen() && fe.MainMenuOpen() && startup.CurrentPackage() &&
                                     strcasecmp(startup.CurrentPackage(), "UI_Main.fng") == 0 && !startup.IsMessageDialogOpen() &&
                                     startup.MainMenuState(menuSel, menuPlayer, menuMoney, menuRep);
+            fe.SetVerticalNav(nativeMenu);
+            // The other icon-carousel screens as the same flat list (ISSUES #361), over the flat backdrop.
+            int nlw = 0, nlh = 0;
+            SDL_GetRendererOutputSize(ren, &nlw, &nlh);
+            const bool nativeList = !nativeMenu && drawNativeList(nlw, nlh, float(elapsed) * 0.001f);
+            fe.SetVerticalNav(nativeMenu || nativeList);
             if (nativeMenu) {
                 static const char *const kItems[] = {"CAREER", "QUICK RACE", "2 PLAYER", "ONLINE", "CUSTOMIZE", "PROFILE", "OPTIONS"};
                 static const char *const kNotes[] = {"Build your reputation across five districts.", "Jump straight into a single event.",
@@ -3576,7 +3830,7 @@ int main(int argc, char **argv)
                 SDL_GetRendererOutputSize(ren, &mw, &mh);
                 modernUi.DrawMainMenu(mw, mh, mm, float(elapsed) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
-            } else
+            } else if (!nativeList)
                 engine->Render();
             // The dialog is a package on top of the shop; the preview overlay is drawn outside the
             // package stack, so it would cover the prompt (ISSUES #189).

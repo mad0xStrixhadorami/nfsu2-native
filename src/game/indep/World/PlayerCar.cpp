@@ -331,6 +331,9 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triCaliper.clear();
     m_triMirror.clear();
     m_triSpoiler.clear();
+    m_triPart.clear();
+    m_bayModel.clear();
+    m_bayTex.clear();
     m_triRoof.clear();
     m_triEngine.clear();
     m_triExhaust.clear();
@@ -492,7 +495,22 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
                 m_triSpoiler[i] = 1;
             continue;
         }
-        if (Contains(n, "EXHAUST") || Contains(n, "UNDER") ||
+        // The stock hood, boot and door panels are the parts the shops open (ISSUES #358).  Their undersides are kept so an open panel is
+        // not hollow.
+        int partTag = 0;
+        if (Contains(n, "_KIT00_HOOD_") && !Contains(n, "SPLIT"))
+            partTag = 1;
+        else if (Contains(n, "_KIT00_TRUNK_") && !Contains(n, "AUDIO"))
+            partTag = 2;
+        else if (Contains(n, "_KIT00_DOOR_LEFT_") || Contains(n, "_KIT00_DOOR_PANEL_LE") || Contains(n, "_KIT00_DOOR_SILL_LE"))
+            partTag = 3;
+        else if (Contains(n, "_KIT00_DOOR_RIGHT_") || Contains(n, "_KIT00_DOOR_PANEL_RI") || Contains(n, "_KIT00_DOOR_SILL_RI"))
+            partTag = 4;
+        if (Contains(n, "_KIT00_ENGINE_") && !Contains(n, "UNLIT")) { // the engine itself, for the open-hood view
+            AddFiltered(s, m_bayModel, m_bayTex);
+            continue;
+        }
+        if (Contains(n, "EXHAUST") || (Contains(n, "UNDER") && partTag == 0) ||
             Contains(n, "ENGINE") || Contains(n, "AUDIO") || Contains(n, "UNLIT"))
             continue;
         if (getenv("NFSU2_NO_HOOD") && Contains(n, "HOOD"))
@@ -501,6 +519,11 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
             body = &s;
         const size_t before = m_model.size();
         AddFiltered(s, m_model, m_triTex);
+        if (partTag) {
+            m_triPart.resize(m_model.size(), 0);
+            for (size_t i = before; i < m_model.size(); ++i)
+                m_triPart[i] = uint8_t(partTag);
+        }
         // Mount points for the installed aftermarket parts: the base solid carries ROOF_SCOOP and
         // the rear bumper the exhaust-tip mounts (left, else right).  The bumper's rearmost face is
         // the reference for seating the tip (ISSUES #180).
@@ -794,6 +817,24 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
     m_triCaliper.resize(m_model.size(), 0);
     m_triMirror.resize(m_model.size(), 0);
     m_triSpoiler.resize(m_model.size(), 0);
+    m_triPart.resize(m_model.size(), 0);
+    // hinges from each panel's own geometry: the hood turns about its rear edge, the boot about its front edge, a door about its front edge
+    for (int part = 1; part <= 4; ++part) {
+        float edge = part == 1 ? 1e9f : -1e9f;
+        for (size_t i = 0; i < m_model.size(); ++i)
+            if (m_triPart[i] == part)
+                for (const SolidMesh::Point &pt : m_model[i].v)
+                    edge = part == 1 ? std::min(edge, pt.x) : std::max(edge, pt.x);
+        float sy = 0, sz = 0, cnt = 0;
+        for (size_t i = 0; i < m_model.size(); ++i)
+            if (m_triPart[i] == part)
+                for (const SolidMesh::Point &pt : m_model[i].v)
+                    if (std::fabs(pt.x - edge) < 0.12f)
+                        sy += pt.y, sz += pt.z, cnt += 1.0f;
+        m_partHinge[part][0] = edge;
+        m_partHinge[part][1] = part >= 3 && cnt > 0 ? sy / cnt : 0.0f;
+        m_partHinge[part][2] = cnt > 0 ? sz / cnt : 0.0f;
+    }
     m_triRoof.resize(m_model.size(), 0);
     m_triEngine.resize(m_model.size(), 0);
     m_triExhaust.resize(m_model.size(), 0);
@@ -806,6 +847,14 @@ bool PlayerCar::LoadModel(const std::vector<uint8_t> &geometry, const Wheel *whe
         for (size_t t = brakeRange[i][0]; t < brakeRange[i][1] && t < m_triBrake.size(); ++t)
             m_triBrake[t] = int8_t(i);
     m_wheelAngle = m_steerAngle = m_steerIn = 0;
+    if (getenv("NFSU2_PART_DEBUG")) {
+        size_t cnt[5] = {};
+        for (uint8_t t : m_triPart)
+            if (t < 5)
+                ++cnt[t];
+        printf("[Parts] hood %zu boot %zu doorL %zu doorR %zu hinges: hood x %.2f z %.2f, doorL x %.2f y %.2f\n", cnt[1], cnt[2], cnt[3], cnt[4],
+               m_partHinge[1][0], m_partHinge[1][2], m_partHinge[3][0], m_partHinge[3][1]);
+    }
     printf("[Car] %zu solids, %zu model triangles\n", solids.size(), m_model.size());
     return !m_model.empty();
 }
@@ -901,7 +950,7 @@ void PlayerCar::SetCustomModel(const std::vector<SolidMesh::Triangle> &model, co
 {
     m_model = model, m_triTex = tex, m_triWheel = wheelOf, m_triRim = rims;
     const size_t n = m_model.size();
-    m_triCaliper.assign(n, 0), m_triMirror.assign(n, 0), m_triSpoiler.assign(n, 0), m_triRoof.assign(n, 0), m_triEngine.assign(n, 0),
+    m_triCaliper.assign(n, 0), m_triMirror.assign(n, 0), m_triSpoiler.assign(n, 0), m_triPart.assign(n, 0), m_triRoof.assign(n, 0), m_triEngine.assign(n, 0),
         m_triExhaust.assign(n, 0);
     m_triBrake.assign(n, -1);
     for (int i = 0; i < 12; ++i)

@@ -157,7 +157,8 @@ void RaceSession::SetupHud()
     const bool sprint = m_config.route && m_config.route->Valid() && !m_config.route->Closed();
     for (FEObject *o = m_hud->GetFirstObject(); o; o = o->GetNext()) {
         bool shown = std::find(kShown, kShown + kShownCount, o->NameHash) != kShown + kShownCount;
-        if (IsDrift() && std::find(std::begin(kDriftShown), std::end(kDriftShown), o->NameHash) != std::end(kDriftShown))
+        if (IsDrift() && !m_config.modernHud && // the modern HUD draws the drift counters itself (ISSUES #362)
+            std::find(std::begin(kDriftShown), std::end(kDriftShown), o->NameHash) != std::end(kDriftShown))
             shown = true;
         // URL races show the standings board (the row children are set in UpdateHud).
         if (IsKnockout() && (o->NameHash == kLeaderBoardGroup ||
@@ -483,7 +484,9 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         return;
     // Countdown and GO (321_GO).
     char text[32];
-    if (m_phase == kCountdown) {
+    if (m_config.modernHud) { // the native countdown draws it (ISSUES #363)
+        FENativeInterface::SetVisible(m_hud, kCountdownText, false);
+    } else if (m_phase == kCountdown) {
         snprintf(text, sizeof(text), "%d", int(std::ceil(m_countdown)));
         FENativeInterface::SetString(m_hud, kCountdownText, text);
         FENativeInterface::SetVisible(m_hud, kCountdownText, true);

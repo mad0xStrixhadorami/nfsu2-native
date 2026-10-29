@@ -256,6 +256,41 @@ void ModernUI::DrawBackdrop(int w, int h, float t)
     Quad({0, 0}, {W * 0.09f, 0}, {W * 0.09f - 10, 5}, {0, 5}, {255, 214, 10, 255}, {255, 214, 10, 255}, {255, 214, 10, 255}, {255, 214, 10, 255});
 }
 
+void ModernUI::DrawShotTitle(int w, int h, const char *title, const char *sub, float age, float dir, bool entry)
+{
+    if (!m_font || age < 0.0f)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    auto ease = [](float x) { x = std::clamp(x, 0.0f, 1.0f); return 1.0f - std::pow(1.0f - x, 3.0f); };
+    auto A = [](SDL_Color c, float a) { return SDL_Color{c.r, c.g, c.b, Uint8(std::clamp(a, 0.0f, 1.0f) * 255.0f)}; };
+    const float slant = H * 0.30f;
+    // the blade: its leading edge runs across in 0.32 s, its trailing edge follows 0.22 s later (a swept band, direction by `dir`)
+    const float lead = ease(age / 0.32f), trail = ease((age - 0.22f) / 0.36f);
+    auto edgeX = [&](float p) { return dir > 0 ? -slant + p * (W + 2 * slant) : W + slant - p * (W + 2 * slant); };
+    if (trail < 1.0f) {
+        const float x0 = edgeX(trail), x1 = edgeX(lead);
+        const float xl = std::min(x0, x1), xr = std::max(x0, x1);
+        Quad({xl + slant, 0}, {xr + slant, 0}, {xr, H}, {xl, H}, signal, signal, signal, signal);
+        // a second, thinner blade riding behind it
+        const float bw = 26 * s, tx = dir > 0 ? xl - bw * 2.2f : xr + bw * 1.2f;
+        Quad({tx + slant, 0}, {tx + bw + slant, 0}, {tx + bw, H}, {tx, H}, A(paper, 0.85f), A(paper, 0.85f), A(paper, 0.85f), A(paper, 0.85f));
+    }
+    // the title cuts in behind the blade, holds, fades
+    const float inP = ease((age - 0.30f) / 0.45f), out = 1.0f - ease((age - (entry ? 1.9f : 1.35f)) / 0.45f);
+    if (inP > 0.0f && out > 0.0f) {
+        const float lx = 72 * s + (1.0f - inP) * -90 * s * dir, ty = H * 0.70f;
+        const float al = inP * out;
+        Text(lx, ty - 34 * s, 20 * s, sub, A(signal, al), 0);
+        Text(lx, ty - 6 * s, 92 * s, title, A(paper, al), 0);
+        const float lw = std::min(1.0f, inP) * 260 * s;
+        Quad({lx, ty + 96 * s}, {lx + lw, ty + 96 * s}, {lx + lw, ty + 100 * s}, {lx, ty + 100 * s}, A(signal, al), A(signal, al), A(signal, al), A(signal, al));
+        // dark under-strip so the title reads on any scene
+        Quad({0, ty - 60 * s}, {W, ty - 60 * s}, {W, ty + 118 * s}, {0, ty + 118 * s}, A(ink, 0.0f), A(ink, 0.0f), A(ink, 0.0f), A(ink, 0.0f));
+    }
+}
+
 void ModernUI::DrawWind(int w, int h, float strength, float nitro, float t)
 {
     if (strength <= 0.02f && nitro <= 0.02f)
@@ -550,29 +585,34 @@ void ModernUI::DrawMainMenu(int w, int h, const MainMenu &m, float t)
     Rect(0, H - 110 * s, W, 110 * s, A(ink, 0), A(ink, 190));
     // wordmark
     const float lx = 72 * s;
-    Text(lx, 44 * s, 15 * s, "NEED FOR SPEED", A(paper, 170), 0);
-    Text(lx, 60 * s, 34 * s, "UNDERGROUND 2", paper, 0);
+    Text(lx, 44 * s, 15 * s, m.kicker, A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, m.title, paper, 0);
     Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
     // the list; the highlight glides to the selected row
     static float hy = -1.0f, last = -1.0f;
-    const float top = 168 * s, pitch = 60 * s;
+    const float top = 168 * s, pitch = std::min(60 * s, (H - top - 150 * s) / float(m.count));
+    const float rowPx = std::min(44 * s, pitch * 0.74f);
     const float target = top + pitch * float(m.selected);
     if (hy < 0)
         hy = target;
     const float dt = last < 0 ? 0.016f : std::min(0.05f, t - last);
     last = t;
     hy += (target - hy) * std::min(1.0f, dt * 18.0f);
-    const float slant = 16 * s, bw = 470 * s, bh = 54 * s;
+    const float slant = 16 * s, bw = 470 * s, bh = pitch * 0.9f;
     Quad({lx - 22 * s + slant, hy}, {lx - 22 * s + bw + slant, hy}, {lx - 22 * s + bw, hy + bh}, {lx - 22 * s, hy + bh}, signal, signal, signal, signal);
     for (int i = 0; i < m.count; ++i) {
         const float ry = top + pitch * float(i);
         const bool on = i == m.selected;
-        const bool dead = i == 3 && !m.enabledOnline;
+        const bool dead = m.disabled ? m.disabled[i] : (i == 3 && !m.enabledOnline);
         char idx[8];
         snprintf(idx, sizeof(idx), "%02d", i + 1);
         const SDL_Color txt = on ? ink : (dead ? A(paper, 70) : A(paper, 215));
-        Text(lx, ry + 2 * s, 44 * s, m.items[i], txt, 0);
-        Text(lx - 22 * s + bw - 14 * s, ry + 16 * s, 17 * s, idx, on ? A(ink, 170) : A(paper, 80), 2);
+        float rsz = rowPx;
+        const float rw = TextWidth(m.items[i], rsz);
+        if (rw > 390 * s)
+            rsz *= 390 * s / rw; // long labels shrink to the column instead of running under the car
+        Text(lx, ry + (pitch - rsz) * 0.12f + (rowPx - rsz) * 0.5f, rsz, m.items[i], txt, 0);
+        Text(lx - 22 * s + bw - 14 * s, ry + pitch * 0.28f, 17 * s, idx, on ? A(ink, 170) : A(paper, 80), 2);
     }
     if (m.notes && m.selected >= 0 && m.selected < m.count && m.notes[m.selected])
         Text(lx, top + pitch * float(m.count) + 14 * s, 19 * s, m.notes[m.selected], A(paper, 190), 0);
@@ -615,6 +655,108 @@ void ModernUI::DrawMainMenu(int w, int h, const MainMenu &m, float t)
         if (!m.carSub.empty())
             Text(cx, cy + 38 * s, 17 * s, m.carSub, A(paper, 160), 2);
         Quad({cx - 46 * s, cy - 10 * s}, {cx, cy - 10 * s}, {cx, cy - 6 * s}, {cx - 46 * s, cy - 6 * s}, signal, signal, signal, signal);
+    }
+}
+
+void ModernUI::DrawResults(int w, int h, const Results &r, float t)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    // the scene is dimmed and the left two fifths go solid ink, cut on a diagonal
+    Rect(0, 0, W, H, A(ink, 150), A(ink, 190));
+    const float cut = W * 0.44f, sl = H * 0.22f;
+    Quad({0, 0}, {cut + sl, 0}, {cut, H}, {0, H}, A(ink, 238), A(ink, 238), A(ink, 238), A(ink, 238));
+    Quad({cut + sl, 0}, {cut + sl + 7 * s, 0}, {cut + 7 * s, H}, {cut, H}, signal, signal, signal, signal);
+    const float lx = 72 * s;
+    const float k = std::min(1.0f, t * 3.0f);
+    static const char *const kOrd[] = {"", "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH"};
+    if (!r.reward) {
+        Text(lx, 52 * s, 20 * s, r.heading, A(paper, 200), 0);
+        const std::string pl = r.place >= 1 && r.place <= 8 ? kOrd[r.place] : (r.place > 8 ? std::to_string(r.place) + "TH" : "");
+        if (!pl.empty())
+            Text(lx - 8 * s + (1.0f - k) * -60 * s, 84 * s, 210 * s, pl, r.place == 1 ? signal : paper, 0);
+        if (!r.detail.empty())
+            Text(lx, 330 * s, 22 * s, r.detail, A(paper, 190), 0);
+        // the table on the right
+        const float tx = cut + sl + 70 * s, tw = W - tx - 64 * s;
+        Text(tx, 60 * s, 18 * s, "POS", A(paper, 140), 0);
+        Text(tx + 70 * s, 60 * s, 18 * s, "DRIVER", A(paper, 140), 0);
+        Text(tx + tw, 60 * s, 18 * s, "TIME", A(paper, 140), 2);
+        const float rowH = std::min(62 * s, (H - 190 * s) / std::max<float>(1.0f, float(r.rows.size())));
+        for (size_t i = 0; i < r.rows.size(); ++i) {
+            const ResultRow &row = r.rows[i];
+            const float ry = 96 * s + rowH * float(i) + (1.0f - k) * 24 * s * float(i);
+            const float al = k;
+            if (row.player) {
+                const float sk = 14 * s;
+                Quad({tx - 18 * s + sk, ry}, {tx + tw + 14 * s + sk, ry}, {tx + tw + 14 * s, ry + rowH - 6 * s}, {tx - 18 * s, ry + rowH - 6 * s}, A(signal, int(255 * al)), A(signal, int(255 * al)),
+                     A(signal, int(255 * al)), A(signal, int(255 * al)));
+            }
+            const SDL_Color c = row.player ? A(ink, int(255 * al)) : A(paper, int(225 * al));
+            char pos[8];
+            snprintf(pos, sizeof(pos), "%zu", i + 1);
+            Text(tx, ry + 6 * s, rowH * 0.62f, pos, c, 0);
+            Text(tx + 70 * s, ry + 3 * s, rowH * 0.46f, row.name, c, 0);
+            Text(tx + 70 * s, ry + rowH * 0.50f, rowH * 0.27f, row.car, row.player ? A(ink, int(190 * al)) : A(paper, int(140 * al)), 0);
+            Text(tx + tw, ry + 8 * s, rowH * 0.5f, row.time, c, 2);
+        }
+    } else {
+        Text(lx, 52 * s, 20 * s, "EVENT COMPLETE", A(paper, 200), 0);
+        Text(lx, 84 * s, 120 * s, "REWARD", paper, 0);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "$%d", r.money);
+        Text(lx, 270 * s, 26 * s, "BANK", A(paper, 160), 0);
+        Text(lx + (1.0f - k) * -50 * s, 298 * s, 120 * s, buf, signal, 0);
+        snprintf(buf, sizeof(buf), "+%d", r.reputation);
+        Text(lx, 450 * s, 26 * s, "REPUTATION", A(paper, 160), 0);
+        Text(lx + (1.0f - k) * -50 * s, 478 * s, 96 * s, buf, paper, 0);
+        if (!r.player.empty())
+            Text(W - 64 * s, 60 * s, 22 * s, r.player, A(paper, 200), 2);
+    }
+    // the key hint
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - 64 * s, by - 10 * s}, {W - 64 * s, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    const float cw = TextWidth("ENTER", 14 * s) + 16 * s;
+    Quad({W - 64 * s - 110 * s - cw, by + 3 * s}, {W - 64 * s - 110 * s, by + 3 * s}, {W - 64 * s - 110 * s, by + 25 * s}, {W - 64 * s - 110 * s - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+    Text(W - 64 * s - 110 * s - cw * 0.5f, by + 6 * s, 14 * s, "ENTER", ink, 1);
+    Text(W - 64 * s, by + 4 * s, 18 * s, "CONTINUE", A(paper, 210), 2);
+}
+
+void ModernUI::DrawCountdown(int w, int h, float left, float goAge)
+{
+    if (!m_font || (left <= 0.0f && goAge < 0.0f))
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, float a) { return SDL_Color{c.r, c.g, c.b, Uint8(std::clamp(a, 0.0f, 1.0f) * 255.0f)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    const float cx = W * 0.5f, cy = H * 0.34f;
+    if (left > 0.0f) {
+        const int n = int(std::ceil(left));
+        const float f = left - std::floor(left - 1e-4f) - 0.0f; // 1 .. 0 within the second
+        const float frac = std::clamp(1.0f - (left - float(n - 1)), 0.0f, 1.0f); // 0 at the start of this number, 1 at its end
+        const float pop = 1.0f + 0.35f * std::pow(1.0f - std::min(1.0f, frac * 5.0f), 2.0f); // a quick overshoot as each number lands
+        const float a = frac < 0.8f ? 1.0f : 1.0f - (frac - 0.8f) * 5.0f;
+        (void)f;
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d", n);
+        const float sz = 190 * s * pop;
+        const float bw = 360 * s, bh = 14 * s, sk = 26 * s;
+        // a slanted bar under the numeral that drains over the second
+        Quad({cx - bw * 0.5f + sk, cy + 118 * s}, {cx - bw * 0.5f + sk + bw * (1.0f - frac), cy + 118 * s}, {cx - bw * 0.5f + bw * (1.0f - frac), cy + 118 * s + bh},
+             {cx - bw * 0.5f, cy + 118 * s + bh}, A(signal, a), A(signal, a), A(signal, a), A(signal, a));
+        Text(cx, cy - sz * 0.5f, sz, buf, A(paper, a), 1);
+    } else {
+        const float a = std::clamp(1.0f - goAge * 1.25f, 0.0f, 1.0f);
+        const float pop = 1.0f + 0.9f * goAge; // GO flies towards the camera as it fades
+        const float sz = 200 * s * pop;
+        const float bw = W * (0.28f + 0.9f * goAge), sk = 40 * s;
+        Quad({cx - bw * 0.5f + sk, cy - 6 * s}, {cx + bw * 0.5f + sk, cy - 6 * s}, {cx + bw * 0.5f - sk, cy + 6 * s}, {cx - bw * 0.5f - sk, cy + 6 * s}, A(signal, a), A(signal, a), A(signal, a), A(signal, a));
+        Text(cx, cy - sz * 0.5f, sz, "GO", A(signal, a), 1);
     }
 }
 

@@ -65,6 +65,11 @@ add_executable(tunesystem_test tests/tunesystem_test.cpp src/game/indep/Frontend
 target_include_directories(tunesystem_test PRIVATE src)
 add_test(NAME tunesystem COMMAND tunesystem_test)
 
+# Car part animation banks: hood / boot / door curves from PARTS_ANIMATIONS.BIN (#358).
+add_executable(partanim_test tests/partanim_test.cpp src/game/indep/World/CarPartAnim.cpp)
+target_include_directories(partanim_test PRIVATE src)
+add_test(NAME partanim COMMAND partanim_test)
+
 # Solid-header transform: the stock spoiler's mount matrix (#175).
 add_executable(solid_test tests/solid_test.cpp src/game/indep/World/SolidMesh.cpp)
 target_include_directories(solid_test PRIVATE src)

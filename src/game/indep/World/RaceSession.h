@@ -84,6 +84,9 @@ public:
     void DriftUpdate(float speed, float yaw, float dt);
     float DriftPoints() const { return m_driftChain * m_driftMult; } // current chain value
     float DriftTotal() const { return m_driftTotal; }
+    // The big native countdown (ISSUES #363): the seconds left (> 0 while counting down) and how long the GO has been up.
+    float CountdownLeft() const { return m_phase == kCountdown && m_intro <= 0.0f ? m_countdown : 0.0f; }
+    float GoAge() const { return m_goShown > 0.0f ? 1.0f - m_goShown : -1.0f; }
     int DriftMultiplier() const { return m_driftMult; }
     float DriftAngle() const { return m_driftAngle; } // slip angle in degrees
 

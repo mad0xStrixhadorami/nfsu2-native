@@ -159,6 +159,13 @@ public:
     const std::vector<uint8_t> &TriangleMirrors() const { return m_triMirror; }
     // 1 for the stock spoiler mesh, 0 otherwise (#175).  The solid's header transform mounts it.
     const std::vector<uint8_t> &TriangleSpoilers() const { return m_triSpoiler; }
+    // Hinged panels (ISSUES #358): per model triangle 0 none, 1 hood, 2 boot, 3 left door, 4 right door, and each part's hinge point
+    // (model space; the hood and boot turn about the lateral axis, the doors about the vertical one).
+    const std::vector<uint8_t> &TrianglePart() const { return m_triPart; }
+    // The engine (KIT00_ENGINE_*) kept apart from the body: the garage shows it as a second car while the hood is open (ISSUES #360).
+    const std::vector<SolidMesh::Triangle> &EngineBayModel() const { return m_bayModel; }
+    const std::vector<uint32_t> &EngineBayTextures() const { return m_bayTex; }
+    const float *PartHinge(int part) const { return m_partHinge[part]; }
     // 1 for an installed aftermarket part (#178): roof scoop, engine accent and muffler tip.  The
     // three paint cards edit these parts, not the stock geometry.
     const std::vector<uint8_t> &TriangleRoofScoops() const { return m_triRoof; }
@@ -233,7 +240,7 @@ public:
     // Shares another car's assembled model (opponents of the same make).
     void SetModel(const PlayerCar &other) { m_model = other.m_model, m_triTex = other.m_triTex, m_triRim = other.m_triRim,
                                                  m_triCaliper = other.m_triCaliper, m_triMirror = other.m_triMirror,
-                                                 m_triSpoiler = other.m_triSpoiler, m_triRoof = other.m_triRoof,
+                                                 m_triSpoiler = other.m_triSpoiler, m_triPart = other.m_triPart, m_triRoof = other.m_triRoof,
                                                  m_triEngine = other.m_triEngine, m_triExhaust = other.m_triExhaust,
                                                  m_bodyStyles = other.m_bodyStyles,
                                                  m_rideHeight = other.m_rideHeight,
@@ -249,6 +256,10 @@ private:
     std::vector<uint8_t> m_triCaliper;
     std::vector<uint8_t> m_triMirror;
     std::vector<uint8_t> m_triSpoiler;
+    std::vector<uint8_t> m_triPart;
+    std::vector<SolidMesh::Triangle> m_bayModel;
+    std::vector<uint32_t> m_bayTex;
+    float m_partHinge[5][3] = {};
     std::vector<uint8_t> m_triRoof;
     std::vector<uint8_t> m_triEngine;
     std::vector<uint8_t> m_triExhaust;

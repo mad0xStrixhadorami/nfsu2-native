@@ -48,6 +48,15 @@ public:
     void SetOptionIcon(size_t index, uint32_t texHash);
     bool Empty() const { return m_options.empty(); }
     size_t Selected() const { return m_selected; }
+    size_t Count() const { return m_options.size(); }
+    // An option's label for a native list (ISSUES #361): its own text, else the language label of its name hash (via `lang`).
+    template <typename F> std::string Label(size_t i, F &&lang) const
+    {
+        if (i >= m_options.size())
+            return {};
+        return !m_options[i].text.empty() ? m_options[i].text : lang(m_options[i].nameHash);
+    }
+    bool Disabled(size_t i) const { return i < m_options.size() && m_options[i].disabled; }
     FEPackage *Package() const { return m_pkg; }
 
 private:

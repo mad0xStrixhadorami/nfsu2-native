@@ -533,6 +533,20 @@ size_t TrackWorld::AddCar(const std::vector<SolidMesh::Triangle> *model, const s
     return m_cars.size() - 1;
 }
 
+void TrackWorld::SetCarParts(size_t index, const std::vector<uint8_t> *tags, const float hinge[5][3])
+{
+    if (index >= m_cars.size())
+        return;
+    m_cars[index].partTags = tags;
+    memcpy(m_cars[index].partHinge, hinge, sizeof(float) * 15);
+}
+
+void TrackWorld::SetCarPartAngles(size_t index, const float angles[5])
+{
+    if (index < m_cars.size())
+        memcpy(m_cars[index].partAngle, angles, sizeof(float) * 5);
+}
+
 void TrackWorld::SetCarSkin(size_t index, uint32_t bodySlot, std::vector<uint32_t> rgba)
 {
     if (index >= m_cars.size())
@@ -834,10 +848,31 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             else if (slot == CarMaterial::NameHash("BRAKELIGHT_GLASS_LEFT") || slot == CarMaterial::NameHash("BRAKELIGHT_GLASS_RIGHT"))
                 gloss = 9;  // red cover
         }
+        // an opened panel: its vertices turn about the hinge before the car transform (the hood and boot about the lateral axis,
+        // a door about the vertical one); the normals turn with them (ISSUES #358)
+        float pv[9] = {t.v[0].x, t.v[0].y, t.v[0].z, t.v[1].x, t.v[1].y, t.v[1].z, t.v[2].x, t.v[2].y, t.v[2].z};
+        float pcs = 1.0f, psn = 0.0f;
+        const int ptag = car.partTags && car.partTags->size() == car.model->size() ? int((*car.partTags)[i]) : 0;
+        if (ptag && std::fabs(car.partAngle[ptag]) > 1e-4f) {
+            const float ang = ptag == 1 ? -car.partAngle[ptag] : (ptag == 2 ? car.partAngle[ptag] : (ptag == 3 ? -car.partAngle[ptag] : car.partAngle[ptag]));
+            pcs = std::cos(ang), psn = std::sin(ang);
+            const float *hp = car.partHinge[ptag];
+            for (int k = 0; k < 3; ++k) {
+                float dx = pv[k * 3] - hp[0], dy = pv[k * 3 + 1] - hp[1], dz = pv[k * 3 + 2] - hp[2];
+                if (ptag <= 2) { // about Y
+                    const float nx = dx * pcs + dz * psn, nz = -dx * psn + dz * pcs;
+                    dx = nx, dz = nz;
+                } else {         // about Z
+                    const float nx = dx * pcs - dy * psn, ny = dx * psn + dy * pcs;
+                    dx = nx, dy = ny;
+                }
+                pv[k * 3] = hp[0] + dx, pv[k * 3 + 1] = hp[1] + dy, pv[k * 3 + 2] = hp[2] + dz;
+            }
+        }
         Tri w;
         for (int k = 0; k < 3; ++k)
             for (int a = 0; a < 3; ++a)
-                w.v[k * 3 + a] = t.v[k].x * m[a] + t.v[k].y * m[4 + a] + t.v[k].z * m[8 + a] + m[3 + 4 * a];
+                w.v[k * 3 + a] = pv[k * 3] * m[a] + pv[k * 3 + 1] * m[4 + a] + pv[k * 3 + 2] * m[8 + a] + m[3 + 4 * a];
         if (!Shade(w, rgb[0], rgb[1], rgb[2]))
             continue;
         RTri r;
@@ -869,6 +904,15 @@ void TrackWorld::SetCarTransform(size_t index, const float m[12])
             if (wheel >= 0 && std::fabs(car.spin) > 1e-5f) { // the normals roll and steer with the wheel
                 const float nx = nc[0] * cs + nc[2] * sn, nz = -nc[0] * sn + nc[2] * cs;
                 nc[0] = nx, nc[2] = nz;
+            }
+            if (ptag && std::fabs(psn) > 1e-6f) {
+                if (ptag <= 2) {
+                    const float nx = nc[0] * pcs + nc[2] * psn, nz = -nc[0] * psn + nc[2] * pcs;
+                    nc[0] = nx, nc[2] = nz;
+                } else {
+                    const float nx = nc[0] * pcs - nc[1] * psn, ny = nc[0] * psn + nc[1] * pcs;
+                    nc[0] = nx, nc[1] = ny;
+                }
             }
             if ((wheel >= 0 || brake >= 0) && (wheel >= 0 ? wheel : brake) < 2 && std::fabs(car.steer) > 1e-4f) {
                 const float nx = nc[0] * cd - nc[1] * sd, ny = nc[0] * sd + nc[1] * cd;

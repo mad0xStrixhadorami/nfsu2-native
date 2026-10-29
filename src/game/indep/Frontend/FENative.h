@@ -271,7 +271,15 @@ public:
         auto it = m_carTable.find(key);
         if (it == m_carTable.end())
             return folder;
-        return it->second.manufacturer.empty() ? folder : it->second.manufacturer + " " + folder;
+        if (it->second.manufacturer.empty())
+            return folder;
+        // the folder can already carry the make ("PEUGOT" under PEUGEOT, "MUSTANGGT" ...): do not say it twice
+        std::string mk = it->second.manufacturer;
+        for (char &ch : mk)
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        if (key.compare(0, 4, mk, 0, 4) == 0)
+            return it->second.manufacturer;
+        return it->second.manufacturer + " " + folder;
     }
     std::string CarManufacturer(const std::string &folder) const
     {
@@ -390,12 +398,16 @@ public:
         const std::vector<uint8_t> *rims = nullptr, *calipers = nullptr, *mirrors = nullptr, *spoilers = nullptr, *roofs = nullptr,
                                    *engines = nullptr, *exhausts = nullptr;
         SDL_Color body{}, rim{}, caliper{}, mirror{}, spoiler{}, roof{}, engine{}, exhaust{};
+        const std::vector<uint8_t> *parts = nullptr; // hinged panels (#358)
+        float hinge[5][3] = {};
         std::string name;
     };
     bool PreviewStageCar(StageCar &out); // loads the default preview car on first use; false when none is available
     void SetPreviewSuppressed(bool on) { m_previewSuppressed = on; }
     bool PreviewScreenOpen() const; // a screen that shows the preview car is on top
     bool MainMenuOpen() const;
+    // A vertical native list (the main menu, the garage) is on screen: Up / Down drive the carousel logic as Left / Right (ISSUES #361).
+    void SetVerticalNav(bool on) { m_verticalNav = on; }
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
     void RenderObject(FEObject *pObject) override;
@@ -514,6 +526,9 @@ private:
     std::vector<SDL_Vertex> m_carPreviewSplats;
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;
+    bool m_verticalNav = false;
+    std::vector<uint8_t> m_carPreviewParts;
+    float m_carPreviewHinge[5][3] = {};
     bool m_previewSuppressed = false;
     size_t m_previewCarIndex = 6; // Current carousel slot (fallback roster default: SKYLINE).
     std::string m_previewCarName = "SKYLINE";

@@ -201,6 +201,10 @@ bool FENativeInterface::LoadCarPreview(const char *model)
         m_carPreviewRoofs = assembled.TriangleRoofScoops();
         m_carPreviewEngines = assembled.TriangleEngines();
         m_carPreviewExhausts = assembled.TriangleExhausts();
+        m_carPreviewParts = assembled.TrianglePart();
+        for (int pi = 0; pi < 5; ++pi)
+            for (int k = 0; k < 3; ++k)
+                m_carPreviewHinge[pi][k] = assembled.PartHinge(pi)[k];
         m_carPreviewWheels = assembled.WheelTrianglesStart();
     }
     m_carPreviewTris.clear();
@@ -269,6 +273,8 @@ bool FENativeInterface::PreviewStageCar(StageCar &out)
     out.roof = ColorForPaint(m_previewRoofSet, m_previewRoof, body);
     out.engine = ColorForPaint(m_previewEngineSet, m_previewEngine, SDL_Color{128, 64, 48, 255});
     out.exhaust = ColorForPaint(m_previewExhaustSet, m_previewExhaust, SDL_Color{150, 150, 150, 255});
+    out.parts = &m_carPreviewParts;
+    memcpy(out.hinge, m_carPreviewHinge, sizeof(out.hinge));
     out.name = m_previewCarName;
     return true;
 }
@@ -1539,6 +1545,14 @@ u32 FENativeInterface::GetJoyPadMask(u8 padIndex)
             mask |= kPadButton0;
         if (SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_Y))
             mask |= kPadButton1;
+    }
+    if (m_verticalNav) { // a vertical native list on a horizontal carousel: Up moves back, Down forward
+        const u32 vert = mask & (kPadUp | kPadDown);
+        mask &= ~(kPadUp | kPadDown);
+        if (vert & kPadUp)
+            mask |= kPadLeft;
+        if (vert & kPadDown)
+            mask |= kPadRight;
     }
     return mask;
 }

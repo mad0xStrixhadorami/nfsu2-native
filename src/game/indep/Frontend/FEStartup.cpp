@@ -156,8 +156,50 @@ FEStartupSequence::FEStartupSequence(FEngine *engine, FENativeInterface *fe, boo
         if (table[i][0] != '\0')
             m_screens.emplace_back(table[i]);
     }
+    if (getenv("NFSU2_SKIP_INTRO")) { // dev aid: straight to the main menu (the movies and the splash are skipped)
+        m_screens.clear();
+        m_screens.emplace_back("UI_Main.fng");
+    }
     if (m_fe)
         m_fe->SetStartupSequence(this);
+}
+
+bool FEStartupSequence::CribMenuState(size_t &selected, std::vector<std::string> &labels, std::vector<char> &disabled) const
+{
+    if (m_scroller.Empty() || m_cribLabels.empty() || m_cribLabels.size() != m_cribActions.size())
+        return false;
+    selected = m_scroller.Selected();
+    labels = m_cribLabels;
+    disabled = m_cribDisabled;
+    return true;
+}
+
+bool FEStartupSequence::ScrollerMenuState(std::string &package, std::vector<std::string> &labels, std::vector<char> &disabled, size_t &selected) const
+{
+    if (m_scroller.Empty() || !m_engine)
+        return false;
+    FEPackage *pkg = m_scroller.Package();
+    bool onScreen = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        onScreen = onScreen || p == pkg;
+    if (!onScreen || !pkg->GetName())
+        return false;
+    static const char *const kScreens[] = {"UI_StartCareer.fng", "UI_QRModeSelect.fng", "UI_OptionsMain.fng", "UI_ChooseCustomizeCategory.fng",
+                                           "UI_ChoosePerformanceCategory.fng", "UI_ProfileManager.fng"};
+    bool ok = false;
+    for (const char *k : kScreens)
+        ok = ok || strcasecmp(pkg->GetName(), k) == 0;
+    if (!ok)
+        return false;
+    package = pkg->GetName();
+    labels.clear();
+    disabled.clear();
+    for (size_t i = 0; i < m_scroller.Count(); ++i) {
+        labels.push_back(m_scroller.Label(i, [this](uint32_t h) { return m_fe->LanguageText(h); }));
+        disabled.push_back(m_scroller.Disabled(i) ? 1 : 0);
+    }
+    selected = m_scroller.Selected();
+    return !labels.empty();
 }
 
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
@@ -4959,7 +5001,16 @@ void FEStartupSequence::HandleCareerCribLoaded(FEPackage *pkg)
     };
     std::vector<FEIconScroller::Def> defs;
     m_cribActions.clear();
+    m_cribLabels.clear();
+    m_cribDisabled.clear();
     for (const auto &o : kOptions) {
+        std::string lab = m_fe->LanguageText(o.label);
+        if (lab.empty() && o.action == 9)
+            lab = "Car Lot"; // the stand-in row (#250) has no language label
+        if (lab.empty() && o.action == 8)
+            lab = "Inbox";
+        m_cribLabels.push_back(lab);
+        m_cribDisabled.push_back(o.action == 5 && m_profile.SignedSponsorCount() == 0);
         // View Signed Sponsors is greyed while 0x00267920(0x4e8710) == 0 (no sponsor signed).
         defs.push_back({o.tex, o.label, o.action == 5 && m_profile.SignedSponsorCount() == 0});
         m_cribActions.push_back(o.action);

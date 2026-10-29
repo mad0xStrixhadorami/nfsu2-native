@@ -117,6 +117,9 @@ public:
     // Cars drawn with the world: car-space triangles (kept by pointer, must outlive the world's
     // use), body colour, and the row-major 3x4 car-to-world transform from PlayerCar::Transform.
     void ClearCars();
+    // Hinged panels of a car (ISSUES #358): the per-triangle part tags and hinge points, then the opening angle of each panel.
+    void SetCarParts(size_t index, const std::vector<uint8_t> *tags, const float hinge[5][3]);
+    void SetCarPartAngles(size_t index, const float angles[5]);
     size_t AddCar(const std::vector<SolidMesh::Triangle> *model, const std::vector<uint32_t> *textures,
                   SDL_Color paint, const std::vector<uint8_t> *rims = nullptr,
                   SDL_Color rimPaint = {38, 38, 38, 255},
@@ -437,6 +440,9 @@ private:
         // the smoothed burn 0..1, the ignition burst and the car's velocity from frame to frame.
         float exhPos[2][3] = {}, nos = 0, burst = 0, prevPos[3] = {}, vel[3] = {}, emitAcc[2] = {};
         bool haveExh[2] = {}, nosOn = false, havePrev = false;
+        const std::vector<uint8_t> *partTags = nullptr; // hinged panels (#358): 1 hood, 2 boot, 3 / 4 doors
+        float partHinge[5][3] = {};                     // model-space hinge points
+        float partAngle[5] = {};                        // current opening angles (radians; 0 = closed)
     };
     // Car material slot -> texture (0 = untextured) and base colour.
     uint32_t CarMaterial(uint32_t hash, SDL_Color paint, float rgb[3]) const;

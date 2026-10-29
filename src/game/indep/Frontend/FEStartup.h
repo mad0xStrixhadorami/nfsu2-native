@@ -193,6 +193,11 @@ public:
     bool IsFinished() const { return m_finished; }
     const char *CurrentPackage() const;
     // The main menu's state for the native menu (ISSUES #357): the highlighted icon and the saved player's standing.
+    // The career crib's list for the native garage menu (ISSUES #361): the highlighted row, the labels and which rows are greyed.
+    bool CribMenuState(size_t &selected, std::vector<std::string> &labels, std::vector<char> &disabled) const;
+    // Any whitelisted icon-carousel screen as a native list (ISSUES #361): its package name, the labels, the greyed rows and the selection;
+    // false when the scroller's package is not on screen.
+    bool ScrollerMenuState(std::string &package, std::vector<std::string> &labels, std::vector<char> &disabled, size_t &selected) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
@@ -233,6 +238,7 @@ public:
         std::string player;
     };
     RaceReward TakeRaceReward() { RaceReward r = m_lastReward; m_lastReward = RaceReward(); return r; }
+    const std::string &PlayerName() const { return m_profile.name; }
     bool HasRaceReward() const { return m_lastReward.valid; }
     RaceReward m_lastReward;
     void MaybeSignSponsor(const Career::Event &ev); // ISSUES #165
@@ -641,6 +647,8 @@ private:
     void StartSeriesRace();
     std::vector<bool> m_trackLocked; // per m_tracks entry: Quick Race lock (0x001facc0 item +8, #157)
     std::vector<int> m_cribActions;
+    std::vector<std::string> m_cribLabels;
+    std::vector<char> m_cribDisabled;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode
     // 0x21961) and Career Garage (0x002592c0, mode 0xc11) through it; the port performs the card
     // operation natively and continues to the screen the option asked for.

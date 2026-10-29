@@ -6,7 +6,7 @@ set -e
 out=$1; delay=$2; dur=$3; width=${4:-512}; fps=${5:-12}
 export DISPLAY=${DISPLAY:-:0.0} SDL_AUDIODRIVER=dummy NFSU2_DATA=${NFSU2_DATA:-$HOME/re/nfsu2_game}
 tmp=$(mktemp -d)
-"$(dirname "$0")/../build/nfsu2" >"$tmp/game.log" 2>&1 &
+"${NFSU2_BIN:-$(dirname "$0")/../build/nfsu2}" >"$tmp/game.log" 2>&1 &
 game=$!
 for _ in $(seq 1 80); do xwininfo -name "Need for Speed Underground 2 (native)" >/dev/null 2>&1 && break; sleep 0.25; done # wait for the window
 sleep "$delay"
