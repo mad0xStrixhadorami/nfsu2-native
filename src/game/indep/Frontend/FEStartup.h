@@ -257,6 +257,16 @@ public:
     };
     bool StatusState(StatusInfo &out) const;
     bool StatusOpen() const; // UI_Status_Master.fng is on screen
+    bool OfferScreenOpen() const; // the sponsor offer or viewer is on screen
+    // The sponsor offer / signed-sponsor viewer for the native screen (ISSUES #378).
+    struct SponsorInfo {
+        bool offer = true;
+        std::string name, info;
+        int bonus = 0, purse = 0, url = 0, index = 0, count = 0;
+        std::vector<std::string> terms; // the visible slice
+        size_t scroll = 0, totalLines = 0;
+    };
+    bool SponsorState(SponsorInfo &out) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
@@ -306,6 +316,7 @@ public:
     std::vector<uint32_t> m_offerHashes;
     int m_offerArea = -1;
     size_t m_offerSel = 0;
+    struct SponsorView { std::string name, info; int bonus = 0, purse = 0, url = 0; } m_svView; // the page last filled (ISSUES #378)
 
     // Quick Race / non-career best lap for the shared 0x4fb4ac table (0x00272e18). The track select
     // always reads the forward key (item +0x10 is 0), but reverse QR runs are stored under direction

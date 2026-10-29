@@ -317,6 +317,29 @@ bool FEStartupSequence::GarageCarSelectState(int &slot, int &count) const
     return count > 0;
 }
 
+bool FEStartupSequence::SponsorState(SponsorInfo &out) const
+{
+    if (!m_engine)
+        return false;
+    bool offer = false, viewer = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext()) {
+        offer = offer || (p->GetName() && strcasecmp(p->GetName(), "UI_Sponsorship_new.fng") == 0);
+        viewer = viewer || (p->GetName() && strcasecmp(p->GetName(), "UI_RewardsSponsor.fng") == 0);
+    }
+    if (!offer && !viewer)
+        return false;
+    out = SponsorInfo();
+    out.offer = offer;
+    out.name = m_svView.name, out.info = m_svView.info;
+    out.bonus = m_svView.bonus, out.purse = m_svView.purse, out.url = m_svView.url;
+    out.index = offer ? int(m_offerSel) : 0, out.count = offer ? int(m_offerHashes.size()) : 0;
+    for (size_t i = 0; i < 9; ++i)
+        if (m_svScroll + i < m_svLines.size())
+            out.terms.push_back(m_svLines[m_svScroll + i]);
+    out.scroll = m_svScroll, out.totalLines = m_svLines.size();
+    return !out.name.empty();
+}
+
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
 {
     if (m_scroller.Empty())
@@ -3791,6 +3814,16 @@ void FEStartupSequence::BuildStatusRows()
     }
 }
 
+bool FEStartupSequence::OfferScreenOpen() const
+{
+    if (!m_engine)
+        return false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        if (p->GetName() && (strcasecmp(p->GetName(), "UI_Sponsorship_new.fng") == 0 || strcasecmp(p->GetName(), "UI_RewardsSponsor.fng") == 0))
+            return true;
+    return false;
+}
+
 bool FEStartupSequence::StatusOpen() const
 {
     if (!m_engine)
@@ -6245,6 +6278,13 @@ void FEStartupSequence::FillSponsorPage(FEPackage *pkg, const Career::Sponsor *s
         printf("[Sponsors] DETAILS: %s\n", details.c_str());
         printf("[Sponsors] INFO: %s\n", m_fe->LanguageText(CarMaterial::NameHash(("SPONSOR_INFO_" + sp->name).c_str())).c_str());
     }
+    m_svView.name = m_fe->LanguageText(CarMaterial::NameHash(("SPONSOR_" + sp->name).c_str()));
+    if (m_svView.name.empty())
+        m_svView.name = sp->name;
+    m_svView.info = m_fe->LanguageText(CarMaterial::NameHash(("SPONSOR_INFO_" + sp->name).c_str()));
+    for (size_t at; (at = m_svView.info.find('^')) != std::string::npos;) // EA's line break marker -> a bullet
+        m_svView.info.replace(at, 1, "  /  ");
+    m_svView.bonus = sp->signingBonus, m_svView.purse = sp->racePurse, m_svView.url = urlPurse;
     ShowSponsorTerms(pkg);
     printf("[Career] sponsors: %s (area %d) bonus %d purse %d url %d\n", sp->name.c_str(), area,
            sp->signingBonus, sp->racePurse, urlPurse);

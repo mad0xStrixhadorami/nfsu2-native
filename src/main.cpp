@@ -960,6 +960,21 @@ int main(int argc, char **argv)
             }
         }
         {
+            FEStartupSequence::SponsorInfo sn;
+            if (startup.SponsorState(sn)) { // the sponsor offer / viewer (ISSUES #378)
+                ModernUI::Sponsor sp;
+                sp.offer = sn.offer, sp.name = sn.name, sp.info = sn.info, sp.bonus = sn.bonus, sp.purse = sn.purse, sp.url = sn.url;
+                sp.index = sn.index, sp.count = sn.count, sp.terms = sn.terms, sp.scroll = int(sn.scroll), sp.totalLines = int(sn.totalLines);
+                for (char &ch : sp.name)
+                    ch = char(toupper(static_cast<unsigned char>(ch)));
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawSponsor(lw, lh, sp, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = false;
+                return true;
+            }
+        }
+        {
             FEStartupSequence::StatusInfo si;
             if (startup.StatusState(si)) { // the career status pages (ISSUES #377)
                 ModernUI::Status st;
@@ -3763,7 +3778,7 @@ int main(int argc, char **argv)
                 }
             }
             bool nativeGarageList = false;
-            if (!nativeGarage && !nativeWorldMap && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause) || startup.StatusOpen())) {
+            if (!nativeGarage && !nativeWorldMap && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause) || startup.StatusOpen() || startup.OfferScreenOpen())) {
                 int glw, glh;
                 SDL_GetRendererOutputSize(ren, &glw, &glh);
                 if (pausePkg) { // the road behind a pause screen is dimmed so the list reads (ISSUES #370)

@@ -1320,6 +1320,75 @@ void ModernUI::DrawStatus(int w, int h, const Status &st, float tm)
     key("LEFT / RIGHT", "PAGE");
 }
 
+void ModernUI::DrawSponsor(int w, int h, const Sponsor &sp, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, A(ink, 190), A(ink, 215));
+    const float cut = W * 0.58f, sl = H * 0.1f;
+    Quad({0, 0}, {cut + sl, 0}, {cut, H}, {0, H}, A(ink, 240), A(ink, 240), A(ink, 240), A(ink, 240));
+    Quad({cut + sl, 0}, {cut + sl + 6 * s, 0}, {cut + 6 * s, H}, {cut, H}, signal, signal, signal, signal);
+    const float lx = 72 * s, k = std::min(1.0f, tm * 3.0f);
+    Text(lx, 44 * s, 15 * s, sp.offer ? "NEW OFFER" : "SIGNED SPONSOR", A(signal, 255), 0);
+    float nsz = 84 * s;
+    const float nw = TextWidth(sp.name, nsz);
+    if (nw > cut - lx - 60 * s)
+        nsz *= (cut - lx - 60 * s) / nw;
+    Text(lx + (1.0f - k) * -50 * s, 66 * s, nsz, sp.name, paper, 0);
+    Quad({lx, 66 * s + nsz + 10 * s}, {lx + 46 * s, 66 * s + nsz + 10 * s}, {lx + 46 * s, 66 * s + nsz + 14 * s}, {lx, 66 * s + nsz + 14 * s}, signal, signal, signal, signal);
+    // the three figures
+    const float fy = 200 * s;
+    auto fig = [&](float x, const char *label, int v, SDL_Color c) {
+        Text(x, fy, 14 * s, label, A(paper, 140), 0);
+        char b[24];
+        snprintf(b, sizeof(b), "$%d", v);
+        Text(x, fy + 18 * s, 44 * s, b, c, 0);
+    };
+    if (sp.offer)
+        fig(lx, "SIGNING BONUS", sp.bonus, signal);
+    fig(lx + 230 * s, "EACH RACE WIN", sp.purse, paper);
+    fig(lx + 460 * s > cut - 150 * s ? lx + 230 * s : lx + 460 * s, "EACH URL VICTORY", sp.url, paper);
+    if (!sp.info.empty())
+        Text(lx, fy + 80 * s, 18 * s, sp.info, A(signal, 255), 0);
+    // the terms
+    const float ty = 350 * s;
+    Text(lx, ty - 28 * s, 14 * s, "TERMS", A(paper, 140), 0);
+    for (size_t i = 0; i < sp.terms.size(); ++i)
+        Text(lx, ty + 26 * s * float(i), 19 * s, sp.terms[i], A(paper, 215), 0);
+    if (sp.totalLines > int(sp.terms.size()) + sp.scroll || sp.scroll > 0)
+        Text(cut - 40 * s, ty - 28 * s, 14 * s, "UP / DOWN TO SCROLL", A(paper, 110), 2);
+    // the offer pips and keys
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {cut - 10 * s, by - 10 * s}, {cut - 10 * s, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    if (sp.offer && sp.count > 0) {
+        char pg[24];
+        snprintf(pg, sizeof(pg), "OFFER %d / %d", sp.index + 1, sp.count);
+        Text(lx, by + 2 * s, 22 * s, pg, paper, 0);
+    }
+    float kx = cut - 20 * s;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 22 * s;
+    };
+    if (sp.offer) {
+        key("ESC", "DECLINE");
+        key("ENTER", "SIGN");
+        key("LEFT / RIGHT", "BROWSE");
+    } else {
+        key("ESC", "BACK");
+        key("LEFT / RIGHT", "SPONSOR");
+    }
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

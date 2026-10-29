@@ -124,6 +124,15 @@ public:
         float rating = -1.0f;
     };
     void DrawStatus(int w, int h, const Status &st, float seconds);
+    // The sponsor offer and the signed-sponsor viewer (ISSUES #378).
+    struct Sponsor {
+        bool offer = true;
+        std::string name, info;
+        int bonus = 0, purse = 0, url = 0, index = 0, count = 0;
+        std::vector<std::string> terms;
+        int scroll = 0, totalLines = 0;
+    };
+    void DrawSponsor(int w, int h, const Sponsor &sp, float seconds);
     // The paint shop (ISSUES #372): the part list on the left, the colour grid along the bottom with the selected swatch ringed.
     struct PaintShop {
         std::vector<std::string> parts;
