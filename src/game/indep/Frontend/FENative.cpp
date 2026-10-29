@@ -1749,9 +1749,11 @@ void ThemeText(int &r, int &g, int &b)
     if (s < 0.35f)
         return;
     if (h >= 62.0f && h <= 170.0f)
-        Scaled(r, g, b, 150, 218, 255, std::min(1.0f, v * 1.1f));
+        Scaled(r, g, b, 255, 214, 10, std::min(1.0f, v * 1.1f)); // lime titles / selection -> signal yellow (ISSUES #373)
     else if (h >= 36.0f && h < 62.0f)
-        Scaled(r, g, b, 226, 236, 250, std::min(1.0f, v * 1.15f));
+        Scaled(r, g, b, 244, 244, 240, std::min(1.0f, v * 1.15f)); // yellow list text -> paper white
+    else if ((h <= 14.0f || h >= 346.0f) && s >= 0.6f && v > 0.5f)
+        Scaled(r, g, b, 255, 214, 10, std::min(1.0f, v * 1.1f)); // the red 'selected row' text of the shop screens
 }
 // Images: greens (stat bars, highlight frames) -> accent blue, yellow selection bars -> deep blue, translucent grey / white
 // panel pieces -> dark blue glass. texW/texH = the texture's size (panels are made of small nine-slice pieces).
@@ -1763,9 +1765,11 @@ void ThemeImage(int &r, int &g, int &b, int &a, int texW, int texH, uint32_t has
     ToHsv(r, g, b, h, s, v);
     if (s >= 0.35f) {
         if (h >= 62.0f && h <= 170.0f)
-            Scaled(r, g, b, 70, 190, 255, std::min(1.0f, v * 1.1f));
+            Scaled(r, g, b, 255, 214, 10, std::min(1.0f, v * 1.1f)); // greens (stat bars, highlight frames) -> signal yellow
         else if (h >= 36.0f && h < 62.0f)
-            Scaled(r, g, b, 40, 120, 225, std::min(1.0f, v * 1.15f));
+            Scaled(r, g, b, 255, 214, 10, std::min(1.0f, v * 1.15f)); // yellow selection bars
+        else if ((h <= 14.0f || h >= 346.0f) && s >= 0.5f)
+            Scaled(r, g, b, 255, 214, 10, std::min(1.0f, v * 1.2f)); // the red "selected" bands of the shop screens
         return;
     }
     // low saturation: a translucent panel fill (not an icon: those are drawn at near-full alpha)
@@ -1774,8 +1778,8 @@ void ThemeImage(int &r, int &g, int &b, int &a, int texW, int texH, uint32_t has
     const bool piece = (texW <= 32 && texH <= 32) || frame;
     if (piece && a >= 90 && a <= 232 && v > 0.3f) {
         const float k = 0.55f + 0.45f * v; // lighter grey fills stay a little lighter
-        Scaled(r, g, b, 16, 30, 58, k);
-        a = std::clamp(int(a * 0.92f) + 8, 0, 255);
+        Scaled(r, g, b, 12, 12, 13, k * 0.6f + 0.4f); // panels: flat ink instead of the dark blue glass
+        a = std::clamp(int(a * 0.95f) + 18, 0, 255);
     }
 }
 } // namespace
