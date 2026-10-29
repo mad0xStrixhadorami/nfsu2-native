@@ -192,21 +192,21 @@ void ModernUI::Rect(float x, float y, float w, float h, SDL_Color top, SDL_Color
 
 // A panel whose top-right and bottom-left corners are cut at 45 degrees (the "sport" silhouette), a vertical tint gradient
 // and a bright 2 px rim on the cut edges.
+// The one panel shape of the HUD, toasts and dialogs (ISSUES #365): flat ink with a hard yellow tick on the left edge and one
+// clipped corner; no gradient, no blue glass.  `tint` keeps its alpha (the callers fade panels) but loses its colour; `edge` only chooses
+// between the yellow tick (any) and a quiet one (an almost transparent edge colour), so warm / cool edges no longer tint panels.
 void ModernUI::Glass(float x, float y, float w, float h, float cut, SDL_Color tint, SDL_Color edge)
 {
-    const SDL_Color top = tint, bot = Mix(tint, {0, 0, 0, tint.a}, 0.5f);
-    const SDL_Vertex v[6] = {{{x, y}, top, {0, 0}},          {{x + w - cut, y}, top, {0, 0}}, {{x + w, y + cut}, Mix(top, bot, cut / h), {0, 0}},
-                             {{x + w, y + h}, bot, {0, 0}},  {{x + cut, y + h}, bot, {0, 0}}, {{x, y + h - cut}, Mix(top, bot, 1 - cut / h), {0, 0}}};
-    const int idx[12] = {0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5};
+    const Uint8 a = Uint8(std::min(250, int(tint.a) + 40));
+    const SDL_Color ink{12, 12, 13, a};
+    cut = std::min(cut * 0.7f, h * 0.35f);
+    const SDL_Vertex v[5] = {{{x, y}, ink, {0, 0}}, {{x + w - cut, y}, ink, {0, 0}}, {{x + w, y + cut}, ink, {0, 0}}, {{x + w, y + h}, ink, {0, 0}}, {{x, y + h}, ink, {0, 0}}};
+    const int idx[9] = {0, 1, 2, 0, 2, 3, 0, 3, 4};
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
-    SDL_RenderGeometry(m_r, nullptr, v, 6, idx, 12);
-    SDL_SetRenderDrawColor(m_r, edge.r, edge.g, edge.b, edge.a);
-    SDL_RenderDrawLineF(m_r, x, y, x + w - cut, y);
-    SDL_RenderDrawLineF(m_r, x + w - cut, y, x + w, y + cut);
-    SDL_RenderDrawLineF(m_r, x + w, y + cut, x + w, y + h);
-    SDL_RenderDrawLineF(m_r, x + w, y + h, x + cut, y + h);
-    SDL_RenderDrawLineF(m_r, x + cut, y + h, x, y + h - cut);
-    SDL_RenderDrawLineF(m_r, x, y + h - cut, x, y);
+    SDL_RenderGeometry(m_r, nullptr, v, 5, idx, 9);
+    const float tick = std::max(3.0f, h * 0.06f);
+    const SDL_Color y1{255, 214, 10, Uint8(std::min<int>(255, edge.a + 60))};
+    Quad({x, y}, {x + tick, y}, {x + tick, y + h}, {x, y + h}, y1, y1, y1, y1);
 }
 
 void ModernUI::ArcSegment(float cx, float cy, float r0, float r1, float a0, float a1, SDL_Color c)
@@ -384,17 +384,17 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     char buf[64];
     // while the nitrous burns the dial turns lime, as in NFS Unbound's boost
     const bool boost = hud.nitrousActive;
-    const SDL_Color ink = boost ? SDL_Color{196, 255, 72, 255} : SDL_Color{250, 252, 255, 255};
-    Glow(cx, cy, Rout * 1.7f, boost ? SDL_Color{110, 190, 30, 70} : SDL_Color{30, 50, 90, 46});
+    const SDL_Color ink = boost ? SDL_Color{196, 255, 72, 255} : SDL_Color{244, 244, 240, 255};
+    const SDL_Color signal{255, 214, 10, 255};
+    if (boost)
+        Glow(cx, cy, Rout * 1.7f, SDL_Color{110, 190, 30, 70}); // only the nitrous lights the dial (the rest is flat)
     // the disc and the scale band (a darker red band at the end)
-    Arc(cx, cy, 0.0f, Rdisc, 0.0f, 6.2831853f, {14, 16, 22, 222}, {14, 16, 22, 222});
-    Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * redStart, {44, 60, 88, 150}, {44, 60, 88, 150});
-    Arc(cx, cy, Rdisc, Rout, a0 + sweep * redStart, a0 + sweep, {150, 26, 32, 215}, {150, 26, 32, 215});
+    Arc(cx, cy, 0.0f, Rdisc, 0.0f, 6.2831853f, {10, 10, 11, 238}, {10, 10, 11, 238});
+    Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * redStart, {40, 40, 42, 200}, {40, 40, 42, 200});
+    Arc(cx, cy, Rdisc, Rout, a0 + sweep * redStart, a0 + sweep, {190, 32, 36, 230}, {190, 32, 36, 230});
     if (frac > 0.0f) // the part of the band the revs have reached is a little brighter
-        Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * std::min(frac, redStart), {70, 96, 138, 120}, {88, 118, 170, 150});
+        Arc(cx, cy, Rdisc, Rout, a0, a0 + sweep * std::min(frac, redStart), {255, 214, 10, 90}, {255, 214, 10, 150});
     // rings with the colour fringe of the original's glass
-    Ring(cx + 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {255, 70, 90, 55});
-    Ring(cx - 1.2f * s, cy, Rout - 0.6f * s, Rout + 0.8f * s, {70, 220, 255, 55});
     Ring(cx, cy, Rout - 0.8f * s, Rout + 1.0f * s, {ink.r, ink.g, ink.b, 225});
     Ring(cx, cy, Rdisc - 0.8f * s, Rdisc + 0.8f * s, {ink.r, ink.g, ink.b, 210});
     // the rpm numerals (thousands)
@@ -409,7 +409,7 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     }
     // the bright white rev arc outside the scale, growing with the revs
     if (frac > 0.003f)
-        Arc(cx, cy, Rout + 3.5f * s, Rout + 9.5f * s, a0, a0 + sweep * frac, {ink.r, ink.g, ink.b, 110}, ink);
+        Arc(cx, cy, Rout + 3.5f * s, Rout + 9.5f * s, a0, a0 + sweep * frac, {signal.r, signal.g, signal.b, 140}, boost ? ink : signal);
     // the two small indicator rings under the digits: nitrous burst (cyan) and a drift in progress (amber)
     const bool nos = hud.nitrousActive, drift = hud.drifting;
     Ring(cx - 20.0f * s, cy - 47.0f * s, 9.6f * s, 11.2f * s, {235, 240, 250, 95});
@@ -417,7 +417,7 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     if (nos)
         Arc(cx - 20.0f * s, cy - 47.0f * s, 0.0f, 9.0f * s, 0.0f, 6.2831853f, {110, 235, 255, 150}, {110, 235, 255, 150});
     if (drift)
-        Arc(cx + 15.0f * s, cy - 54.0f * s, 0.0f, 10.0f * s, 0.0f, 6.2831853f, {255, 180, 60, 150}, {255, 180, 60, 150});
+        Arc(cx + 15.0f * s, cy - 54.0f * s, 0.0f, 10.0f * s, 0.0f, 6.2831853f, {255, 214, 10, 170}, {255, 214, 10, 170});
     // speed: three padded digits in a heavy face (the same text drawn twice, a hair apart, for weight), the unit and the gear tile
     const float spd = hud.mph ? hud.speedKmh * 0.621371f : hud.speedKmh;
     snprintf(buf, sizeof buf, "%03d", std::min(999, int(std::fabs(spd) + 0.5f)));
@@ -430,14 +430,15 @@ void ModernUI::DrawSpeedo(int w, int h, const Hud &hud, float t)
     else
         snprintf(buf, sizeof buf, "%d", hud.gear);
     const float tile = 31.0f * s;
-    Glass(cx - tile * 0.5f, cy + 31.0f * s, tile, tile, 8.0f * s, {205, 208, 214, 235}, {240, 243, 248, 235});
-    Text(cx, cy + 31.0f * s + 1.0f * s, 27.0f * s, buf, frac > 0.92f ? SDL_Color{190, 40, 40, 255} : SDL_Color{34, 38, 48, 255}, 1);
+    Quad({cx - tile * 0.5f + 5.0f * s, cy + 31.0f * s}, {cx + tile * 0.5f + 5.0f * s, cy + 31.0f * s}, {cx + tile * 0.5f, cy + 31.0f * s + tile}, {cx - tile * 0.5f, cy + 31.0f * s + tile},
+         frac > 0.92f ? SDL_Color{220, 40, 40, 255} : signal, frac > 0.92f ? SDL_Color{220, 40, 40, 255} : signal, frac > 0.92f ? SDL_Color{220, 40, 40, 255} : signal, frac > 0.92f ? SDL_Color{220, 40, 40, 255} : signal);
+    Text(cx + 2.5f * s, cy + 31.0f * s + 1.0f * s, 27.0f * s, buf, frac > 0.92f ? SDL_Color{255, 255, 255, 255} : SDL_Color{10, 10, 11, 255}, 1);
 
     // ---- the nitrous gauge: a quarter circle left of the dial, a needle on its pivot ----
     const float px = cx - 113.0f * s, py = cy + 66.0f * s, ro = 90.0f * s, ri = 70.0f * s;
     const float na0 = kPi, naSweep = 0.5f * kPi; // from the left, clockwise to straight up
     const float fill = hud.hasNitrous ? std::clamp(hud.nitrous, 0.0f, 1.0f) : 0.0f;
-    const SDL_Color blue = hud.nitrousActive ? SDL_Color{130, 255, 255, 255} : SDL_Color{58, 150, 255, 245};
+    const SDL_Color blue = hud.nitrousActive ? SDL_Color{196, 255, 72, 255} : SDL_Color{244, 244, 240, 245}; // lime while it burns, else paper
     Arc(px, py, ro, ro + 2.4f * s, na0, na0 + naSweep, blue, blue);
     const float gap = 0.05f, seg = (naSweep - 2 * gap) / 3.0f;
     for (int i = 0; i < 3; ++i) {
