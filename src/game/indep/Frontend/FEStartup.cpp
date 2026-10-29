@@ -2764,6 +2764,7 @@ void FEStartupSequence::RefreshRimInfo(FEPackage *pkg)
     FENativeInterface::SetString(pkg, 0xd28b9316, name);
     FENativeInterface::SetString(pkg, 0x380b632, price);
     FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    m_shopName = name, m_shopPrice = price, m_shopTotal = std::to_string(cost);
     m_fe->SetPreviewRim(item.second ? brand.key : "", item.second);
 }
 
@@ -2804,6 +2805,7 @@ void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
         FENativeInterface::SetString(pkg, 0xd28b9316, "-");
         FENativeInterface::SetString(pkg, 0x380b632, "$0");
         FENativeInterface::SetString(pkg, 0x2f5e7da3, "00000");
+        m_shopName = "NONE AVAILABLE", m_shopPrice = "$0", m_shopTotal = "0";
         return;
     }
     // 0x002a7638 builds the label from the record name and its level ("JORGEN L1"); see the
@@ -2820,7 +2822,32 @@ void FEStartupSequence::RefreshPartsBrowserInfo(FEPackage *pkg)
     char total[16];
     snprintf(total, sizeof total, "%05u", unsigned(price));
     FENativeInterface::SetString(pkg, 0x2f5e7da3, total);
+    m_shopName = name, m_shopPrice = priceText, m_shopTotal = std::to_string(price);
     PreviewPartsBrowserPart(*part);
+}
+
+bool FEStartupSequence::PartsShopState(PartsShopInfo &out) const
+{
+    if (m_vinylBrowser || !m_engine || strcasecmp(m_lastMenu.c_str(), "UI_GenericParts_Browser.fng") != 0)
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_GenericParts_Browser.fng") == 0);
+    if (!on || m_shopName.empty())
+        return false;
+    out = PartsShopInfo();
+    for (size_t i = 0; i < kPartsCardCount; ++i)
+        out.categories.push_back(m_fe->LanguageText(kPartsCards[i].label));
+    out.category = std::min(m_partsCategorySel, kPartsCardCount - 1);
+    out.index = m_partsSel;
+    out.count = out.category == kPartsRimsCard ? m_rimItems.size() : m_partsShopItems.size();
+    out.title = "BODY SHOP";
+    out.name = m_shopName, out.price = m_shopPrice, out.total = m_shopTotal;
+    out.money = m_profile.valid ? m_profile.money : 0;
+    if (out.category != kPartsRimsCard && out.index < m_partsShopItems.size())
+        if (const Career::OwnedCar *car = const_cast<FEStartupSequence *>(this)->ShopCar())
+            out.fitted = OwnedCarHasPart(*car, m_fe->Parts().Parts(m_partsShopItems[out.index].type)[m_partsShopItems[out.index].index]);
+    return true;
 }
 
 Career::OwnedCar *FEStartupSequence::ShopCar()

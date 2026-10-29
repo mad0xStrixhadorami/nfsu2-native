@@ -986,6 +986,79 @@ void ModernUI::DrawCarSelect(int w, int h, const CarSelect &c, float tm)
     key("LEFT / RIGHT", "CAR");
 }
 
+void ModernUI::DrawShop(int w, int h, const Shop &sh, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.30f, 0}, {W * 0.30f - H * 0.08f, H}, {0, H}, A(ink, 225), A(ink, 0), A(ink, 0), A(ink, 225));
+    Rect(0, H - 200 * s, W, 200 * s, A(ink, 0), A(ink, 225));
+    Rect(0, 0, W, 80 * s, A(ink, 130), A(ink, 0));
+    const float lx = 56 * s;
+    Text(lx, 38 * s, 15 * s, sh.kicker, A(paper, 170), 0);
+    Text(lx, 54 * s, 30 * s, sh.title, paper, 0);
+    Quad({lx, 94 * s}, {lx + 46 * s, 94 * s}, {lx + 46 * s, 98 * s}, {lx, 98 * s}, signal, signal, signal, signal);
+    // the categories, compact; the highlighted one on the blade
+    const int n = int(sh.categories.size());
+    const float top = 124 * s, pitch = std::min(40 * s, (H - 330 * s - top) / std::max(1, n));
+    static float hy = -1.0f, last = -1.0f;
+    const float target = top + pitch * float(sh.category);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float bw = 300 * s, sl = 12 * s;
+    Quad({lx - 18 * s + sl, hy}, {lx - 18 * s + bw + sl, hy}, {lx - 18 * s + bw, hy + pitch * 0.9f}, {lx - 18 * s, hy + pitch * 0.9f}, signal, signal, signal, signal);
+    for (int i = 0; i < n; ++i) {
+        const bool on = i == sh.category;
+        std::string nm = sh.categories[size_t(i)];
+        nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
+        const float sz = std::min(24 * s, pitch * 0.62f);
+        Text(lx, top + pitch * float(i) + (pitch * 0.9f - sz) * 0.4f, sz, nm, on ? ink : A(paper, 205), 0);
+    }
+    // the bottom bar
+    const float by = H - 150 * s, mx = 72 * s;
+    float nsz = 54 * s;
+    const float nw = TextWidth(sh.name, nsz);
+    if (nw > W * 0.5f)
+        nsz *= W * 0.5f / nw;
+    Text(mx, by, nsz, sh.name, paper, 0);
+    if (sh.fitted)
+        Text(mx, by + nsz + 4 * s, 18 * s, "ON YOUR CAR", A(signal, 255), 0);
+    else if (sh.count > 0)
+        Text(mx, by + nsz + 4 * s, 18 * s, "NOT FITTED", A(paper, 140), 0);
+    Text(W * 0.62f, by + 4 * s, 15 * s, "PRICE", A(paper, 140), 0);
+    Text(W * 0.62f, by + 22 * s, 40 * s, sh.price, signal, 0);
+    Text(W * 0.78f, by + 4 * s, 15 * s, "TOTAL COST", A(paper, 140), 0);
+    Text(W * 0.78f, by + 22 * s, 40 * s, "$" + sh.total, paper, 0);
+    char cash[40];
+    snprintf(cash, sizeof(cash), "CASH  $%d", sh.money);
+    Text(W - 56 * s, by + 4 * s, 18 * s, cash, A(paper, 200), 2);
+    char pg[24];
+    snprintf(pg, sizeof(pg), "%d / %d", sh.count ? sh.index + 1 : 0, sh.count);
+    Text(W - 56 * s, by + 30 * s, 26 * s, pg, paper, 2);
+    const float ky = H - 52 * s;
+    Quad({mx, ky - 10 * s}, {W - mx, ky - 10 * s}, {W - mx, ky - 9 * s}, {mx, ky - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    float kx = W - mx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, ky + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, ky + 3 * s}, {kx, ky + 3 * s}, {kx, ky + 25 * s}, {kx - cw, ky + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, ky + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ESC", "BACK");
+    key("ENTER", "INSTALL");
+    key("UP / DOWN", "PART");
+    key("LEFT / RIGHT", "CATEGORY");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

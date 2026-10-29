@@ -945,6 +945,23 @@ int main(int argc, char **argv)
             }
         }
         {
+            FEStartupSequence::PartsShopInfo pi;
+            if (startup.PartsShopState(pi)) { // the Body Shop (ISSUES #371)
+                ModernUI::Shop sh;
+                sh.kicker = "GARAGE", sh.title = pi.title, sh.name = pi.name, sh.price = pi.price, sh.total = pi.total;
+                sh.categories = pi.categories, sh.category = int(pi.category), sh.index = int(pi.index), sh.count = int(pi.count), sh.money = pi.money;
+                sh.fitted = pi.fitted;
+                for (char &ch : sh.name)
+                    if (ch == '?')
+                        ch = ' ';
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawShop(lw, lh, sh, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = false;
+                return true;
+            }
+        }
+        {
             ModernUI::Settings st;
             size_t ssel = 0;
             if (startup.SettingsMenuState(st.kicker, st.title, st.labels, st.values, ssel)) { // Options / Quick Race options (ISSUES #368)

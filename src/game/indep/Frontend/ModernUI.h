@@ -93,6 +93,14 @@ public:
         bool customize = true; // show the Customize key
     };
     void DrawCarSelect(int w, int h, const CarSelect &c, float seconds);
+    // The parts shop (ISSUES #371): the category column on the left, a bottom bar with the highlighted part, its price, the total and the cash.
+    struct Shop {
+        std::string kicker, title, name, price, total;
+        std::vector<std::string> categories;
+        int category = 0, index = 0, count = 0, money = 0;
+        bool fitted = false;
+    };
+    void DrawShop(int w, int h, const Shop &sh, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);
