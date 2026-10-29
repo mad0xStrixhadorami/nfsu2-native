@@ -98,6 +98,20 @@ FENativeInterface::Affine FENativeInterface::Affine::operator*(const Affine &o) 
     return r;
 }
 
+bool FENativeInterface::RightStick(float &x, float &y) const
+{
+    x = y = 0.0f;
+    if (!m_controller || !SDL_GameControllerGetAttached(m_controller))
+        return false;
+    auto axis = [&](SDL_GameControllerAxis a) {
+        const float v = float(SDL_GameControllerGetAxis(m_controller, a)) / 32767.0f;
+        const float dz = 0.22f; // radial-free per-axis deadzone, rescaled so the edge of the dead area is 0
+        return std::fabs(v) < dz ? 0.0f : (v - (v > 0 ? dz : -dz)) / (1.0f - dz);
+    };
+    x = axis(SDL_CONTROLLER_AXIS_RIGHTX), y = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+    return true;
+}
+
 void FENativeInterface::Affine::Apply(float x, float y, float &ox, float &oy) const
 {
     ox = a * x + c * y + tx;

@@ -3403,10 +3403,18 @@ int main(int argc, char **argv)
                             sscanf(lookEnv, "%f,%f,%f", &yd, &pd, &zm);
                             lookYawT = yd * 0.0174532925f, lookPitchT = pd * 0.0174532925f, lookZoomT = zm;
                         }
-                        const bool allowLook = (lookHeld || lookEnv) && !sceneMode && !pausePkg && !cribPkg && !modernPause && !race.InIntro();
-                        if (allowLook != lookCaptured && !lookEnv) {
-                            SDL_SetRelativeMouseMode(allowLook ? SDL_TRUE : SDL_FALSE);
-                            lookCaptured = allowLook;
+                        float rsx = 0, rsy = 0; // the pad's right stick looks around too (rate control, like the mouse it recentres after a pause)
+                        const bool stickLook = fe.RightStick(rsx, rsy) && (std::fabs(rsx) > 0.0f || std::fabs(rsy) > 0.0f);
+                        if (stickLook) {
+                            const float sdt = dt > 0.0f ? std::min(dt, 0.05f) : 0.016f;
+                            lookYawT -= rsx * 2.8f * sdt;
+                            lookPitchT = std::clamp(lookPitchT + rsy * 1.6f * sdt, -0.10f, 1.40f);
+                            lookIdle = 0.0f;
+                        }
+                        const bool allowLook = (lookHeld || lookEnv || stickLook) && !sceneMode && !pausePkg && !cribPkg && !modernPause && !race.InIntro();
+                        if ((lookHeld && allowLook) != lookCaptured && !lookEnv) {
+                            SDL_SetRelativeMouseMode((lookHeld && allowLook) ? SDL_TRUE : SDL_FALSE);
+                            lookCaptured = lookHeld && allowLook;
                         }
                         const float ldt = dt > 0.0f ? std::min(dt, 0.05f) : 0.016f;
                         if (allowLook)

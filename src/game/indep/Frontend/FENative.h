@@ -43,6 +43,9 @@ class FEStartupSequence;
 // (which drive the console renderer). Draws FEng objects with SDL's geometry API.
 class FENativeInterface : public FEGameInterface {
 public:
+    // The pad's right stick (-1..1, deadzone applied; y positive = down); false when no pad is attached (free look, ISSUES #385).
+    bool RightStick(float &x, float &y) const;
+
     static constexpr int kScreenWidth = 640;  // FEng screen space (SCREEN_WIDTH in MW)
     static constexpr int kScreenHeight = 480;
 
