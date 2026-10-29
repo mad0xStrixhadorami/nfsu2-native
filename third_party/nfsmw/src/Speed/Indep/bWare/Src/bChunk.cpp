@@ -32,7 +32,8 @@ bChunkLoader *bChunkLoader::FindLoader(unsigned int id) {
 
 // STRIPPED
 unsigned int bChunkLoader::CallLoaders(bChunk *chunks, int sizeof_chunks, bool abort_on_error) {
-    for (bChunk *chunk = chunks; chunk != GetLastChunk(chunk, sizeof_chunks); chunk = chunks->GetNext()) {
+    bChunk *last_chunk = GetLastChunk(chunks, sizeof_chunks);
+    for (bChunk *chunk = chunks; chunk != last_chunk; chunk = chunk->GetNext()) {
         bChunkLoader *loader = FindLoader(chunk->GetID());
         if (loader != nullptr) {
             if (loader->GetLoaderFunction()(chunk)) {
@@ -47,8 +48,23 @@ unsigned int bChunkLoader::CallLoaders(bChunk *chunks, int sizeof_chunks, bool a
     return 0;
 }
 
-// STRIPPED
-unsigned int bChunkLoader::CallUnloaders(bChunk *chunks, int sizeof_chunks, bool abort_on_error) {}
+// Mirrors CallLoaders with each loader's unloader function; returns the id of the first chunk that failed (0 = all done).
+unsigned int bChunkLoader::CallUnloaders(bChunk *chunks, int sizeof_chunks, bool abort_on_error) {
+    bChunk *last_chunk = GetLastChunk(chunks, sizeof_chunks);
+    for (bChunk *chunk = chunks; chunk != last_chunk; chunk = chunk->GetNext()) {
+        bChunkLoader *loader = FindLoader(chunk->GetID());
+        if (loader != nullptr && loader->GetUnloaderFunction() != nullptr) {
+            if (loader->GetUnloaderFunction()(chunk)) {
+                continue;
+            }
+        }
+        if (abort_on_error) {
+            return chunk->GetID();
+        }
+    }
+
+    return 0;
+}
 
 void bChunkCarpHeader::PlatformEndianSwap() {
     bPlatEndianSwap(&this->mCrpSize);
@@ -60,5 +76,19 @@ void bChunkCarpHeader::PlatformEndianSwap() {
 bool bValidateChunksRecursive(bChunk *the_chunk, int32 expected_level_size, int32 *current_offset, long max_size, bChunk *min_pointer,
                               bChunk *max_pointer) {}
 
-// STRIPPED
-bool bValidateChunks(bChunk *first_chunk, int sizeof_chunks) {}
+// True when the chunk sizes tile exactly the `sizeof_chunks` bytes (nested chunks are walked too).
+bool bValidateChunks(bChunk *first_chunk, int sizeof_chunks) {
+    int offset = 0;
+    while (offset < sizeof_chunks) {
+        if (sizeof_chunks - offset < static_cast<int>(sizeof(bChunk)))
+            return false;
+        bChunk *chunk = reinterpret_cast<bChunk *>(reinterpret_cast<char *>(first_chunk) + offset);
+        const int size = chunk->GetSize();
+        if (size < 0 || offset + static_cast<int>(sizeof(bChunk)) + size > sizeof_chunks)
+            return false;
+        if (chunk->IsNested() && !bValidateChunks(reinterpret_cast<bChunk *>(chunk->GetData()), size))
+            return false;
+        offset += static_cast<int>(sizeof(bChunk)) + size;
+    }
+    return offset == sizeof_chunks;
+}

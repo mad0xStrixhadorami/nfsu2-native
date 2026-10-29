@@ -344,8 +344,17 @@ void *SlotPool::Malloc(int num_slots, void **last_slot) {
     return first_slot;
 }
 
-// STRIPPED
-void SlotPool::Free(void *first_slot, void *last_slot) {}
+// Returns a chain of slots (first .. last, linked through Next, as Malloc(n, &last) hands them out) to the free list.
+void SlotPool::Free(void *first_slot, void *last_slot) {
+    if (!first_slot)
+        return;
+    int count = 1;
+    for (SlotPoolEntry *slot = static_cast<SlotPoolEntry *>(first_slot); slot != last_slot && slot->Next; slot = slot->Next)
+        count++;
+    static_cast<SlotPoolEntry *>(last_slot)->Next = FreeSlots;
+    FreeSlots = static_cast<SlotPoolEntry *>(first_slot);
+    NumAllocatedSlots -= count;
+}
 
 SlotPoolManager::SlotPoolManager() {
     Initialized = true;

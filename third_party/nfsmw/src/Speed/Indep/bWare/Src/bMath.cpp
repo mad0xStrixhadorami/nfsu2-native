@@ -54,8 +54,10 @@ void bPlatEndianSwap(bMatrix4 *value) {
     bPlatEndianSwap(&value->v3);
 }
 
-// STRIPPED
-bFix bInverse(bFix a) {}
+// 16.16 reciprocal
+bFix bInverse(bFix a) {
+    return bDiv(0x10000, a);
+}
 
 bFix bDiv(bFix a, bFix b) {
     if (b == 0) {
@@ -72,8 +74,22 @@ bFix bDiv(bFix a, bFix b) {
     }
 }
 
-// STRIPPED
-uint32 bSqrt32(uint32 a) {}
+// Integer square root (floor) by the bitwise method
+uint32 bSqrt32(uint32 a) {
+    uint32 root = 0, bit = 1u << 30;
+    while (bit > a)
+        bit >>= 2;
+    while (bit != 0) {
+        if (a >= root + bit) {
+            a -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return root;
+}
 
 void bSetRandomSeed(unsigned int value, unsigned int *seed) {
     *seed = value;
@@ -302,11 +318,14 @@ bAngle bASin(float x) {
     }
 }
 
-// STRIPPED
-bAngle bOldATan(float x, float y) {}
+// The original's slower arctangent; the table version gives the same angle
+bAngle bOldATan(float x, float y) {
+    return bATan(x, y);
+}
 
-// STRIPPED
-bAngle bFastATan(float x, float y) {}
+bAngle bFastATan(float x, float y) {
+    return bATan(x, y);
+}
 
 // Credit: Brawltendo
 bAngle bATan(float x, float y) {
@@ -350,11 +369,17 @@ bAngle bATan(float x, float y) {
         return bDegToAng(180.0f) + a;
 }
 
-// STRIPPED
-bFix bFixSin(bAngle angle) {}
+// 16.16 sine
+bFix bFixSin(bAngle angle) {
+    return static_cast<bFix>(bSin(angle) * 65536.0f);
+}
 
-// STRIPPED
-void bFixSinCos(bFix *result_sin, bFix *result_cos, bAngle angle) {}
+void bFixSinCos(bFix *result_sin, bFix *result_cos, bAngle angle) {
+    float s, c;
+    bSinCos(&s, &c, angle);
+    *result_sin = static_cast<bFix>(s * 65536.0f);
+    *result_cos = static_cast<bFix>(c * 65536.0f);
+}
 
 bAngle bFixATan(bFix x) {
     int quad = 0;
@@ -435,8 +460,11 @@ bAngle bFixATan(bFix x, bFix y) {
     return static_cast<bAngle>(a);
 }
 
-// STRIPPED
-bPolar *bToPolar(bPolar *dest, bVector2 *cartesian) {}
+bPolar *bToPolar(bPolar *dest, bVector2 *cartesian) {
+    dest->r = bSqrt(cartesian->x * cartesian->x + cartesian->y * cartesian->y);
+    dest->a = bATan(cartesian->x, cartesian->y);
+    return dest;
+}
 
 void bConvertToBond(bMatrix4 &dest, const bMatrix4 &m) {
     float v1x = m.v1.y;
@@ -472,4 +500,4 @@ void bConvertFromBond(bMatrix4 &dest, const bMatrix4 &m) {
     bConvertFromBond(dest.v3, m.v3);
 }
 
-void bMathTimingTest() {}
+void bMathTimingTest() {} // a console benchmark in the original; nothing to run here

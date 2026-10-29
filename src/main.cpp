@@ -2442,7 +2442,17 @@ int main(int argc, char **argv)
             if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_RIGHT)
                 lookHeld = false;
             if (ev.type == SDL_MOUSEMOTION && lookHeld) {
+                static int lastMx = ev.motion.x, lastMy = ev.motion.y;
+                // some setups (remote desktops, warp-based capture) report the relative motion on one axis only: fall back to the pointer position
+                int dx = ev.motion.xrel, dy = ev.motion.yrel;
+                if (dx == 0 && ev.motion.x != lastMx)
+                    dx = ev.motion.x - lastMx;
+                if (dy == 0 && ev.motion.y != lastMy)
+                    dy = ev.motion.y - lastMy;
+                lastMx = ev.motion.x, lastMy = ev.motion.y;
+                ev.motion.xrel = dx, ev.motion.yrel = dy;
                 lookYawT -= float(ev.motion.xrel) * 0.0042f;
+                if (getenv("NFSU2_LOOK_DEBUG")) printf("[Look] xrel %d yrel %d yawT %.2f\n", ev.motion.xrel, ev.motion.yrel, lookYawT);
                 lookPitchT = std::clamp(lookPitchT + float(ev.motion.yrel) * 0.0035f, -0.10f, 1.40f);
                 lookIdle = 0.0f;
             }

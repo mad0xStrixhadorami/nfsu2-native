@@ -29,14 +29,30 @@ int bList::TraversebList(bNode *match_node) {
     return n;
 }
 
-// TODO
-void bList::AddTail(bList *list) {}
+// Moves every node of `list` to the tail of this list (the other list is left empty).
+void bList::AddTail(bList *list) {
+    while (!list->IsEmpty()) {
+        bNode *node = list->RemoveHead();
+        this->AddTail(node);
+    }
+}
 
-// TODO
-void bList::AddHead(bList *list) {}
+// Moves every node of `list` to the head of this list, keeping their order.
+void bList::AddHead(bList *list) {
+    while (!list->IsEmpty()) {
+        bNode *node = list->RemoveTail();
+        this->AddHead(node);
+    }
+}
 
-// STRIPPED
-bNode *bList::AddSorted(SortFunc check_flip, bNode *node) {}
+// Inserts `node` before the first node for which check_flip(node, existing) says they are out of order (stable for equal keys).
+bNode *bList::AddSorted(SortFunc check_flip, bNode *node) {
+    bNode *at = this->GetHead();
+    while (at != this->EndOfList() && !check_flip(node, at)) {
+        at = at->GetNext();
+    }
+    return node->AddBefore(at);
+}
 
 // UNSOLVED, it matches in ProStreet..
 void bList::Sort(SortFunc check_flip) {

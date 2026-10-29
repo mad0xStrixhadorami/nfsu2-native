@@ -1071,8 +1071,9 @@ void *bMemoryAllocator::Alloc(size_t size, const EA::TagValuePair &flags) {
     return bMalloc(size, name, 0, allocation_params);
 }
 
-// STRIPPED
-void *bMemoryAllocator::Alloc(size_t size) {}
+void *bMemoryAllocator::Alloc(size_t size) {
+    return bMalloc(size, nullptr, 0, 0);
+}
 
 void bMemoryAllocator::Free(void *pBlock, size_t size) {
     bFree(pBlock);

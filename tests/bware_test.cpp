@@ -7,6 +7,10 @@
 #include "Speed/Indep/bWare/Inc/bMemory.hpp"
 #include "Speed/Indep/bWare/Inc/bPrintf.hpp"
 #include "Speed/Indep/bWare/Inc/bSlotPool.hpp"
+#include "Speed/Indep/bWare/Inc/bChunk.hpp"
+#include "Speed/Indep/bWare/Inc/bList.hpp"
+#include "Speed/Indep/bWare/Inc/bMath.hpp"
+#include "Speed/Indep/bWare/Inc/bVector.hpp"
 #include "Speed/Indep/bWare/Inc/bWare.hpp"
 
 static int g_failures = 0;
@@ -56,6 +60,75 @@ int main()
         bFree(pool, p);
     CHECK(bCountFreeSlots(pool) == 100);
 
+    puts("formerly stubbed functions");
+    CHECK(bSqrt32(0) == 0 && bSqrt32(15) == 3 && bSqrt32(16) == 4 && bSqrt32(0xffffffffu) == 65535);
+    CHECK(bInverse(0x20000) == 0x8000);
+    CHECK(bFastATan(1.0f, 1.0f) == bDegToAng(45.0f) && bFastATan(0.0f, 1.0f) == bDegToAng(90.0f) && bFastATan(-1.0f, 0.0f) == bDegToAng(180.0f));
+    CHECK(bOldATan(0.0f, -1.0f) == bFastATan(0.0f, -1.0f));
+    {
+        bFix si, co;
+        bFixSinCos(&si, &co, bDegToAng(90.0f));
+        CHECK(si > 65530 && si <= 65536 && bAbs(float(co)) < 8.0f);
+        CHECK(bFixSin(bDegToAng(30.0f)) > 32700 && bFixSin(bDegToAng(30.0f)) < 32830);
+        bVector2 c = {3.0f, 4.0f};
+        bPolar pol;
+        bToPolar(&pol, &c);
+        CHECK(bAbs(pol.r - 5.0f) < 1e-4f);
+    }
+    {
+        struct N : bNode { int key; };
+        N n[5];
+        bList a, b;
+        a.InitList(), b.InitList();
+        const int keys[5] = {30, 10, 20, 50, 40};
+        auto flip = [](bNode *x, bNode *y) { return static_cast<N *>(x)->key < static_cast<N *>(y)->key ? 1 : 0; };
+        for (int i = 0; i < 3; ++i) n[i].key = keys[i], a.AddSorted(flip, &n[i]);
+        CHECK(static_cast<N *>(a.GetHead())->key == 10 && static_cast<N *>(a.GetTail())->key == 30);
+        for (int i = 3; i < 5; ++i) n[i].key = keys[i], b.AddTail(&n[i]);
+        a.AddTail(&b);
+        CHECK(b.IsEmpty() && static_cast<N *>(a.GetTail())->key == 40 && a.CountElements() == 5);
+        bList c;
+        c.InitList();
+        c.AddHead(&a);
+        CHECK(a.IsEmpty() && c.CountElements() == 5 && static_cast<N *>(c.GetHead())->key == 10);
+    }
+    {
+        // two chunks (ids 0x1, 0x2) and an unloader that rejects id 2
+        alignas(16) unsigned char buf[64] = {};
+        auto *c0 = reinterpret_cast<bChunk *>(buf);
+        c0->ID = 1, c0->Size = 8;
+        auto *c1 = reinterpret_cast<bChunk *>(buf + 16);
+        c1->ID = 2, c1->Size = 8;
+        CHECK(bValidateChunks(c0, 32) && !bValidateChunks(c0, 31));
+        static int unloaded = 0;
+        static bChunkLoader l1(1, [](bChunk *) { return 1; }, [](bChunk *) { unloaded++; return 1; });
+        static bChunkLoader l2(2, [](bChunk *) { return 1; }, [](bChunk *) { return 0; });
+        CHECK(bChunkLoader::CallUnloaders(c0, 32, true) == 2 && unloaded == 1);
+        CHECK(bChunkLoader::CallUnloaders(c0, 32, false) == 0);
+        CHECK(bChunkLoader::CallLoaders(c0, 32, true) == 0);
+    }
+    {
+        bVector2 lo, hi, p = {5.0f, 7.0f}, q = {-1.0f, 2.0f};
+        bInitializeBoundingBox(&lo, &hi, &p);
+        bExpandBoundingBox(&lo, &hi, &q, 1.0f);
+        CHECK(lo.x == -2.0f && lo.y == 1.0f && hi.x == 6.0f && hi.y == 8.0f);
+        bVector2 out = {9.0f, 8.0f};
+        CHECK(bAbs(bBoundingBoxDistOutside(&lo, &hi, &out) - 3.0f) < 1e-5f);
+        bVector3 a3 = {1, 2, 3}, b3 = {1, 2, 3.0005f};
+        CHECK(bEqual(&a3, &b3, 0.001f) && !bEqual(&a3, &b3, 0.0001f));
+    }
+    {
+        char cat[16] = "ab";
+        CHECK(bStrChr("hello", 'l') && bStrChr("hello", 'l')[1] == 'l' && !bStrChr("hello", 'z'));
+        uint16 w1[] = {'a', 'b', 0}, w2[] = {'a', 'c', 0}, out[8];
+        CHECK(bStrCmp(w1, w2) < 0 && bStrNCmp(w1, w2, 1) == 0);
+        bStrCat(out, w1, w2);
+        CHECK(out[0] == 'a' && out[3] == 'c' && out[4] == 0);
+        (void)cat;
+        void *m = bMemoryAllocator::Alloc(128);
+        CHECK(m != nullptr);
+        bFree(m);
+    }
     printf("bware_test: %s\n", g_failures ? "FAILED" : "passed");
     return g_failures ? 1 : 0;
 }

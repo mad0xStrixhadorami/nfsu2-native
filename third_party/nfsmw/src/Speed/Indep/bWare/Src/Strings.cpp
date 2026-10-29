@@ -233,8 +233,14 @@ char *bStrCat(char *to, const char *s1, const char *s2) {
     return to;
 }
 
-// STRIPPED
-char *bStrChr(const char *s1, int c) {}
+char *bStrChr(const char *s1, int c) {
+    for (;; s1++) {
+        if (*s1 == static_cast<char>(c))
+            return const_cast<char *>(s1);
+        if (*s1 == '\0')
+            return nullptr;
+    }
+}
 
 char *bToUpper(char *s) {
     if (*s != '\0') {
@@ -418,11 +424,21 @@ uint16 *bStrNCpy(uint16 *to, const char *from, int m) {
     return to;
 }
 
-// STRIPPED
-int bStrCmp(uint16 *s1, uint16 *s2) {}
+int bStrCmp(uint16 *s1, uint16 *s2) {
+    while (*s1 != 0 && *s1 == *s2)
+        s1++, s2++;
+    return static_cast<int>(*s1) - static_cast<int>(*s2);
+}
 
-// STRIPPED
-int bStrNCmp(uint16 *s1, uint16 *s2, int n) {}
+int bStrNCmp(uint16 *s1, uint16 *s2, int n) {
+    for (; n > 0; n--, s1++, s2++) {
+        if (*s1 != *s2)
+            return static_cast<int>(*s1) - static_cast<int>(*s2);
+        if (*s1 == 0)
+            break;
+    }
+    return 0;
+}
 
 char *bStrStr(const char *s1, const char *s2) {
     int len = bStrLen(s2);
@@ -450,8 +466,15 @@ char *bStrIStr(const char *s1, const char *s2) {
     return nullptr;
 }
 
-// STRIPPED
-uint16 *bStrCat(uint16 *to, uint16 *s1, uint16 *s2) {}
+uint16 *bStrCat(uint16 *to, uint16 *s1, uint16 *s2) {
+    int n = 0;
+    for (; *s1 != 0; s1++)
+        to[n++] = *s1;
+    for (; *s2 != 0; s2++)
+        to[n++] = *s2;
+    to[n] = 0;
+    return to;
+}
 
 int bMatchNameWithWildcard(const char *wild, const char *string) {
     const char *cp = nullptr;
