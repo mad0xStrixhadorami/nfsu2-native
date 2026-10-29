@@ -1061,6 +1061,108 @@ void ModernUI::DrawShop(int w, int h, const Shop &sh, float tm)
     key("LEFT / RIGHT", "CATEGORY");
 }
 
+void ModernUI::DrawPerfShop(int w, int h, const PerfShop &ps, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.46f, 0}, {W * 0.46f - H * 0.08f, H}, {0, H}, A(ink, 235), A(ink, 120), A(ink, 120), A(ink, 235));
+    Rect(0, H - 120 * s, W, 120 * s, A(ink, 0), A(ink, 225));
+    const float lx = 56 * s;
+    Text(lx, 38 * s, 15 * s, "PERFORMANCE SHOP", A(paper, 170), 0);
+    Text(lx, 54 * s, 30 * s, ps.title, paper, 0);
+    Quad({lx, 94 * s}, {lx + 46 * s, 94 * s}, {lx + 46 * s, 98 * s}, {lx, 98 * s}, signal, signal, signal, signal);
+    // the list: a window of rows around the selection, the selected one on the blade
+    const int n = int(ps.rows.size());
+    const int vis = 8, top = std::clamp(ps.selected - vis / 2, 0, std::max(0, n - vis));
+    const float ry = 128 * s, pitch = 52 * s, rw = W * 0.40f;
+    static float hy = -1.0f, last = -1.0f;
+    const float target = ry + pitch * float(ps.selected - top);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float sl = 14 * s;
+    Quad({lx - 18 * s + sl, hy}, {lx - 18 * s + rw + sl, hy}, {lx - 18 * s + rw, hy + pitch - 6 * s}, {lx - 18 * s, hy + pitch - 6 * s}, signal, signal, signal, signal);
+    for (int i = top; i < std::min(n, top + vis); ++i) {
+        const bool on = i == ps.selected;
+        const PerfShop::Row &r = ps.rows[size_t(i)];
+        const float y = ry + pitch * float(i - top);
+        std::string nm = r.label;
+        nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
+        Text(lx, y + 9 * s, 24 * s, nm, on ? ink : A(paper, 215), 0);
+        if (!r.price.empty())
+            Text(lx - 18 * s + rw - 18 * s, y + 9 * s, 24 * s, r.price, on ? ink : A(signal, 255), 2);
+        else if (r.owned)
+            Text(lx - 18 * s + rw - 18 * s, y + 12 * s, 16 * s, "OWNED", on ? ink : A(paper, 140), 2);
+    }
+    if (n > vis) { // scrollbar
+        const float th = pitch * float(vis), kh = th * float(vis) / float(n);
+        Quad({lx + rw - 6 * s, ry}, {lx + rw - 3 * s, ry}, {lx + rw - 3 * s, ry + th}, {lx + rw - 6 * s, ry + th}, A(paper, 40), A(paper, 40), A(paper, 40), A(paper, 40));
+        const float ky = ry + (th - kh) * float(top) / float(std::max(1, n - vis));
+        Quad({lx + rw - 7 * s, ky}, {lx + rw - 2 * s, ky}, {lx + rw - 2 * s, ky + kh}, {lx + rw - 7 * s, ky + kh}, signal, signal, signal, signal);
+    }
+    // the right side: what the highlighted package contains
+    const float rx = W * 0.56f;
+    if (!ps.caption.empty())
+        Text(rx, 124 * s, 34 * s, ps.caption, paper, 0);
+    float y = 176 * s;
+    for (const PerfShop::Row &d : ps.detail) {
+        Quad({rx, y + 34 * s}, {W - 72 * s, y + 34 * s}, {W - 72 * s, y + 35 * s}, {rx, y + 35 * s}, A(paper, 30), A(paper, 30), A(paper, 30), A(paper, 30));
+        Text(rx, y + 5 * s, 22 * s, d.label, d.owned ? A(paper, 130) : A(paper, 230), 0);
+        Text(W - 72 * s, y + 5 * s, 22 * s, d.owned ? "FITTED / OWNED" : d.price, d.owned ? A(paper, 130) : signal, 2);
+        y += 42 * s;
+    }
+    if (!ps.saving.empty()) {
+        Text(rx, y + 8 * s, 18 * s, "PACKAGE DISCOUNT", A(paper, 170), 0);
+        Text(W - 72 * s, y + 6 * s, 22 * s, "-" + ps.saving, A(signal, 255), 2);
+        y += 40 * s;
+    }
+    // the stat gain: current and after bars for torque and power
+    auto bar = [&](float by, const char *label, float now, float next, float full, const std::string &gain) {
+        Text(rx, by, 15 * s, label, A(paper, 150), 0);
+        Text(W - 72 * s, by - 4 * s, 22 * s, gain.empty() ? "" : "+" + gain, signal, 2);
+        const float bw = W - 72 * s - rx, bh = 10 * s, y0 = by + 24 * s;
+        Quad({rx, y0}, {rx + bw, y0}, {rx + bw, y0 + bh}, {rx, y0 + bh}, A(paper, 40), A(paper, 40), A(paper, 40), A(paper, 40));
+        const float a = std::clamp(now / full, 0.0f, 1.0f), b = std::clamp(next / full, a, 1.0f);
+        Quad({rx, y0}, {rx + bw * a, y0}, {rx + bw * a, y0 + bh}, {rx, y0 + bh}, paper, paper, paper, paper);
+        if (b > a)
+            Quad({rx + bw * a, y0}, {rx + bw * b, y0}, {rx + bw * b, y0 + bh}, {rx + bw * a, y0 + bh}, signal, signal, signal, signal);
+    };
+    if (!ps.torque.empty()) {
+        const float by = std::max(y + 20 * s, H - 330 * s);
+        bar(by, "TORQUE", ps.torqueNow, ps.torqueNext, 700.0f, ps.torque);
+        bar(by + 64 * s, "POWER", ps.powerNow, ps.powerNext, 450.0f, ps.power);
+    }
+    // bottom bar
+    const float by2 = H - 100 * s;
+    if (!ps.total.empty()) {
+        Text(rx, by2, 15 * s, "PACKAGE PRICE", A(paper, 150), 0);
+        Text(rx, by2 + 18 * s, 40 * s, ps.total, signal, 0);
+    }
+    char cash[40];
+    snprintf(cash, sizeof(cash), "CASH  $%d", ps.money);
+    Text(W - 72 * s, by2 + 4 * s, 20 * s, cash, A(paper, 210), 2);
+    const float ky = H - 52 * s;
+    float kx = W - 72 * s;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, ky + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, ky + 3 * s}, {kx, ky + 3 * s}, {kx, ky + 25 * s}, {kx - cw, ky + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, ky + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ESC", "BACK");
+    key("ENTER", "BUY");
+    key(ps.parts ? "UP / DOWN" : "LEFT / RIGHT", ps.parts ? "PART" : "PACKAGE");
+}
+
 void ModernUI::DrawPaintShop(int w, int h, const PaintShop &p, float tm)
 {
     if (!m_font)

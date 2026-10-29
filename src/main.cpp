@@ -1005,6 +1005,22 @@ int main(int argc, char **argv)
         }
         {
             FEStartupSequence::PartsShopInfo pi;
+            FEStartupSequence::PerfShopInfo pf;
+            if (startup.PerfShopState(pf)) { // the Performance shop (ISSUES #387)
+                ModernUI::PerfShop ps;
+                ps.parts = pf.parts, ps.title = pf.title, ps.caption = pf.caption, ps.total = pf.total, ps.saving = pf.saving, ps.torque = pf.torque, ps.power = pf.power;
+                ps.selected = int(pf.selected), ps.money = pf.money;
+                ps.torqueNow = pf.torqueNow, ps.torqueNext = pf.torqueNext, ps.powerNow = pf.powerNow, ps.powerNext = pf.powerNext;
+                for (const auto &r : pf.rows)
+                    ps.rows.push_back({r.label, r.price, r.owned});
+                for (const auto &r : pf.detail)
+                    ps.detail.push_back({r.label, r.price, r.owned});
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawPerfShop(lw, lh, ps, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = pf.parts;
+                return true;
+            }
             if (startup.PartsShopState(pi)) { // the Body Shop (ISSUES #371)
                 ModernUI::Shop sh;
                 sh.kicker = "GARAGE", sh.title = pi.title, sh.name = pi.name, sh.price = pi.price, sh.total = pi.total;

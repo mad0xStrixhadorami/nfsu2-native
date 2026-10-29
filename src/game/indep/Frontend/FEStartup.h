@@ -219,6 +219,19 @@ public:
         bool fitted = false;
     };
     bool PartsShopState(PartsShopInfo &out) const;
+    // The Performance shop's package list and individual-parts list for the native screen (ISSUES #387).
+    struct PerfShopInfo {
+        bool parts = false; // the Individual Parts screen (else the package screen)
+        std::string title, caption;
+        struct Row { std::string label, price; bool owned = false, header = false; };
+        std::vector<Row> rows;   // the list on the left
+        size_t selected = 0;
+        std::vector<Row> detail; // the parts of the highlighted package
+        std::string total, saving, torque, power;
+        float torqueNow = 0, torqueNext = 0, powerNow = 0, powerNext = 0; // raw (Nm / kW), for the bars
+        int money = 0;
+    };
+    bool PerfShopState(PerfShopInfo &out) const;
     // The Graphics Shop's paint screen for the native view (ISSUES #372).
     struct PaintShopInfo {
         std::vector<std::string> parts;

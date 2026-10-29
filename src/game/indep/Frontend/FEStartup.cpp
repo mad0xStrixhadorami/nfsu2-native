@@ -7419,6 +7419,97 @@ void FEStartupSequence::UpdateBuyPartsStats(FEPackage *pkg)
     bar("HORSEPOWER", now.powerKw, next.powerKw, 450.0f);
 }
 
+bool FEStartupSequence::PerfShopState(PerfShopInfo &out) const
+{
+    if (!m_engine)
+        return false;
+    bool pkgScreen = false, partsScreen = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext()) {
+        pkgScreen = pkgScreen || (p->GetName() && strcasecmp(p->GetName(), "UI_ChoosePerformancePackage.fng") == 0);
+        partsScreen = partsScreen || (p->GetName() && strcasecmp(p->GetName(), "UI_BuyPerformanceParts.fng") == 0);
+    }
+    if (!pkgScreen && !partsScreen)
+        return false;
+    FEStartupSequence *self = const_cast<FEStartupSequence *>(this);
+    out = PerfShopInfo();
+    out.parts = partsScreen;
+    out.money = m_profile.valid ? m_profile.money : 0;
+    for (const auto &c : kPerfCategories)
+        if (c.partId == m_perfCategory)
+            out.title = m_fe->LanguageText(c.label);
+    const Career::OwnedCar *car = self->ShopCar();
+    const bool metric = m_speedoUnits != 0;
+    auto units = [&](float nm, float kw, std::string &t, std::string &p) {
+        char b[48];
+        snprintf(b, sizeof(b), "%.0f %s", nm * (metric ? 1.0f : 0.7375621f), m_fe->LanguageText(metric ? 0x5b81d613u : 0xacb8dff3u).c_str());
+        t = b;
+        snprintf(b, sizeof(b), "%.0f %s", kw * (metric ? 1.0f : 1.3410221f), m_fe->LanguageText(metric ? 0x5b81d5bau : 0xcbbc6512u).c_str());
+        p = b;
+    };
+    if (partsScreen) {
+        out.caption = m_buySel < m_buyParts.size() ? m_fe->LanguageText(m_buyParts[m_buySel]->nameHash) : "INDIVIDUAL PARTS";
+        for (const PerfPart *part : m_buyParts) {
+            char price[24];
+            snprintf(price, sizeof(price), "$%u", part->price);
+            out.rows.push_back({m_fe->LanguageText(part->nameHash), price, false, false});
+        }
+        out.selected = m_buySel;
+        if (car && m_buySel < m_buyParts.size()) {
+            std::vector<uint16_t> after = car->perfParts;
+            after.push_back(uint16_t(m_buyParts[m_buySel]->id));
+            const PerfPeaks now = ComputePerfPeaks(*m_fe, car->model, car->perfParts), next = ComputePerfPeaks(*m_fe, car->model, after);
+            out.torqueNow = now.torqueNm, out.torqueNext = next.torqueNm, out.powerNow = now.powerKw, out.powerNext = next.powerKw;
+            units(next.torqueNm - now.torqueNm, next.powerKw - now.powerKw, out.torque, out.power);
+        }
+        return true;
+    }
+    const size_t sel = m_perfScroller.Selected();
+    for (size_t i = 0; i < m_perfCardLabel.size(); ++i) {
+        PerfShopInfo::Row r{m_fe->LanguageText(m_perfCardLabel[i]), "", false, false};
+        if (m_perfCardType[i] == 1)
+            if (const PerfPackage *pp = m_fe->PerfParts().Find(m_perfCategory, m_perfCardLevel[i])) {
+                int total = 0, saving = 0;
+                self->PerfPackagePrice(*pp, total, saving);
+                char b[24];
+                snprintf(b, sizeof(b), "$%d", total);
+                r.owned = total == 0;
+                r.price = total ? b : "";
+            }
+        out.rows.push_back(r);
+    }
+    out.selected = std::min(sel, out.rows.empty() ? size_t(0) : out.rows.size() - 1);
+    if (sel < m_perfCardType.size() && m_perfCardType[sel] == 1)
+        if (const PerfPackage *pp = m_fe->PerfParts().Find(m_perfCategory, m_perfCardLevel[sel])) {
+            out.caption = out.rows[out.selected].label;
+            for (const PerfPart &part : pp->parts) {
+                const bool avail = self->PerfPartAvailable(uint16_t(part.id));
+                char price[24];
+                snprintf(price, sizeof(price), "$%u", part.price);
+                out.detail.push_back({m_fe->LanguageText(part.nameHash), avail ? price : "", !avail, false});
+            }
+            int total = 0, saving = 0;
+            self->PerfPackagePrice(*pp, total, saving);
+            char b[24];
+            snprintf(b, sizeof(b), "$%d", total);
+            out.total = total ? b : "OWNED";
+            snprintf(b, sizeof(b), "$%d", saving);
+            out.saving = saving ? b : "";
+            if (car) {
+                std::vector<uint16_t> after = car->perfParts;
+                for (uint32_t level = 1; level < 4; ++level)
+                    if (const PerfPackage *other = m_fe->PerfParts().Find(m_perfCategory, level))
+                        for (const PerfPart &part : other->parts)
+                            after.erase(std::remove(after.begin(), after.end(), uint16_t(part.id)), after.end());
+                for (const PerfPart &part : pp->parts)
+                    after.push_back(uint16_t(part.id));
+                const PerfPeaks now = ComputePerfPeaks(*m_fe, car->model, car->perfParts), next = ComputePerfPeaks(*m_fe, car->model, after);
+                out.torqueNow = now.torqueNm, out.torqueNext = next.torqueNm, out.powerNow = now.powerKw, out.powerNext = next.powerKw;
+                units(next.torqueNm - now.torqueNm, next.powerKw - now.powerKw, out.torque, out.power);
+            }
+        }
+    return true;
+}
+
 void FEStartupSequence::BuySelectedPerfPart(FEPackage *pkg)
 {
     Career::OwnedCar *car = ShopCar();

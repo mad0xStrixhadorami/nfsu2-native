@@ -101,6 +101,16 @@ public:
         bool fitted = false;
     };
     void DrawShop(int w, int h, const Shop &sh, float seconds);
+    // The Performance shop (ISSUES #387): a package / parts list on the left, the highlighted package's parts and the stat gain on the right.
+    struct PerfShop {
+        bool parts = false;
+        std::string title, caption, total, saving, torque, power;
+        struct Row { std::string label, price; bool owned = false; };
+        std::vector<Row> rows, detail;
+        int selected = 0, money = 0;
+        float torqueNow = 0, torqueNext = 0, powerNow = 0, powerNext = 0;
+    };
+    void DrawPerfShop(int w, int h, const PerfShop &ps, float seconds);
     // The career World Map (ISSUES #375): the event list and details on the left, the city map (RGBA `pixels`, size x size) large on the right.
     struct WorldMap {
         std::string area;
