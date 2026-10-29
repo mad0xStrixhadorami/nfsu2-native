@@ -5951,6 +5951,16 @@ std::string FEStartupSequence::SeriesRaceTag() const
     return tag;
 }
 
+bool FEStartupSequence::TakeStageCleared(int &stage, std::string &region)
+{
+    if (!m_stageClearedNow)
+        return false;
+    stage = m_stageClearedNow;
+    m_stageClearedNow = 0;
+    region = m_fe->LanguageText(0xc08af0b2u + uint32_t(std::clamp(stage + 1, 1, 5))); // the region the clear opens
+    return true;
+}
+
 bool FEStartupSequence::TakeSeriesToast(std::string &title, std::string &body)
 {
     if (!m_series.toast)
@@ -8767,8 +8777,10 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
         Career::SaveRecords(m_records);
     }
     // A running series owns its races: several events can share a race number (ISSUES #334).
-    const Career::Event *ev = (m_series.active && m_series.event) ? m_series.event
-                                                                  : Career::EventTable::Get().FindByRace(raceNumber);
+    // The event the player started owns its race even when it is a single race (several events share a race number, ISSUES #380).
+    const bool startedOwns = m_series.event && std::find(m_series.event->races.begin(), m_series.event->races.end(), int16_t(raceNumber)) != m_series.event->races.end();
+    const Career::Event *ev = (m_series.active && m_series.event) || startedOwns ? m_series.event
+                                                                                   : Career::EventTable::Get().FindByRace(raceNumber);
     if (!ev) {
         printf("[Career] race %d is not a career event\n", raceNumber);
         return;
@@ -8861,7 +8873,16 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     }
     m_lastReward = {true, money, respect, place, m_profile.name};
     if (place == 1) {
+        // 0x002cd480: finishing a stage's gate event raises the "stage cleared" message (type 7) unless it is the last stage
+        bool before[6] = {};
+        for (int st = 1; st <= 5; ++st)
+            before[st] = Career::EventTable::Get().StageCleared(st, m_profile.completedEvents);
         m_profile.Complete(ev->id);
+        for (int st = 1; st <= 4; ++st)
+            if (!before[st] && Career::EventTable::Get().StageCleared(st, m_profile.completedEvents))
+                m_stageClearedNow = st;
+        if (m_stageClearedNow)
+            printf("[Career] stage %d cleared\n", m_stageClearedNow);
         MaybeSignSponsor(*ev);
         // 0x00268a30 -> 0x0026e530 / 0x0026ee90: the unlock and car-show messages the win earns.
         if (const int sms = Career::SmsOnEventComplete(m_profile, *ev))

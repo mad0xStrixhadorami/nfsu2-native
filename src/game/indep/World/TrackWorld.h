@@ -48,6 +48,7 @@ public:
         float fov = 34.0f;      // horizontal degrees at 4:3 (Hor+ above)
         float shiftX = 0.0f;    // shifts the car sideways on screen (fraction of the half width; + = to the right)
         float time = 0.0f;      // seconds, drives the background animation
+        bool street = false;    // the night street backdrop and its camera / post stack (ISSUES #381)
         float accent[3] = {0.10f, 0.45f, 1.00f};
         float accent2[3] = {1.00f, 0.50f, 0.12f};
         // overlay mode (ISSUES #309): only the car, drawn into a window rectangle (pixels, y down) over whatever is already on screen, lit by the
@@ -495,7 +496,9 @@ private:
     std::unordered_map<uint32_t, int> m_interiorClass; // texture hash -> 0 none / 1 windowed facade / 2 glass wall
     int InteriorClassOf(uint32_t hash);
     unsigned m_progWorldLite = 0; // the cheap world shader for far cells (ISSUES #282)
-    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0, m_progFlame = 0;
+    unsigned m_progWorld = 0, m_progCar = 0, m_progBright = 0, m_progBlur = 0, m_progComposite = 0, m_progSky = 0, m_progStageBg = 0, m_progStreetBg = 0, m_progFlame = 0;
+    bool m_postStreet = false;
+    float m_postFocus = 8.0f, m_postFocusRange = 5.0f;
     unsigned m_postDepth = 0, m_postScene = 0, m_postBloom[2] = {0, 0}, m_postFboScene = 0, m_postFbo[2] = {0, 0};
     int m_postW = 0, m_postH = 0;
     bool m_shadersTried = false;

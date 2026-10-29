@@ -1201,6 +1201,156 @@ void main() {
 }
 )";
 
+
+// The main-menu night street (ISSUES #381): a procedural Israeli city night behind the car -- layered apartment blocks with balconies,
+// lit windows and rolling shutters (trissim), a kiosk with neon script signs, sodium streetlights as bokeh discs, a haze of warm glow
+// and, below the horizon, wet asphalt that mirrors all of it in smeared vertical streaks.
+inline const char *kStreetBgFS = R"(#version 120
+varying vec2 vNdc;
+uniform float uTime, uHorizon, uAspect, uOrbit;
+uniform vec2 uCenter;
+float h11(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vn(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float box(vec2 p, vec2 c, vec2 hs, float soft) {
+    vec2 d = abs(p - c) - hs;
+    return 1.0 - smoothstep(-soft, soft, max(d.x, d.y));
+}
+vec3 neonColour(float k) {
+    if (k < 0.25) return vec3(1.0, 0.12, 0.45);   // magenta
+    if (k < 0.5) return vec3(0.1, 0.8, 1.0);      // cyan
+    if (k < 0.75) return vec3(1.0, 0.55, 0.1);    // amber
+    return vec3(0.25, 1.0, 0.45);                  // green
+}
+// One layer of apartment blocks; depth 0 near .. 1 far.  Returns colour and coverage.
+vec4 blocks(vec2 q, float depth, float seed, float soft) {
+    float w = mix(0.62, 0.34, depth);
+    float x = q.x + seed * 5.7;
+    float id = floor(x / w), lx = fract(x / w);
+    float top = mix(0.30, 0.95, h11(id * 1.7 + seed)) * mix(1.0, 0.78, depth) + 0.10;
+    float cover = (1.0 - smoothstep(top - soft, top + soft, q.y)) * (1.0 - smoothstep(0.93, 0.99, lx)) * smoothstep(-0.30, -0.25, q.y);
+    vec3 haze = vec3(0.10, 0.075, 0.09);
+    vec3 base = mix(vec3(0.030, 0.036, 0.060), vec3(0.075, 0.070, 0.095), h11(id * 3.3 + seed)) ;
+    float fh = 0.082, cw = 0.062;
+    vec2 g = vec2(lx * w / cw, q.y / fh);
+    vec2 cell = floor(g), f = fract(g);
+    float balcony = step(f.y, 0.14) * step(0.04, f.x) * step(f.x, 0.96);
+    float rail = step(0.14, f.y) * step(f.y, 0.30) * step(0.5, h21(cell + id)) * (0.5 + 0.5 * step(0.5, fract(f.x * 6.0)));
+    float win = box(f, vec2(0.5, 0.60), vec2(0.30, 0.22), soft * 6.0);
+    float r = h21(cell + vec2(id * 3.1, seed));
+    float lit = step(0.58, r);
+    vec3 warm = mix(vec3(1.0, 0.62, 0.26), vec3(1.0, 0.82, 0.5), h21(cell * 1.9 + id)) * (0.55 + 0.9 * h21(cell + 7.0));
+    if (r > 0.93) warm = vec3(0.35, 0.55, 1.0) * 0.8;                 // a television
+    float shutter = step(0.80, h21(cell + id * 0.7 + 3.0)) * lit;     // rolling shutter: slats of light
+    vec3 wcol = warm * (shutter > 0.5 ? (0.45 + 0.4 * step(0.5, fract(f.y * 14.0))) : 1.0);
+    vec3 col = base;
+    col = mix(col, base * 1.9 + 0.01, balcony);                       // the slab edge catches a little light
+    col = mix(col, vec3(0.012, 0.012, 0.02), rail);
+    col += wcol * win * lit * mix(1.0, 0.55, depth);
+    col += vec3(0.30, 0.20, 0.12) * win * (1.0 - lit) * 0.04;
+    col = mix(col, haze, depth * 0.55);                               // atmospheric haze: far blocks sink into the glow
+    // a lit roof sign on some blocks
+    float sign = step(0.8, h11(id * 5.1 + seed)) * box(vec2(lx * w, q.y), vec2(w * 0.5, top + 0.035), vec2(w * 0.28, 0.018), soft * 2.0);
+    col += neonColour(h11(id * 9.9 + seed)) * sign * 1.6;
+    return vec4(col, cover);
+}
+vec3 world(vec2 q) {
+    // sky: deep blue to a sodium-orange haze at the rooftops
+    float hz = clamp(q.y / 1.2, 0.0, 1.0);
+    vec3 sky = mix(vec3(0.16, 0.085, 0.075), vec3(0.018, 0.030, 0.085), smoothstep(0.0, 0.85, hz));
+    sky += vec3(0.30, 0.12, 0.05) * exp(-max(q.y, 0.0) * 3.2) * 0.35;
+    vec3 col = sky;
+    float par = uOrbit * 0.9;
+    vec4 b = blocks(vec2(q.x * 0.55 + par * 0.25, q.y), 1.0, 1.0, 0.012);
+    col = mix(col, b.rgb, b.a);
+    b = blocks(vec2(q.x * 0.80 + par * 0.55, q.y), 0.55, 2.0, 0.009);
+    col = mix(col, b.rgb, b.a);
+    b = blocks(vec2(q.x * 1.15 + par, q.y), 0.0, 3.0, 0.006);
+    col = mix(col, b.rgb, b.a);
+    // street level: a kiosk with a lit counter and neon script signs
+    float kx = q.x * 1.15 + par;
+    float kid = floor((kx + 0.15) / 1.55);
+    vec2 kp = vec2(fract((kx + 0.15) / 1.55) * 1.55, q.y);
+    float kr = h11(kid * 4.7 + 3.0);
+    if (kr > 0.25) {
+        float counter = box(kp, vec2(0.85, 0.045), vec2(0.30, 0.05), 0.006);
+        col = mix(col, vec3(0.10, 0.09, 0.09), counter);
+        col += vec3(1.0, 0.55, 0.2) * box(kp, vec2(0.85, 0.07), vec2(0.27, 0.022), 0.01) * 0.9;   // the lit shelf
+        // the neon sign above it: a framed board with abstract script (a top rule, vertical and curved strokes)
+        vec2 sp = (kp - vec2(0.85, 0.185)) / vec2(0.27, 0.05);
+        float inside = box(sp, vec2(0.0), vec2(1.0), 0.04);
+        vec3 nc = neonColour(h11(kid * 2.9));
+        float strokes = 0.0;
+        for (int i = 0; i < 7; ++i) {
+            float cx = -0.86 + float(i) * 0.287;
+            float hs = h11(float(i) * 3.7 + kid);
+            strokes = max(strokes, box(sp, vec2(cx, 0.0), vec2(0.035, 0.55 + 0.25 * hs), 0.02) * step(0.2, hs));
+            strokes = max(strokes, box(sp, vec2(cx + 0.14, 0.45), vec2(0.17, 0.045), 0.02) * step(0.45, h11(float(i) * 7.1 + kid)));
+            strokes = max(strokes, box(sp, vec2(cx + 0.1, -0.35), vec2(0.12, 0.05), 0.02) * step(0.6, hs));
+        }
+        strokes = max(strokes, box(sp, vec2(0.0, 0.8), vec2(0.95, 0.035), 0.02)); // the characteristic top rule
+        col = mix(col, vec3(0.02), inside * 0.9);
+        col += nc * strokes * inside * 2.0 + vec3(1.0) * strokes * inside * 0.35;
+        float gl = exp(-length(max(abs(sp) - 1.0, 0.0) * vec2(0.27, 0.05)) * 18.0);
+        col += nc * gl * 0.25;
+    }
+    // sodium street lamps and other lights as bokeh discs (the depth of field is open wide)
+    for (int i = 0; i < 18; ++i) {
+        float fi = float(i);
+        float d = mix(0.3, 1.0, h11(fi * 2.3 + 5.0));
+        float lx = (fract(h11(fi * 1.31) * 3.0 + par * (0.35 + 0.65 * (1.0 - d)) * 0.35) - 0.5) * 3.6;
+        float ly = 0.03 + 0.38 * h11(fi * 5.1 + 1.0) * (1.0 - 0.4 * d);
+        float rad = 0.022 + 0.055 * h11(fi * 7.7 + 2.0);
+        vec2 dv = q - vec2(lx, ly);
+        float dd = length(dv) / rad;
+        float disc = (1.0 - smoothstep(0.85, 1.0, dd)) * 0.55 + exp(-pow((dd - 0.92) * 7.0, 2.0)) * 0.35;
+        vec3 lc = h11(fi * 3.9) < 0.62 ? vec3(1.0, 0.60, 0.22) : (h11(fi * 3.9) < 0.82 ? vec3(0.8, 0.9, 1.0) : (h11(fi * 3.9) < 0.92 ? vec3(1.0, 0.12, 0.1) : vec3(0.2, 1.0, 0.5)));
+        float pulse = 0.9 + 0.1 * sin(uTime * (0.8 + h11(fi)) + fi);
+        col += lc * (disc * 1.15 + exp(-dd * 0.9) * 0.14) * pulse;
+    }
+    return col;
+}
+void main() {
+    vec2 p = vNdc;
+    vec2 q = vec2((p.x - uCenter.x * 0.0) * uAspect, p.y - uHorizon);
+    vec3 col;
+    if (q.y >= 0.0) {
+        col = world(q);
+    } else {
+        // wet asphalt: dark, with the whole street mirrored in it, smeared vertically and broken by ripples
+        float depth = -q.y;
+        float rip = vn(vec2(q.x * 9.0, depth * 40.0)) - 0.5;
+        float puddle = smoothstep(0.35, 0.65, vn(vec2(q.x * 2.2 + 3.0, depth * 5.0)));
+        vec3 refl = vec3(0.0);
+        for (int i = 0; i < 9; ++i) {
+            float t = float(i) / 8.0;
+            vec2 rq = vec2(q.x + rip * 0.03 * (1.0 + depth * 3.0) + (t - 0.5) * 0.004, depth * (0.55 + 0.5 * t));
+            refl += world(rq);
+        }
+        refl /= 9.0;
+        float fade = exp(-depth * 1.5) ;
+        vec3 asphalt = mix(vec3(0.012, 0.014, 0.022), vec3(0.030, 0.026, 0.034), vn(vec2(q.x * 30.0, depth * 90.0)));
+        col = asphalt + refl * (0.35 + 0.55 * puddle) * fade * 0.85;
+        col += vec3(1.0, 0.5, 0.18) * exp(-depth * 4.0) * 0.07; // the lamps' warm light on the damp road
+    }
+    // analytic height fog (midnight coastal humidity): denser near the road, thinning upwards, with a forward-scattering (Henyey-Greenstein)
+    // bleed around the brightest signs and lamps
+    float hfog = 1.0 - exp(-0.55 * exp(-max(q.y, 0.0) * 2.2));
+    float lumC = dot(col, vec3(0.333));
+    float g = 0.55, ph = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * 0.7, 1.5) * 0.08;
+    col = mix(col, vec3(0.10, 0.085, 0.11) + col * 0.6, hfog * 0.35);
+    col += col * lumC * ph * 0.9;
+    // haze hugging the horizon, and a soft vignette is added by the composite pass
+    col += vec3(0.20, 0.10, 0.07) * exp(-abs(q.y) * 7.0) * 0.18;
+    col += (h21(gl_FragCoord.xy + fract(uTime) * 71.0) - 0.5) / 110.0;
+    gl_FragColor = vec4(max(col, 0.0), 1.0);
+}
+)";
+
 inline const char *kPostVS = R"(#version 120
 varying vec2 vUV;
 void main() {
@@ -1254,6 +1404,8 @@ uniform vec2 uSunUV;      // the sun on screen (uv, may lie outside)
 uniform float uRays;      // god rays and lens reflections strength 0..1
 uniform float uAspectX;   // width / height
 uniform float uTime;
+uniform float uStreet;   // 1 for the main-menu night street (ISSUES #381): linear-depth bokeh, aberration, flare, ACES, grade
+uniform float uFocus, uFocusRange; // metres: the focal plane (the car) and how far from it the blur reaches full strength
 varying vec2 vUV;
 float skyAt(vec2 uv) {
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y > 1.0 || uv.y < 0.0)
@@ -1295,6 +1447,40 @@ void main() {
         c.b = mix(c.b, texture2D(uScene, vUV + d * ca).b, 0.5);
     } else {
         c = texture2D(uScene, vUV).rgb;
+    }
+    if (uStreet > 0.5) {
+        // radial chromatic aberration towards the frame edge
+        vec2 dir = vUV - 0.5;
+        float dist2 = dot(dir, dir);
+        c.r = texture2D(uScene, vUV + dir * dist2 * 0.008).r;
+        c.b = texture2D(uScene, vUV - dir * dist2 * 0.008).b;
+        // depth of field: the circle of confusion from the linear eye depth, focused on the car with a tight range, so the street (no
+        // depth written: infinitely far) melts into bokeh discs while the car stays sharp
+        float z = texture2D(uDepth, vUV).r;
+        float ld = z >= 0.99995 ? 1.0e4 : 2.0 * 0.3 * 200.0 / (200.0 + 0.3 - (z * 2.0 - 1.0) * (200.0 - 0.3));
+        float coc = clamp(abs(ld - uFocus) / uFocusRange, 0.0, 1.0);
+        if (coc > 0.04) {
+            vec3 acc = c * (1.0 - coc);
+            float wsum = (1.0 - coc);
+            for (int i = 0; i < 32; ++i) {
+                float fi = float(i);
+                float a = fi * 2.39996, rr = sqrt((fi + 0.5) / 32.0) * 0.0095 * coc;
+                vec2 sp = vUV + vec2(cos(a) / uAspectX, sin(a)) * rr;
+                float zs = texture2D(uDepth, sp).r;
+                float lds = zs >= 0.99995 ? 1.0e4 : 2.0 * 0.3 * 200.0 / (200.0 + 0.3 - (zs * 2.0 - 1.0) * (200.0 - 0.3));
+                float cs = clamp(abs(lds - uFocus) / uFocusRange, 0.0, 1.0);
+                vec3 s = texture2D(uScene, sp).rgb;
+                float wgt = smoothstep(0.05, 0.6, cs) * (1.0 + 4.0 * pow(dot(s, vec3(0.333)), 2.0)); // lights bloom into discs
+                acc += s * wgt;
+                wsum += wgt;
+            }
+            c = acc / max(wsum, 1e-3);
+        }
+        // anamorphic streak from the brightest lights (taillights, neon, lamps)
+        vec3 st = vec3(0.0);
+        for (int i = -6; i <= 6; ++i)
+            st += texture2D(uBloom, vUV + vec2(float(i) * 0.014, 0.0)).rgb * (1.0 - abs(float(i)) / 7.0);
+        c += st * vec3(0.55, 0.62, 1.0) * 0.040;
     }
     if (uRays > 1.5) { gl_FragColor = vec4(vec3(skyAt(vUV)), 1.0); return; } // NFSU2_RAYS=2: show the sky mask (dev aid)
     if (uRays > 0.002) {
@@ -1353,9 +1539,15 @@ void main() {
     vec3 b = texture2D(uBloom, vUV).rgb;
     c += b * uBloomStrength;
     c *= uExposure;
-    c = mix(c, filmic(c), 0.55);                       // a soft filmic shoulder on top of the display curve
+    c = mix(c, filmic(c), uStreet > 0.5 ? 1.0 : 0.55); // a soft filmic shoulder on top of the display curve (full ACES in the street)
     float l = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(l), c, 1.08);                         // slight saturation
+    if (uStreet > 0.5) { // the grade: cool blue shadows against warm red / amber highlights, more contrast
+        float lg = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(c * vec3(0.74, 0.98, 1.20), c * vec3(1.14, 0.99, 0.84), smoothstep(0.10, 0.50, lg)); // teal-blue shadows, warm red / amber highlights
+        c = (c - 0.5) * 1.12 + 0.5;
+        c = max(c, 0.0);
+    }
     vec2 dv = vUV - 0.5;
     c *= 1.0 - (uVignette + 0.16 * uMotion + 0.06 * uNitro) * smoothstep(0.18, 0.62, length(dv * vec2(1.0, 0.85)));
     gl_FragColor = vec4(c, 1.0);

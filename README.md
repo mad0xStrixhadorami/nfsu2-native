@@ -52,6 +52,9 @@ switchable off with environment variables (see the table at the bottom) if you w
 <td colspan="2" align="center"><img src="docs/media/main_menu_2026.gif" width="70%" alt="The new main menu"/><br/><sub><b>New main menu</b> — flat and high-contrast: a column of big caps, a hard-edged signal-yellow highlight that glides to the selected row, a one-line description, your player, cash, reputation and current car, and the 3D showroom behind it. The original FEng carousel still runs underneath as the logic (input, selection, navigation); <code>NFSU2_CLASSIC_MENU=1</code> shows the original screen.</sub></td>
 </tr>
 <tr>
+<td colspan="2" align="center"><img src="docs/media/main_menu_night.gif" width="70%" alt="Night street main menu"/><br/><sub><b>Night street showroom</b> — a low rear three-quarter hero shot (0.3 m off the asphalt, aimed up, a 42° lens) on a procedural Israeli night street: apartment blocks with balconies, lit windows and shutters, a kiosk with a neon script sign, sodium streetlights as bokeh discs, wet asphalt mirroring the street and the car, linear-depth depth of field focused on the car, bloom and an anamorphic streak, ACES, a teal / amber grade and edge chromatic aberration (<code>NFSU2_NO_STREET=1</code> restores the studio).</sub></td>
+</tr>
+<tr>
 <td colspan="2" align="center"><img src="docs/media/garage_shops.gif" width="70%" alt="Garage and Body Shop"/><br/><sub><b>Garage and Body Shop</b> — the garage list over the 3D room, then the Body Shop: a category column, the highlighted part with its price, total cost and cash, the camera swooping to the part's side of the car with a title card on every change, and the engine, hood and doors the original's animation data opens. The paint shop, world map, car select, results, reward and countdown are drawn natively the same way.</sub></td>
 </tr>
 <tr>

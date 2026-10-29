@@ -346,6 +346,7 @@ void TrackWorld::InitShaders()
     m_progComposite = GLShader::Build("composite", Shaders::kPostVS, Shaders::kCompositeFS);
     m_progSky = getenv("NFSU2_CLASSIC_SKY") ? 0 : GLShader::Build("sky", Shaders::kSkyVS, Shaders::kSkyFS);
     m_progStageBg = GLShader::Build("stage-bg", Shaders::kSkyVS, Shaders::kStageBgFS);
+    m_progStreetBg = GLShader::Build("street-bg", Shaders::kSkyVS, Shaders::kStreetBgFS);
     m_progFlame = getenv("NFSU2_NO_FLAMES") ? 0 : GLShader::Build("flame", Shaders::kFlameVS, Shaders::kFlameFS);
     printf("[GLSL] programs: world %u, interior %u, car %u, post %u / %u / %u\n", m_progWorld, m_progInterior, m_progCar, m_progBright, m_progBlur, m_progComposite);
 }
@@ -487,6 +488,9 @@ void TrackWorld::PostProcess(int w, int h)
     GLShader::Set1i(GLShader::Uniform(m_progComposite, "uBloom"), 1);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uBloomStrength"), getenv("NFSU2_BLOOM") ? float(atof(getenv("NFSU2_BLOOM"))) : 0.75f);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uVignette"), 0.34f);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uStreet"), m_postStreet ? 1.0f : 0.0f);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uFocus"), m_postFocus);
+    GLShader::Set1f(GLShader::Uniform(m_progComposite, "uFocusRange"), m_postFocusRange);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uExposure"), 1.06f);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uMotion"), getenv("NFSU2_NO_SPEEDFX") ? 0.0f : m_fxMotion);
     GLShader::Set1f(GLShader::Uniform(m_progComposite, "uNitro"), m_fxNitro);
@@ -1467,7 +1471,21 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     glLoadIdentity();
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    if (!sp.overlay) {
+    if (!sp.overlay && sp.street && m_progStreetBg) {
+        GLShader::Use(m_progStreetBg);
+        GLShader::Set2f(GLShader::Uniform(m_progStreetBg, "uCenter"), sp.shiftX, -0.05f);
+        GLShader::Set1f(GLShader::Uniform(m_progStreetBg, "uTime"), sp.time);
+        GLShader::Set1f(GLShader::Uniform(m_progStreetBg, "uHorizon"), std::clamp(-horizonNdc, -0.9f, 0.1f));
+        GLShader::Set1f(GLShader::Uniform(m_progStreetBg, "uAspect"), 1.0f / aspect);
+        GLShader::Set1f(GLShader::Uniform(m_progStreetBg, "uOrbit"), sp.orbit);
+        glBegin(GL_QUADS);
+        glVertex2f(-1, 1);
+        glVertex2f(1, 1);
+        glVertex2f(1, -1);
+        glVertex2f(-1, -1);
+        glEnd();
+        GLShader::Use(0);
+    } else if (!sp.overlay) {
     GLShader::Use(m_progStageBg);
     GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent"), sp.accent[0], sp.accent[1], sp.accent[2]);
     GLShader::Set3f(GLShader::Uniform(m_progStageBg, "uAccent2"), sp.accent2[0], sp.accent2[1], sp.accent2[2]);
@@ -1529,7 +1547,7 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
                 const float a = float(i) * 6.2831853f / kSeg;
                 for (int e = 0; e < 2; ++e) {
                     const float rr = kRing[ring + e][0];
-                    glColor4f(0.022f, 0.028f, 0.040f, kRing[ring + e][1]);
+                    glColor4f(0.022f, 0.028f, 0.040f, kRing[ring + e][1] * (sp.street ? 0.30f : 1.0f)); // street: the wet road mirrors the street through it
                     glVertex3f(std::cos(a) * rr, std::sin(a) * rr, 0.0f);
                 }
             }
@@ -1551,6 +1569,22 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
             glEnd();
         }
     }
+    if (sp.street && !sp.overlay) { // the red wash of the taillights on the wet road behind the car, and a warm streetlamp pool beside it
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        auto pool = [&](float cx, float cy, float rx, float ry, float r, float g, float b, float a) {
+            glBegin(GL_TRIANGLE_FAN);
+            glColor4f(r, g, b, a);
+            glVertex3f(cx, cy, 0.004f);
+            for (int i = 0; i <= 32; ++i) {
+                const float an = float(i) * 6.2831853f / 32.0f;
+                glColor4f(r, g, b, 0.0f);
+                glVertex3f(cx + std::cos(an) * rx, cy + std::sin(an) * ry, 0.004f);
+            }
+            glEnd();
+        };
+        pool(-3.3f, 0.0f, 3.4f, 2.2f, 1.0f, 0.06f, 0.04f, 0.40f);
+        pool(-1.0f, 3.2f, 3.6f, 2.0f, 1.0f, 0.55f, 0.20f, 0.20f);
+    }
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glEnable(GL_TEXTURE_2D);
@@ -1561,8 +1595,12 @@ bool TrackWorld::RenderStage(SDL_Renderer *renderer, int width, int height, cons
     m_raysK = 0.0f;
     if (sp.overlay)
         glDisable(GL_SCISSOR_TEST);
-    else
+    else {
+        m_postStreet = sp.street;
+        m_postFocus = sp.distance, m_postFocusRange = 5.5f;
         PostProcess(width, height);
+        m_postStreet = false;
+    }
     return true;
 }
 

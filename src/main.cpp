@@ -1095,15 +1095,29 @@ int main(int argc, char **argv)
             sp.orbit = 0.5f + seconds * 0.18f;
             sp.shiftX = 0.0f;
             sp.distance = 9.6f;
-        } else { // main menu: a three-quarter view with a gentle sway, the car on the right
-            sp.orbit = 0.62f + 0.10f * std::sin(seconds * 0.23f);
-            sp.shiftX = 0.36f;
-            sp.distance = 9.0f;
-            sp.lookZ = 1.0f;
+        } else { // main menu: a low rear three-quarter hero shot on a night street (ISSUES #381), the car on the right
+            sp.street = !getenv("NFSU2_NO_STREET");
+            if (sp.street) {
+                sp.orbit = 3.14159265f - 0.70f + 0.06f * std::sin(seconds * 0.23f); // behind the car, a little to its side
+                sp.shiftX = 0.34f;
+                sp.distance = 6.5f;
+                sp.height = 0.30f;  // just above the asphalt
+                sp.lookZ = 0.75f;   // aimed 4 degrees up at the car
+                sp.fov = 54.6f;     // = a 42 degree vertical lens (the field is horizontal at 4:3): a compressed, undistorted perspective
+            } else {
+                sp.orbit = 0.62f + 0.10f * std::sin(seconds * 0.23f);
+                sp.shiftX = 0.36f;
+                sp.distance = 9.0f;
+                sp.lookZ = 1.0f;
+            }
             // a warm concrete-and-sodium studio instead of the default blue wash (the menu itself carries the one accent colour)
         }
         sp.accent[0] = 0.42f, sp.accent[1] = 0.36f, sp.accent[2] = 0.28f; // one warm concrete studio for every menu car scene
         sp.accent2[0] = 0.20f, sp.accent2[1] = 0.17f, sp.accent2[2] = 0.08f;
+        if (sp.street) { // the night street: warm amber from the shop side against a cool blue rim
+            sp.accent[0] = 0.55f, sp.accent[1] = 0.30f, sp.accent[2] = 0.12f;
+            sp.accent2[0] = 0.10f, sp.accent2[1] = 0.28f, sp.accent2[2] = 0.60f;
+        }
         sp.time = seconds;
         SDL_RenderSetLogicalSize(ren, 0, 0);
         int bw, bh;
@@ -3881,6 +3895,26 @@ int main(int argc, char **argv)
                 pu.bannerText = ph.bannerText.c_str(), pu.bannerSub = ph.bannerSub.c_str();
                 modernUi.DrawPursuit(w, h, pu, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
+            // Stage cleared (ISSUES #380): shown wherever the player lands after the win, the garage included.
+            {
+                static Uint32 stageStart = 0;
+                static std::string stageBody;
+                static int stageNo = 0;
+                int sn = 0;
+                std::string rg;
+                if (modernUi.Ready() && !pausePkg && !startup.StatusOpen() && !startup.OfferScreenOpen() && startup.TakeStageCleared(sn, rg)) {
+                    stageNo = sn;
+                    stageBody = rg.empty() ? "A new region is open." : "REGION " + std::to_string(sn + 1) + " IS OPEN  -  " + rg;
+                    stageStart = now ? now : 1;
+                }
+                if (stageStart && modernUi.Ready() && !pausePkg && now - stageStart < 7000) {
+                    SDL_RenderSetLogicalSize(ren, 0, 0);
+                    int tw, th;
+                    SDL_GetRendererOutputSize(ren, &tw, &th);
+                    modernUi.DrawToast(tw, th, "CAREER", "STAGE " + std::to_string(stageNo) + " CLEARED", stageBody, float(now - stageStart) * 0.001f, 7.0f);
+                    SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                }
             }
             // A career series race start (ISSUES #334): the toast comes up once the race world is in.
             if (inWorld && modernUi.Ready() && !pausePkg && !cribPkg && (!seriesToastStart || now - seriesToastStart >= 6000)) {

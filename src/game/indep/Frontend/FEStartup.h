@@ -300,6 +300,7 @@ public:
     std::string SeriesRaceTag() const; // " - RACE 2/3", empty outside a series (the HUD's event label)
     // The toast a series race start shows (race number and standings); taken once.
     bool TakeSeriesToast(std::string &title, std::string &body);
+    bool TakeStageCleared(int &stage, std::string &region); // a stage was cleared by the last win (0x002cd480 message type 7, ISSUES #380)
     // What the last finished career event paid (ISSUES #313), for UI_PostRaceReward.fng: set by AwardCareerResult, taken once.
     struct RaceReward {
         bool valid = false;
@@ -714,7 +715,8 @@ private:
         std::string toastTitle, toastBody;
         bool toast = false;       // the start toast has not been taken yet
     } m_series;
-    bool m_seriesNextRace = false; // the results screen's Continue starts the next race of the series
+    bool m_seriesNextRace = false;
+    int m_stageClearedNow = 0; // the results screen's Continue starts the next race of the series
     void StartSeriesRace();
     std::vector<bool> m_trackLocked; // per m_tracks entry: Quick Race lock (0x001facc0 item +8, #157)
     std::vector<int> m_cribActions;
