@@ -243,6 +243,8 @@ public:
         int purse = 0;
     };
     bool WorldMapState(WorldMapInfo &out) const;
+    // The garage's own car select (UI_CareerCarSelect.fng): the highlighted slot and the number of owned cars (ISSUES #376).
+    bool GarageCarSelectState(int &slot, int &count) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).

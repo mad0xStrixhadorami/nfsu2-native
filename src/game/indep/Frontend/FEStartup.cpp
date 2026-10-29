@@ -303,6 +303,20 @@ bool FEStartupSequence::CarSelectState(std::string &kicker, std::string &title, 
     return true;
 }
 
+bool FEStartupSequence::GarageCarSelectState(int &slot, int &count) const
+{
+    if (!m_engine || !m_profile.valid)
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_CareerCarSelect.fng") == 0);
+    if (!on)
+        return false;
+    slot = int(m_csSel);
+    count = int(m_profile.cars.size());
+    return count > 0;
+}
+
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
 {
     if (m_scroller.Empty())

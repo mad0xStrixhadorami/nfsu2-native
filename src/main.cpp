@@ -927,15 +927,25 @@ int main(int argc, char **argv)
             return false;
         {
             ModernUI::CarSelect cs;
-            if (fe.PreviewScreenOpen() && startup.CarSelectState(cs.kicker, cs.title, cs.customize)) { // the car select (ISSUES #369)
+            int gSlot = 0, gCount = 0;
+            const bool garagePick = startup.GarageCarSelectState(gSlot, gCount);
+            if ((fe.PreviewScreenOpen() || garagePick) && (garagePick || startup.CarSelectState(cs.kicker, cs.title, cs.customize))) { // the car select (ISSUES #369, #376)
+                if (garagePick)
+                    cs.kicker = "GARAGE", cs.title = "YOUR CARS", cs.customize = false;
                 const std::string folder = fe.PreviewCarName();
                 cs.make = fe.CarManufacturer(folder);
                 std::string full = fe.CarDisplayName(folder);
                 cs.model = !cs.make.empty() && full.compare(0, cs.make.size(), cs.make) == 0 && full.size() > cs.make.size() + 1 ? full.substr(cs.make.size() + 1) : folder;
-                cs.group = "STOCK CAR";
+                cs.group = garagePick ? "" : "STOCK CAR";
                 for (int k = 0; k < 3; ++k)
                     cs.stats[k] = fe.StatValues()[k];
                 cs.index = int(fe.PreviewCarIndex()), cs.count = int(fe.CarRosterSize());
+                if (garagePick) {
+                    cs.index = gSlot, cs.count = gCount;
+                    char grp[24];
+                    snprintf(grp, sizeof(grp), "GARAGE SLOT %03d", gSlot + 1);
+                    cs.group = grp;
+                }
                 size_t ms = 0;
                 int mon = -1, rep = -1;
                 startup.MainMenuState(ms, cs.player, mon, rep);
