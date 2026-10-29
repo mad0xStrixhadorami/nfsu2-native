@@ -3713,8 +3713,31 @@ int main(int argc, char **argv)
                                       startup.LastMenu() && strcasecmp(startup.LastMenu(), "UI_CareerCrib.fng") == 0 &&
                                       cribPkg->GetName() && strcasecmp(cribPkg->GetName(), "UI_CareerCrib.fng") == 0 &&
                                       startup.CribMenuState(garageSel, garageLabels, garageDis);
+            bool nativeWorldMap = false;
+            {
+                FEStartupSequence::WorldMapInfo wi;
+                if (cribPkg && modernUi.Ready() && !getenv("NFSU2_CLASSIC_MENU") && !pausePkg && !modernPause && minimapPixels.size() == 512 * 512 &&
+                    startup.WorldMapState(wi)) { // the career World Map (ISSUES #375)
+                    ModernUI::WorldMap wm;
+                    wm.area = "REGION " + std::to_string(wi.area);
+                    wm.canPrev = wi.canPrev, wm.canNext = wi.canNext, wm.selected = int(wi.selected), wm.purse = wi.purse;
+                    for (const auto &r : wi.rows)
+                        wm.rows.push_back({r.name, r.type, r.done});
+                    wm.status = wi.status, wm.type = wi.type, wm.distance = wi.distance, wm.bestLabel = wi.bestLabel, wm.best = wi.best;
+                    size_t ms = 0;
+                    int wrep = -1;
+                    startup.MainMenuState(ms, wm.player, wm.money, wrep);
+                    wm.pixels = minimapPixels.data(), wm.mapSize = 512;
+                    int mw, mh;
+                    SDL_GetRendererOutputSize(ren, &mw, &mh);
+                    SDL_RenderSetLogicalSize(ren, 0, 0);
+                    modernUi.DrawWorldMap(mw, mh, wm, float(now) * 0.001f);
+                    SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                    nativeWorldMap = true;
+                }
+            }
             bool nativeGarageList = false;
-            if (!nativeGarage && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause))) {
+            if (!nativeGarage && !nativeWorldMap && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause))) {
                 int glw, glh;
                 SDL_GetRendererOutputSize(ren, &glw, &glh);
                 if (pausePkg) { // the road behind a pause screen is dimmed so the list reads (ISSUES #370)
@@ -3741,6 +3764,8 @@ int main(int argc, char **argv)
                 SDL_RenderSetLogicalSize(ren, 0, 0);
                 modernUi.DrawMainMenu(w, h, gm, float(now) * 0.001f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else if (nativeWorldMap) {
+                // drawn above
             } else if (nativeGarageList) {
                 // drawn above
             } else if (resultsPkg && modernUi.Ready() && !getenv("NFSU2_CLASSIC_MENU") && (!resultsView.rows.empty() || resultsView.reward)) {

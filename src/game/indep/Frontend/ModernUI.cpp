@@ -44,6 +44,8 @@ ModernUI::~ModernUI()
 {
     if (m_map)
         SDL_DestroyTexture(m_map);
+    if (m_wmTex)
+        SDL_DestroyTexture(m_wmTex);
     if (m_loadArt)
         SDL_DestroyTexture(m_loadArt);
     if (m_capture)
@@ -1134,6 +1136,118 @@ void ModernUI::DrawPaintShop(int w, int h, const PaintShop &p, float tm)
     key("ENTER", p.grid ? "INSTALL" : "PICK");
     key("Q / E", "FINISH");
     key("ARROWS", "MOVE");
+}
+
+void ModernUI::DrawWorldMap(int w, int h, const WorldMap &m, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, {14, 14, 15, 255}, {8, 8, 9, 255});
+    // the map, big, on the right (a dark square with the road bitmap on it)
+    if (m.pixels && m.mapSize > 0) {
+        if (!m_wmTex || m_wmTexSize != m.mapSize) {
+            if (m_wmTex)
+                SDL_DestroyTexture(m_wmTex);
+            m_wmTex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, m.mapSize, m.mapSize);
+            m_wmTexSize = m.mapSize;
+            if (m_wmTex)
+                SDL_SetTextureBlendMode(m_wmTex, SDL_BLENDMODE_BLEND);
+            }
+        if (m_wmTex) {
+            if (m.mapNew || true)
+                SDL_UpdateTexture(m_wmTex, nullptr, m.pixels, m.mapSize * 4);
+            const float side = H - 140 * s, mx = W - side - 64 * s, my = 70 * s;
+            Quad({mx - 8 * s, my - 8 * s}, {mx + side + 8 * s, my - 8 * s}, {mx + side + 8 * s, my + side + 8 * s}, {mx - 8 * s, my + side + 8 * s}, A(ink, 255), A(ink, 255), A(ink, 255), A(ink, 255));
+            const SDL_FRect dst{mx, my, side, side};
+            SDL_RenderCopyF(m_r, m_wmTex, nullptr, &dst);
+        }
+    }
+    Quad({0, 0}, {W * 0.46f, 0}, {W * 0.46f - H * 0.1f, H}, {0, H}, A(ink, 238), A(ink, 120), A(ink, 0), A(ink, 238));
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, "CAREER", A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, "WORLD MAP", paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    // the region tab: < REGION n >
+    {
+        const float tx = lx + 200 * s;
+        Text(tx, 60 * s, 30 * s, m.area, signal, 0);
+        const float ah = 8 * s, cy = 76 * s;
+        if (m.canPrev)
+            Quad({tx - 18 * s, cy}, {tx - 18 * s + ah, cy - ah}, {tx - 18 * s + ah, cy + ah}, {tx - 18 * s, cy}, A(paper, 220), A(paper, 220), A(paper, 220), A(paper, 220));
+        if (m.canNext) {
+            const float ex = tx + TextWidth(m.area, 30 * s) + 18 * s;
+            Quad({ex, cy}, {ex - ah, cy - ah}, {ex - ah, cy + ah}, {ex, cy}, A(paper, 220), A(paper, 220), A(paper, 220), A(paper, 220));
+        }
+    }
+    const int n = int(m.rows.size()), rows = std::min(n, 8);
+    const int first = std::clamp(m.selected - rows / 2, 0, std::max(0, n - rows));
+    static float hy = -1.0f, last = -1.0f;
+    const float top = 140 * s, pitch = 46 * s;
+    const float target = top + pitch * float(m.selected - first);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float bw = W * 0.38f, sl = 12 * s;
+    Quad({lx - 20 * s + sl, hy}, {lx - 20 * s + bw + sl, hy}, {lx - 20 * s + bw, hy + pitch * 0.9f}, {lx - 20 * s, hy + pitch * 0.9f}, signal, signal, signal, signal);
+    for (int i = 0; i < rows; ++i) {
+        const int k = first + i;
+        const bool on = k == m.selected;
+        const float ry = top + pitch * float(i);
+        std::string nm = m.rows[size_t(k)].name;
+        nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
+        float sz = 28 * s;
+        const float tw = TextWidth(nm, sz);
+        if (tw > bw * 0.55f)
+            sz *= bw * 0.55f / tw;
+        Text(lx, ry + (pitch * 0.9f - sz) * 0.4f, sz, nm, on ? ink : A(paper, 215), 0);
+        Text(lx + bw - 70 * s, ry + 8 * s, 17 * s, m.rows[size_t(k)].type, on ? A(ink, 190) : A(paper, 130), 2);
+        if (m.rows[size_t(k)].done) // a tick for finished events
+            Quad({lx + bw - 50 * s, ry + 16 * s}, {lx + bw - 42 * s, ry + 26 * s}, {lx + bw - 36 * s, ry + 12 * s}, {lx + bw - 42 * s, ry + 30 * s}, on ? A(ink, 220) : A(signal, 255), on ? A(ink, 220) : A(signal, 255), on ? A(ink, 220) : A(signal, 255), on ? A(ink, 220) : A(signal, 255));
+    }
+    // details of the selected event
+    const float dy = top + pitch * float(rows) + 24 * s;
+    auto field = [&](float x, float y, const char *label, const std::string &val, SDL_Color vc) {
+        Text(x, y, 14 * s, label, A(paper, 140), 0);
+        Text(x, y + 18 * s, 26 * s, val, vc, 0);
+    };
+    field(lx, dy, "STATUS", m.status, m.status == "COMPLETED" ? signal : paper);
+    field(lx + 230 * s, dy, "DISTANCE", m.distance, paper);
+    field(lx, dy + 62 * s, m.bestLabel.c_str(), m.best, signal);
+    char pur[24];
+    snprintf(pur, sizeof(pur), "$%d", m.purse);
+    field(lx + 230 * s, dy + 62 * s, "PURSE", pur, paper);
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - lx, by - 10 * s}, {W - lx, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    float x = lx;
+    if (!m.player.empty()) {
+        Text(x, by + 2 * s, 22 * s, m.player, paper, 0);
+        x += TextWidth(m.player, 22 * s) + 28 * s;
+    }
+    if (m.money >= 0) {
+        char c[32];
+        snprintf(c, sizeof(c), "$%d", m.money);
+        Text(x, by + 2 * s, 22 * s, c, signal, 0);
+    }
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ESC", "BACK");
+    key("ENTER", "START EVENT");
+    key("LEFT / RIGHT", "REGION");
+    key("UP / DOWN", "EVENT");
 }
 
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,

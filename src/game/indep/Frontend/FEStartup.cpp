@@ -5624,6 +5624,61 @@ bool FEStartupSequence::FreeRoamEventAt(uint32_t locator, EngageInfo &out) const
     return true;
 }
 
+bool FEStartupSequence::WorldMapState(WorldMapInfo &out) const
+{
+    if (!m_engine || m_wmEvents.empty())
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_CareerWorldMap.fng") == 0);
+    if (!on)
+        return false;
+    out = WorldMapInfo();
+    out.area = m_wmArea;
+    out.canPrev = m_wmArea > 1;
+    out.canNext = m_wmArea < 5 && (getenv("NFSU2_UNLOCK_ALL") || Career::EventTable::Get().AreaAvailable(m_wmArea + 1, m_profile.completedEvents));
+    for (const Career::Event *ev : m_wmEvents) {
+        WorldMapInfo::Row row;
+        const RaceInfo *r = nullptr;
+        for (const RaceInfo &ri : m_fe->Races())
+            if (!ev->races.empty() && ri.number == ev->races[0])
+                r = &ri;
+        char label[40];
+        if (r) {
+            snprintf(label, sizeof(label), "TRACK_NAME_%d", r->number);
+            row.name = m_fe->LanguageText(bStringHash(label));
+            row.type = m_fe->LanguageText(RaceTypeLabel(CareerRaceType(*ev, *r)));
+        }
+        if (ev->races.size() > 1)
+            row.type += " x" + std::to_string(ev->races.size());
+        row.done = m_profile.valid && m_profile.Completed(ev->id);
+        out.rows.push_back(row);
+    }
+    out.selected = std::min(m_wmSel, m_wmEvents.size() - 1);
+    const Career::Event &ev = *m_wmEvents[out.selected];
+    const RaceInfo *r = nullptr;
+    for (const RaceInfo &ri : m_fe->Races())
+        if (!ev.races.empty() && ri.number == ev.races[0])
+            r = &ri;
+    out.purse = int(ev.purse);
+    out.status = out.rows[out.selected].done ? "COMPLETED" : "NOT COMPLETED";
+    out.type = out.rows[out.selected].type;
+    char text[48];
+    if (r) {
+        snprintf(text, sizeof(text), "%.1f mi", r->length * 0.001f * 0.62137f);
+        out.distance = text;
+    }
+    if (ev.stage == 5) {
+        out.bestLabel = "BEST SCORE";
+        snprintf(text, sizeof(text), "%d", r ? m_records.BestScoreFor(r->number, ev.DirectionFor(r->number)) : 0);
+    } else {
+        out.bestLabel = (ev.stage == 1 || ev.stage == 4) ? "BEST TIME" : "BEST LAP";
+        FormatBestTime(r ? m_records.BestTimeFor(r->number, ev.DirectionFor(r->number)) : 0, text, sizeof(text));
+    }
+    out.best = text;
+    return true;
+}
+
 void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
 {
     char text[48];

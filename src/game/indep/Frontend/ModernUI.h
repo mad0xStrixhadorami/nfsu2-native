@@ -101,6 +101,20 @@ public:
         bool fitted = false;
     };
     void DrawShop(int w, int h, const Shop &sh, float seconds);
+    // The career World Map (ISSUES #375): the event list and details on the left, the city map (RGBA `pixels`, size x size) large on the right.
+    struct WorldMap {
+        std::string area;
+        bool canPrev = false, canNext = false;
+        struct Row { std::string name, type; bool done = false; };
+        std::vector<Row> rows;
+        int selected = 0, purse = 0;
+        std::string status, type, distance, bestLabel, best, player;
+        int money = -1;
+        const uint32_t *pixels = nullptr;
+        int mapSize = 0;
+        bool mapNew = false;
+    };
+    void DrawWorldMap(int w, int h, const WorldMap &m, float seconds);
     // The paint shop (ISSUES #372): the part list on the left, the colour grid along the bottom with the selected swatch ringed.
     struct PaintShop {
         std::vector<std::string> parts;
@@ -161,6 +175,8 @@ private:
         float x0, y0, x1, y1, xoff, yoff, xadv; // atlas rect and layout (pixels at kBakePx)
     };
     SDL_Renderer *m_r = nullptr;
+    SDL_Texture *m_wmTex = nullptr;
+    int m_wmTexSize = 0;
     SDL_Texture *m_font = nullptr, *m_glow = nullptr, *m_map = nullptr, *m_loadArt = nullptr;
     int m_loadW = 0, m_loadH = 0;
     // the animated loading backdrop (ISSUES #310): JPEG frames assets/ui/loading/f001.jpg ... played back and forth at 16 fps with a cross-fade

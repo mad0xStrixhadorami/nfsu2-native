@@ -229,6 +229,20 @@ public:
         int money = 0;
     };
     bool PaintShopState(PaintShopInfo &out) const;
+    // The career World Map's event list for the native screen (ISSUES #375).
+    struct WorldMapInfo {
+        int area = 1;
+        bool canPrev = false, canNext = false;
+        struct Row {
+            std::string name, type;
+            bool done = false;
+        };
+        std::vector<Row> rows;
+        size_t selected = 0;
+        std::string status, type, distance, bestLabel, best;
+        int purse = 0;
+    };
+    bool WorldMapState(WorldMapInfo &out) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
