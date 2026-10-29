@@ -185,7 +185,7 @@ bool FEStartupSequence::ScrollerMenuState(std::string &package, std::vector<std:
     if (!onScreen || !pkg->GetName())
         return false;
     static const char *const kScreens[] = {"UI_StartCareer.fng", "UI_QRModeSelect.fng", "UI_OptionsMain.fng", "UI_ChooseCustomizeCategory.fng",
-                                           "UI_ChoosePerformanceCategory.fng", "UI_ProfileManager.fng"};
+                                           "UI_ChoosePerformanceCategory.fng", "UI_ProfileManager.fng", "UI_PauseOptionsMain.fng", "UI_ChoosePaintCategory.fng"};
     bool ok = false;
     for (const char *k : kScreens)
         ok = ok || strcasecmp(pkg->GetName(), k) == 0;
@@ -260,7 +260,7 @@ bool FEStartupSequence::SettingsMenuState(std::string &kicker, std::string &titl
     if (!onScreen)
         return false;
     const char *name = pkg->GetName();
-    if (strcasecmp(name, "UI_Options.fng") == 0) {
+    if (strcasecmp(name, "UI_Options.fng") == 0 || strcasecmp(name, "UI_PauseOptions.fng") == 0) {
         static const char *const kCats[] = {"AUDIO", "VIDEO", "GAMEPLAY", "PLAYER", "CONTROLS", "EA GAMES", "TRAILERS"};
         kicker = "OPTIONS";
         title = m_optionCategory >= 0 && m_optionCategory < 7 ? kCats[m_optionCategory] : "SETTINGS";

@@ -986,7 +986,8 @@ int main(int argc, char **argv)
         static const struct { const char *pkg, *kicker, *title; } kTitles[] = {
             {"UI_StartCareer.fng", "NEED FOR SPEED", "CAREER"}, {"UI_QRModeSelect.fng", "QUICK RACE", "MODE SELECT"},
             {"UI_OptionsMain.fng", "NEED FOR SPEED", "OPTIONS"}, {"UI_ChooseCustomizeCategory.fng", "GARAGE", "CUSTOMIZE"},
-            {"UI_ChoosePerformanceCategory.fng", "GARAGE", "PERFORMANCE"}, {"UI_ProfileManager.fng", "NEED FOR SPEED", "PROFILE"}};
+            {"UI_ChoosePerformanceCategory.fng", "GARAGE", "PERFORMANCE"}, {"UI_ProfileManager.fng", "NEED FOR SPEED", "PROFILE"},
+            {"UI_PauseOptionsMain.fng", "PAUSED", "OPTIONS"}, {"UI_ChoosePaintCategory.fng", "GARAGE", "PAINT"}};
         ModernUI::MainMenu lm;
         for (const auto &t : kTitles)
             if (strcasecmp(t.pkg, listPkg.c_str()) == 0)
@@ -3674,9 +3675,14 @@ int main(int argc, char **argv)
                                       cribPkg->GetName() && strcasecmp(cribPkg->GetName(), "UI_CareerCrib.fng") == 0 &&
                                       startup.CribMenuState(garageSel, garageLabels, garageDis);
             bool nativeGarageList = false;
-            if (!nativeGarage && cribPkg && sceneMode && !pausePkg && !modernPause) {
+            if (!nativeGarage && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause))) {
                 int glw, glh;
                 SDL_GetRendererOutputSize(ren, &glw, &glh);
+                if (pausePkg) { // the road behind a pause screen is dimmed so the list reads (ISSUES #370)
+                    SDL_RenderSetLogicalSize(ren, 0, 0);
+                    modernUi.DrawFade(glw, glh, 0.6f);
+                    SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                }
                 nativeGarageList = drawNativeList(glw, glh, float(now) * 0.001f);
             }
             fe.SetVerticalNav(nativeGarage || (nativeGarageList && nativeListVertical));
