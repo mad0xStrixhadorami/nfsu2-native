@@ -917,6 +917,20 @@ int main(int argc, char **argv)
     auto drawNativeList = [&](int lw, int lh, float tsec) -> bool {
         if (!modernUi.Ready() || getenv("NFSU2_CLASSIC_MENU") || startup.IsMessageDialogOpen())
             return false;
+        {
+            FEStartupSequence::TrackSelectInfo ti;
+            if (startup.TrackSelectState(ti)) { // the Quick Race track select (ISSUES #367)
+                ModernUI::TrackSelect ts;
+                ts.names = ti.names, ts.locked = ti.locked, ts.selected = int(ti.selected), ts.title = ti.title, ts.type = ti.type;
+                ts.distance = ti.distance, ts.bestLabel = ti.bestLabel, ts.best = ti.best;
+                for (std::string &nm : ts.names)
+                    nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawTrackSelect(lw, lh, ts, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                return true;
+            }
+        }
         std::string listPkg;
         std::vector<std::string> listLabels;
         std::vector<char> listDis;

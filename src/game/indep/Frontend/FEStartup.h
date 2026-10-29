@@ -198,6 +198,14 @@ public:
     // Any whitelisted icon-carousel screen as a native list (ISSUES #361): its package name, the labels, the greyed rows and the selection;
     // false when the scroller's package is not on screen.
     bool ScrollerMenuState(std::string &package, std::vector<std::string> &labels, std::vector<char> &disabled, size_t &selected) const;
+    // The Quick Race track select for the native screen (ISSUES #367).
+    struct TrackSelectInfo {
+        std::vector<std::string> names;
+        std::vector<char> locked;
+        size_t selected = 0;
+        std::string title, type, distance, bestLabel, best;
+    };
+    bool TrackSelectState(TrackSelectInfo &out) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).

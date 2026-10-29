@@ -761,6 +761,100 @@ void ModernUI::DrawCountdown(int w, int h, float left, float goAge)
     }
 }
 
+void ModernUI::DrawTrackSelect(int w, int h, const TrackSelect &t, float tm)
+{
+    if (!m_font || t.names.empty())
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.46f, 0}, {W * 0.46f - H * 0.1f, H}, {0, H}, A(ink, 225), A(ink, 0), A(ink, 0), A(ink, 225));
+    Rect(0, 0, W, 90 * s, A(ink, 150), A(ink, 0));
+    Rect(0, H - 110 * s, W, 110 * s, A(ink, 0), A(ink, 190));
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, "QUICK RACE", A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, t.title, paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    // the list: a window of up to 9 rows that follows the selection
+    const int n = int(t.names.size()), rows = std::min(9, n);
+    int first = std::clamp(t.selected - rows / 2, 0, std::max(0, n - rows));
+    static float hy = -1.0f, last = -1.0f;
+    const float top = 150 * s, pitch = 52 * s;
+    const float target = top + pitch * float(t.selected - first);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float bw = 440 * s, slant = 14 * s;
+    Quad({lx - 22 * s + slant, hy}, {lx - 22 * s + bw + slant, hy}, {lx - 22 * s + bw, hy + pitch * 0.9f}, {lx - 22 * s, hy + pitch * 0.9f}, signal, signal, signal, signal);
+    for (int i = 0; i < rows; ++i) {
+        const int k = first + i;
+        const bool on = k == t.selected, lock = k < int(t.locked.size()) && t.locked[size_t(k)];
+        const float ry = top + pitch * float(i);
+        std::string nm = t.names[size_t(k)];
+        float sz = 32 * s;
+        const float tw = TextWidth(nm, sz);
+        if (tw > 340 * s)
+            sz *= 340 * s / tw;
+        const SDL_Color c = on ? ink : (lock ? A(paper, 90) : A(paper, 220));
+        Text(lx, ry + (pitch * 0.9f - sz) * 0.4f, sz, nm, c, 0);
+        if (lock) // a padlock: a small body and a shackle
+            Quad({lx + bw - 92 * s, ry + 18 * s}, {lx + bw - 76 * s, ry + 18 * s}, {lx + bw - 76 * s, ry + 32 * s}, {lx + bw - 92 * s, ry + 32 * s}, on ? A(ink, 200) : A(paper, 110), on ? A(ink, 200) : A(paper, 110), on ? A(ink, 200) : A(paper, 110), on ? A(ink, 200) : A(paper, 110));
+        char idx[8];
+        snprintf(idx, sizeof(idx), "%02d", k + 1);
+        Text(lx + bw - 30 * s, ry + 16 * s, 16 * s, idx, on ? A(ink, 170) : A(paper, 80), 2);
+    }
+    // scrollbar
+    if (n > rows) {
+        const float bx = lx + bw + 24 * s, bh = pitch * float(rows) * 0.9f;
+        Quad({bx, top}, {bx + 3 * s, top}, {bx + 3 * s, top + bh}, {bx, top + bh}, A(paper, 50), A(paper, 50), A(paper, 50), A(paper, 50));
+        const float th = std::max(24 * s, bh * float(rows) / float(n)), ty = top + (bh - th) * float(first) / float(std::max(1, n - rows));
+        Quad({bx - 1 * s, ty}, {bx + 4 * s, ty}, {bx + 4 * s, ty + th}, {bx - 1 * s, ty + th}, signal, signal, signal, signal);
+    }
+    // the detail panel on the right
+    const float rx = W - 72 * s;
+    const std::string &nm = t.names[size_t(std::clamp(t.selected, 0, n - 1))];
+    float nsz = 64 * s;
+    const float nw = TextWidth(nm, nsz);
+    if (nw > W * 0.42f)
+        nsz *= W * 0.42f / nw;
+    Text(rx, H * 0.36f, nsz, nm, paper, 2);
+    Quad({rx - 46 * s, H * 0.36f - 12 * s}, {rx, H * 0.36f - 12 * s}, {rx, H * 0.36f - 8 * s}, {rx - 46 * s, H * 0.36f - 8 * s}, signal, signal, signal, signal);
+    float fy = H * 0.36f + 100 * s;
+    auto field = [&](const char *label, const std::string &val, SDL_Color vc) {
+        Text(rx, fy, 15 * s, label, A(paper, 140), 2);
+        Text(rx, fy + 18 * s, 34 * s, val, vc, 2);
+        fy += 78 * s;
+    };
+    field("RACE TYPE", t.type, paper);
+    field("DISTANCE", t.distance, paper);
+    field(t.bestLabel.c_str(), t.best, signal);
+    const bool lockSel = t.selected < int(t.locked.size()) && t.locked[size_t(t.selected)];
+    if (lockSel)
+        Text(rx, fy, 22 * s, "LOCKED - WIN CAREER EVENTS TO OPEN", A(paper, 170), 2);
+    // bottom bar
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - lx, by - 10 * s}, {W - lx, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    char pg[24];
+    snprintf(pg, sizeof(pg), "%d / %d", t.selected + 1, n);
+    Text(lx, by + 2 * s, 22 * s, pg, paper, 0);
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ENTER", "SELECT");
+    key("ESC", "BACK");
+    key("ARROWS", "MOVE");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

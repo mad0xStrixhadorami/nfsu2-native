@@ -67,6 +67,14 @@ public:
     void DrawResults(int w, int h, const Results &r, float seconds);
     // The race-start countdown (ISSUES #363): `left` seconds to go (3 .. 0), or `goAge` seconds since the green light (< 0: none).
     void DrawCountdown(int w, int h, float left, float goAge);
+    // The Quick Race track select (ISSUES #367): a scrolling list of tracks with lock marks and a detail panel for the highlighted one.
+    struct TrackSelect {
+        std::vector<std::string> names;
+        std::vector<char> locked;
+        int selected = 0;
+        std::string title, type, distance, bestLabel, best, region;
+    };
+    void DrawTrackSelect(int w, int h, const TrackSelect &t, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);

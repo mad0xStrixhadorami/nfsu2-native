@@ -202,6 +202,52 @@ bool FEStartupSequence::ScrollerMenuState(std::string &package, std::vector<std:
     return !labels.empty();
 }
 
+static void FormatBestTime(int millis, char *out, size_t n);
+
+bool FEStartupSequence::TrackSelectState(TrackSelectInfo &out) const
+{
+    if (m_tracks.empty() || m_scroller.Empty() || !m_engine || !m_scroller.Package() || !m_scroller.Package()->GetName() ||
+        strcasecmp(m_scroller.Package()->GetName(), "UI_QRTrackSelect.fng") != 0)
+        return false;
+    bool onScreen = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        onScreen = onScreen || p == m_scroller.Package();
+    if (!onScreen)
+        return false;
+    out = TrackSelectInfo();
+    for (const RaceInfo &r : m_tracks) {
+        char label[40];
+        snprintf(label, sizeof(label), "TRACK_NAME_%d", r.number);
+        out.names.push_back(m_fe->LanguageText(bStringHash(label)));
+    }
+    for (size_t i = 0; i < m_tracks.size(); ++i)
+        out.locked.push_back(i < m_trackLocked.size() && m_trackLocked[i] ? 1 : 0);
+    out.selected = std::min(m_scroller.Selected(), m_tracks.size() - 1);
+    out.title = m_raceMode == 4 ? "SPLIT SCREEN" : "TRACK SELECT";
+    static const uint32_t kTypes[] = {0x93fdee74, 0xdcb9f861, 0x35102edf, 0xd7162cfa, 0x75f903f4};
+    uint32_t th = 0x93fdee74;
+    if (m_raceType >= 0 && m_raceType <= 4)
+        th = kTypes[m_raceType];
+    else if (m_raceType == 9)
+        th = 0x6f2421b7;
+    else if (m_raceType == 10)
+        th = 0x30da61e1;
+    out.type = m_fe->LanguageText(th);
+    const RaceInfo &r = m_tracks[out.selected];
+    char text[40];
+    snprintf(text, sizeof(text), "%.2f mi", r.length * 0.001f * 0.62137f);
+    out.distance = text;
+    if (m_raceType == 3) {
+        out.bestLabel = "BEST SCORE";
+        snprintf(text, sizeof(text), "%d", m_records.BestScoreFor(r.number, 0));
+    } else {
+        out.bestLabel = m_raceType == 1 || m_raceType == 2 ? "BEST TIME" : "BEST LAP";
+        FormatBestTime(m_records.BestTimeFor(r.number, 0), text, sizeof(text));
+    }
+    out.best = text;
+    return true;
+}
+
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
 {
     if (m_scroller.Empty())
