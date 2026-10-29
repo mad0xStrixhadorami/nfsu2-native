@@ -7,6 +7,10 @@ int bChunkLoaderFunctionNull(bChunk *chunk) {
 
 bChunkLoader bChunkLoaderNull(0, bChunkLoaderFunctionNull, bChunkLoaderFunctionNull);
 
+// the loader registry (the upstream sources never defined it: no chunk loader was ever constructed)
+bChunkLoader *bChunkLoader::sLoaderTable[64] = {};
+unsigned char bChunkLoader::sNumLoaders[64] = {};
+
 bChunkLoader::bChunkLoader(unsigned int id, int (*loader)(bChunk *), int (*unloader)(bChunk *)) {
     this->LoaderFunction = loader;
     this->UnloaderFunction = unloader;
@@ -86,7 +90,7 @@ bool bValidateChunks(bChunk *first_chunk, int sizeof_chunks) {
         const int size = chunk->GetSize();
         if (size < 0 || offset + static_cast<int>(sizeof(bChunk)) + size > sizeof_chunks)
             return false;
-        if (chunk->IsNested() && !bValidateChunks(reinterpret_cast<bChunk *>(chunk->GetData()), size))
+        if (chunk->IsNestedChunk() && !bValidateChunks(reinterpret_cast<bChunk *>(chunk->GetData()), size))
             return false;
         offset += static_cast<int>(sizeof(bChunk)) + size;
     }

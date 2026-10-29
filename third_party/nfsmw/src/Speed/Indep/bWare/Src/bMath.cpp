@@ -55,6 +55,7 @@ void bPlatEndianSwap(bMatrix4 *value) {
 }
 
 // 16.16 reciprocal
+bFix bDiv(bFix a, bFix b);
 bFix bInverse(bFix a) {
     return bDiv(0x10000, a);
 }
