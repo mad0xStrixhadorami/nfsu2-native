@@ -1275,6 +1275,8 @@ int main(int argc, char **argv)
     u32 worldLastPad = 0;
     RaceSession::Config raceConfig;
     float chaseYaw = 0.0f, steer = 0.0f;
+    bool lookHeld = false, lookCaptured = false; // free look (#383)
+    float lookYawT = 0, lookPitchT = 0, lookZoomT = 1, lookIdle = 0, lookYaw = 0, lookPitch = 0, lookZoom = 1, lookYawV = 0, lookPitchV = 0, lookZoomV = 0;
     CameraRig::Chase chaseRig;       // ISSUES #285
     CameraRig::Garage garageRig;
     CameraRig::Clearance introClear;
@@ -2434,6 +2436,18 @@ int main(int argc, char **argv)
                 Sky::NextPreset(); // day -> afternoon -> sunset -> night (ISSUES #333)
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F6 && !ev.key.repeat)
                 Sky::ToggleRunning(); // freeze / run the clock
+            // free look (ISSUES #383): hold the right mouse button (the pointer is captured) and move the mouse to look around the car; the wheel zooms
+            if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_RIGHT)
+                lookHeld = true;
+            if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_RIGHT)
+                lookHeld = false;
+            if (ev.type == SDL_MOUSEMOTION && lookHeld) {
+                lookYawT -= float(ev.motion.xrel) * 0.0042f;
+                lookPitchT = std::clamp(lookPitchT + float(ev.motion.yrel) * 0.0035f, -0.10f, 1.40f);
+                lookIdle = 0.0f;
+            }
+            if (ev.type == SDL_MOUSEWHEEL && lookHeld)
+                lookZoomT = std::clamp(lookZoomT * (ev.wheel.y > 0 ? 0.9f : 1.1f), 0.45f, 2.2f);
             if (ev.type == SDL_TEXTINPUT && startup.KeyboardActive()) // the name-entry keyboard (#204)
                 startup.OnTextInput(ev.text.text);
         }
@@ -3372,10 +3386,40 @@ int main(int argc, char **argv)
                     world.GroundHeight(bx, by, car.Z() + 2.0f, in.groundZ);
                     in.nitrous = car.NitrousActive();
                     in.rigid = camSetting < 2;
+                    {   // free look: the target follows the mouse, the camera eases to it; a moment after release it swings back behind the car
+                        static const char *lookEnv = getenv("NFSU2_LOOK"); // dev aid: "yawDeg,pitchDeg[,zoom]" holds a look without the mouse
+                        if (lookEnv && lookYawT == 0.0f && lookPitchT == 0.0f) {
+                            float yd = 0, pd = 0, zm = 1;
+                            sscanf(lookEnv, "%f,%f,%f", &yd, &pd, &zm);
+                            lookYawT = yd * 0.0174532925f, lookPitchT = pd * 0.0174532925f, lookZoomT = zm;
+                        }
+                        const bool allowLook = (lookHeld || lookEnv) && !sceneMode && !pausePkg && !cribPkg && !modernPause && !race.InIntro();
+                        if (allowLook != lookCaptured && !lookEnv) {
+                            SDL_SetRelativeMouseMode(allowLook ? SDL_TRUE : SDL_FALSE);
+                            lookCaptured = allowLook;
+                        }
+                        const float ldt = dt > 0.0f ? std::min(dt, 0.05f) : 0.016f;
+                        if (allowLook)
+                            lookIdle = 0.0f;
+                        else {
+                            lookIdle += ldt;
+                            if (lookIdle > 0.8f) // the recentre
+                                lookYawT = lookPitchT = 0.0f, lookZoomT = 1.0f;
+                        }
+                        lookYawT = CameraRig::Wrap(lookYawT);
+                        lookYaw = CameraRig::Damp(lookYaw, lookYaw + CameraRig::Wrap(lookYawT - lookYaw), lookYawV, allowLook ? 0.10f : 0.55f, ldt);
+                        lookPitch = CameraRig::Damp(lookPitch, lookPitchT, lookPitchV, allowLook ? 0.10f : 0.5f, ldt);
+                        lookZoom = CameraRig::Damp(lookZoom, lookZoomT, lookZoomV, 0.2f, ldt);
+                        if (!allowLook && std::fabs(lookYawT) < 1e-3f && std::fabs(lookYaw) < 1e-3f)
+                            lookYaw = 0.0f, lookYawV = 0.0f;
+                    }
+                    in.orbit = camOrbit + lookYaw;
+                    in.orbitPitch = lookPitch;
+                    in.zoom = lookZoom;
                     in.orbit = camOrbit;
                     in.timeS = float(now) * 0.001f;
                     camera = chaseRig.Update(world, in, dt > 0.0f ? dt : 0.016f);
-                    chaseYaw = camera.yaw - camOrbit;
+                    chaseYaw = camera.yaw - camOrbit - lookYaw;
                 }
                 introBars = 0.0f;
                 if (race.InIntro() && !sceneMode) {
@@ -3392,6 +3436,21 @@ int main(int argc, char **argv)
                         float g = camera.z - 1.0f;
                         if (world.GroundHeight(camera.x, camera.y, camera.z + 1.5f, g))
                             camera.z = std::max(camera.z, g + 0.35f);
+                    }
+                    {   // a final low-pass on the cinematic: the clearance snap and the ground clamp no longer jerk the lens (ISSUES #383)
+                        static float f[6], fv[6];
+                        const float raw[6] = {camera.x, camera.y, camera.z, camera.yaw, camera.pitch, camera.fov};
+                        const float fdt = dt > 0.0f ? std::min(dt, 0.05f) : 0.016f;
+                        const bool first = race.IntroElapsed() < 0.05f;
+                        for (int k = 0; k < 6; ++k) {
+                            if (first)
+                                f[k] = raw[k], fv[k] = 0.0f;
+                            else if (k == 3)
+                                f[k] = CameraRig::DampAngle(f[k], raw[k], fv[k], 0.12f, fdt);
+                            else
+                                f[k] = CameraRig::Damp(f[k], raw[k], fv[k], k < 3 ? 0.10f : 0.14f, fdt);
+                        }
+                        camera.x = f[0], camera.y = f[1], camera.z = f[2], camera.yaw = f[3], camera.pitch = f[4], camera.fov = f[5];
                     }
                     if ((pressed & FENativeInterface::kPadAccept) && race.IntroElapsed() > 0.8f)
                         race.SkipIntro(); // Accept skips the cinematic (not the press that started the race)

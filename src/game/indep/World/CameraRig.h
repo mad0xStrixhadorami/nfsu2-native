@@ -63,7 +63,9 @@ struct Chase {
         float groundZ;                   // road height under the camera spot
         bool nitrous;
         bool rigid;                      // bumper / hood views: no lag, no widening
-        float orbit;                     // dev aid: extra yaw
+        float orbit;                     // extra yaw: the free look (mouse) and the dev aid
+        float orbitPitch = 0.0f;         // free look: raises the camera on its sphere around the car (radians, + = above)
+        float zoom = 1.0f;               // free look: distance multiplier
         float timeS;                     // seconds, for the shake
     };
     bool init = false;
@@ -107,17 +109,25 @@ struct Chase {
         pitch = Damp(pitch, in.rigid ? -0.17f : wantPitch, pitchV, 0.35f, dt);
 
         const float viewYaw = yaw + in.orbit;
-        float cx = in.x - std::cos(viewYaw) * dist, cy = in.y - std::sin(viewYaw) * dist;
+        // free look: the camera rides a sphere around the car; the horizontal reach shrinks as it climbs
+        const float op = std::clamp(in.orbitPitch, -0.12f, 1.45f), cop = std::cos(op), reach = dist * in.zoom;
+        float cx = in.x - std::cos(viewYaw) * reach * cop, cy = in.y - std::sin(viewYaw) * reach * cop;
         const float want = std::max(in.z, in.groundZ) + in.up;
         zOff = Damp(zOff, want - in.z, zV, in.rigid ? 0.03f : 0.2f, dt);
-        float cz = in.z + zOff;
+        float cz = in.z + zOff + std::sin(op) * reach;
         if (in.groundZ + 0.45f > cz)
             cz = in.groundZ + 0.45f;
         if (!in.rigid)
             clear.Apply(world, in.x, in.y, in.z + 0.9f, cx, cy, cz, dt, 0.5f); // never closer than half the distance: inside the car is worse than inside a kerb
 
         TrackWorld::Camera c;
-        c.x = cx, c.y = cy, c.z = cz, c.yaw = viewYaw, c.pitch = in.orbit == 0.0f ? pitch : -0.08f, c.fov = fov;
+        c.x = cx, c.y = cy, c.z = cz, c.yaw = viewYaw, c.pitch = pitch, c.fov = fov;
+        // free look: aim at the car (a little above its roof line) and blend from the chase pitch as the look grows
+        const float look = std::clamp((std::fabs(in.orbit) + std::fabs(op) + std::fabs(in.zoom - 1.0f)) * 6.0f, 0.0f, 1.0f);
+        if (look > 0.0f) {
+            const float hd = std::max(0.5f, std::hypot(in.x - cx, in.y - cy));
+            c.pitch = pitch + (std::atan2(in.z + 1.0f - cz, hd) - pitch) * look;
+        }
         // Speed / nitrous shake: a few incommensurate sines, small enough to read as vibration, not wobble.
         const float amp = in.rigid ? 0.0f : 0.0016f * speedK * speedK + 0.0042f * nitro;
         const float t = in.timeS;
