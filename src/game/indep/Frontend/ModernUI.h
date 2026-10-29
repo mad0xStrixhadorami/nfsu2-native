@@ -84,6 +84,15 @@ public:
         int money = -1, reputation = -1;
     };
     void DrawSettings(int w, int h, const Settings &st, float seconds);
+    // The car select panel (ISSUES #369): the car over the 3D stage, its make and model large, three stat bars, the roster position.
+    struct CarSelect {
+        std::string kicker, title, make, model, group;
+        float stats[3] = {0.5f, 0.5f, 0.5f};
+        int index = 0, count = 0;
+        std::string player;
+        bool customize = true; // show the Customize key
+    };
+    void DrawCarSelect(int w, int h, const CarSelect &c, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);

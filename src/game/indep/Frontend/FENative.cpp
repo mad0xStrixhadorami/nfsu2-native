@@ -539,6 +539,8 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::ve
     };
     float values[3], preview[3];
     statValues(m_previewPerfParts, values);
+    for (int k = 0; k < 3; ++k)
+        m_statVals[k] = std::clamp(values[k], 0.03f, 1.0f);
     if (previewParts)
         statValues(*previewParts, preview);
     static const char *const kBars[3] = {"ACCEL", "TOP_SPEED", "HANDLING"};
@@ -593,7 +595,7 @@ void FENativeInterface::UpdateStatBars(FEPackage *pkg, bool force, const std::ve
 // so synthesize an FEString here and reuse whatever font the screen itself uses.
 void FENativeInterface::DrawCarPreviewLabel(FEPackage *pkg)
 {
-    if (!m_renderer || !pkg || m_carTable.empty())
+    if (!m_renderer || !pkg || m_carTable.empty() || m_hideCarLabel)
         return;
     std::string key = m_previewCarName;
     for (char &ch : key)

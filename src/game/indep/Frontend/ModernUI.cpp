@@ -923,6 +923,69 @@ void ModernUI::DrawSettings(int w, int h, const Settings &st, float tm)
     key("UP / DOWN", "MOVE");
 }
 
+void ModernUI::DrawCarSelect(int w, int h, const CarSelect &c, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.40f, 0}, {W * 0.40f - H * 0.1f, H}, {0, H}, A(ink, 230), A(ink, 0), A(ink, 0), A(ink, 230));
+    Rect(0, 0, W, 90 * s, A(ink, 150), A(ink, 0));
+    Rect(0, H - 110 * s, W, 110 * s, A(ink, 0), A(ink, 190));
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, c.kicker, A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, c.title, paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    // make and model
+    const float k = std::min(1.0f, tm * 4.0f);
+    Text(lx, 190 * s, 22 * s, c.make, A(signal, 255), 0);
+    float msz = 76 * s;
+    const float mw = TextWidth(c.model, msz);
+    if (mw > W * 0.36f)
+        msz *= W * 0.36f / mw;
+    Text(lx, 214 * s, msz, c.model, A(paper, 255), 0);
+    if (!c.group.empty())
+        Text(lx, 214 * s + msz + 6 * s, 18 * s, c.group, A(paper, 150), 0);
+    // stats
+    static const char *const kLabel[3] = {"ACCELERATION", "TOP SPEED", "HANDLING"};
+    const float bw = 300 * s, bx = lx, by0 = 420 * s;
+    for (int i = 0; i < 3; ++i) {
+        const float y = by0 + 66 * s * float(i);
+        Text(bx, y, 17 * s, kLabel[i], A(paper, 170), 0);
+        char num[8];
+        snprintf(num, sizeof(num), "%d", int(c.stats[i] * 100.0f + 0.5f));
+        Text(bx + bw, y - 4 * s, 26 * s, num, paper, 2);
+        Quad({bx, y + 28 * s}, {bx + bw, y + 28 * s}, {bx + bw - 6 * s, y + 38 * s}, {bx - 6 * s, y + 38 * s}, A(paper, 40), A(paper, 40), A(paper, 40), A(paper, 40));
+        const float fw = bw * std::clamp(c.stats[i], 0.0f, 1.0f) * k;
+        Quad({bx, y + 28 * s}, {bx + fw, y + 28 * s}, {bx + fw - 6 * s, y + 38 * s}, {bx - 6 * s, y + 38 * s}, signal, signal, signal, signal);
+    }
+    // roster position as pips along the bottom of the car area
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - lx, by - 10 * s}, {W - lx, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    char pg[24];
+    snprintf(pg, sizeof(pg), "%d / %d", c.index + 1, std::max(1, c.count));
+    Text(lx, by + 2 * s, 22 * s, pg, paper, 0);
+    if (!c.player.empty())
+        Text(lx + 120 * s, by + 2 * s, 22 * s, c.player, A(paper, 190), 0);
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ENTER", "SELECT");
+    if (c.customize)
+        key("X", "CUSTOMIZE");
+    key("ESC", "BACK");
+    key("LEFT / RIGHT", "CAR");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

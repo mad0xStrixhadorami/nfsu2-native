@@ -917,8 +917,33 @@ int main(int argc, char **argv)
     bool nativeListVertical = false; // the list just drawn is a carousel (Up / Down map to Left / Right); settings lists are not
     auto drawNativeList = [&](int lw, int lh, float tsec) -> bool {
         nativeListVertical = false;
+        fe.SetHideCarLabel(false);
         if (!modernUi.Ready() || getenv("NFSU2_CLASSIC_MENU") || startup.IsMessageDialogOpen())
             return false;
+        {
+            ModernUI::CarSelect cs;
+            if (fe.PreviewScreenOpen() && startup.CarSelectState(cs.kicker, cs.title, cs.customize)) { // the car select (ISSUES #369)
+                const std::string folder = fe.PreviewCarName();
+                cs.make = fe.CarManufacturer(folder);
+                std::string full = fe.CarDisplayName(folder);
+                cs.model = !cs.make.empty() && full.compare(0, cs.make.size(), cs.make) == 0 && full.size() > cs.make.size() + 1 ? full.substr(cs.make.size() + 1) : folder;
+                cs.group = "STOCK CAR";
+                for (int k = 0; k < 3; ++k)
+                    cs.stats[k] = fe.StatValues()[k];
+                cs.index = int(fe.PreviewCarIndex()), cs.count = int(fe.CarRosterSize());
+                size_t ms = 0;
+                int mon = -1, rep = -1;
+                startup.MainMenuState(ms, cs.player, mon, rep);
+                for (char &ch : cs.make)
+                    ch = char(toupper(static_cast<unsigned char>(ch)));
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                fe.SetHideCarLabel(true);
+                modernUi.DrawCarSelect(lw, lh, cs, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = false;
+                return true;
+            }
+        }
         {
             ModernUI::Settings st;
             size_t ssel = 0;

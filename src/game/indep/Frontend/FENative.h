@@ -408,6 +408,11 @@ public:
     bool MainMenuOpen() const;
     // A vertical native list (the main menu, the garage) is on screen: Up / Down drive the carousel logic as Left / Right (ISSUES #361).
     void SetVerticalNav(bool on) { m_verticalNav = on; }
+    void SetHideCarLabel(bool on) { m_hideCarLabel = on; } // the native car select shows the name itself (#369)
+    // The three 0..1 stat-bar values of the previewed car (acceleration, top speed, handling) as UpdateStatBars last computed them (ISSUES #369).
+    const float *StatValues() const { return m_statVals; }
+    size_t CarRosterSize() const { return m_carRoster.size(); }
+    size_t PreviewCarIndex() const { return m_previewCarIndex; }
     void GenerateRenderContext(u16 uContext, FEObject *pObject) override;
     bool GetContextTransform(u16 uContext, FEMatrix4 &Matrix) override;
     void RenderObject(FEObject *pObject) override;
@@ -527,6 +532,8 @@ private:
     bool m_carPreviewSplatsBuilt = false;
     bool m_carPreviewLoadAttempted = false;
     bool m_verticalNav = false;
+    bool m_hideCarLabel = false;
+    float m_statVals[3] = {0.5f, 0.5f, 0.5f};
     std::vector<uint8_t> m_carPreviewParts;
     float m_carPreviewHinge[5][3] = {};
     bool m_previewSuppressed = false;

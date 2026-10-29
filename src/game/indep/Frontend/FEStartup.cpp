@@ -285,6 +285,24 @@ bool FEStartupSequence::SettingsMenuState(std::string &kicker, std::string &titl
     return true;
 }
 
+bool FEStartupSequence::CarSelectState(std::string &kicker, std::string &title, bool &customize) const
+{
+    if (!m_engine)
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_QRCarSelect.fng") == 0);
+    if (!on)
+        return false;
+    if (m_raceMode == 0x20)
+        kicker = "GARAGE", title = "CHOOSE A CAR", customize = true;
+    else if (m_raceMode == 1 || m_raceMode == 8)
+        kicker = "CAREER", title = "CHOOSE A CAR", customize = true;
+    else
+        kicker = m_raceMode == 4 ? "SPLIT SCREEN" : "QUICK RACE", title = "CAR SELECT", customize = true;
+    return true;
+}
+
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
 {
     if (m_scroller.Empty())
