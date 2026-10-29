@@ -160,6 +160,17 @@ FEStartupSequence::FEStartupSequence(FEngine *engine, FENativeInterface *fe, boo
         m_fe->SetStartupSequence(this);
 }
 
+bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
+{
+    if (m_scroller.Empty())
+        return false;
+    selected = m_scroller.Selected();
+    player = m_profile.valid ? m_profile.name : std::string();
+    money = m_profile.valid ? m_profile.money : -1;
+    reputation = m_profile.valid ? m_profile.respect : -1;
+    return true;
+}
+
 const char *FEStartupSequence::CurrentPackage() const
 {
     if (m_current < m_screens.size())
@@ -261,11 +272,34 @@ void FEStartupSequence::LoadBootProfile()
     if (const char *award = getenv("NFSU2_AWARD_TEST")) {
         m_raceMode = 1;
         for (const char *c = award; c && *c;) { // one race, or a comma list awarded in order
-            AwardCareerResult(atoi(c), 1);
+            const char *mg = getenv("NFSU2_AWARD_MARGIN"); // dev aid: the win margin in percent (ISSUES #335)
+            const char *sc = getenv("NFSU2_AWARD_SCORE"); // dev aid: the drift score of the win (drift events, ISSUES #340)
+            AwardCareerResult(atoi(c), 1, 0.0f, sc ? atoi(sc) : 0, nullptr, mg ? float(atof(mg)) : -1.0f);
             c = strchr(c, ',');
             if (c)
                 ++c;
         }
+    }
+    // Dev aid: NFSU2_OFFER_TEST=<area>[,<rating>] stages a sponsor offer for that area (open UI_Sponsorship_new.fng in a world session).
+    if (const char *ot = getenv("NFSU2_OFFER_TEST")) {
+        const int area = atoi(ot);
+        const char *comma = strchr(ot, ',');
+        for (const Career::Sponsor *sp : Career::SponsorTable::Get().Offers(area, 99, comma ? float(atof(comma + 1)) : 1e9f))
+            m_offerHashes.push_back(sp->hash);
+        m_offerArea = area;
+        printf("[Career] offer test: area %d, %zu sponsors\n", area, m_offerHashes.size());
+    }
+    // Dev aid: NFSU2_START_EVENT=<hex event id> starts that career event (a whole series for a multi-race
+    // one) at boot, as the World Map picker would (use NFSU2_MEMCARD on a copy; wins save).
+    if (const char *startEv = getenv("NFSU2_START_EVENT")) {
+        const uint32_t id = uint32_t(strtoul(startEv, nullptr, 16));
+        const Career::EventTable &table = Career::EventTable::Get();
+        for (size_t i = 0; i < table.Count(); ++i)
+            if (table.At(i).id == id) {
+                m_raceMode = 1;
+                StartCareerEvent(table.At(i));
+                break;
+            }
     }
 }
 
@@ -470,6 +504,10 @@ void FEStartupSequence::OnPackageLoaded(FEPackage *pkg)
     }
     if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
         HandleSponsorViewLoaded(pkg);
+        return;
+    }
+    if (strcasecmp(name, "UI_Sponsorship_new.fng") == 0) {
+        HandleSponsorOfferLoaded(pkg);
         return;
     }
     if (strcasecmp(name, "Credits.fng") == 0) {
@@ -735,6 +773,9 @@ void FEStartupSequence::NotificationMessage(uint32_t msg, FEObject * /*obj*/, ui
     if (strcasecmp(name, "UI_RewardsSponsor.fng") == 0) {
         HandleSponsorViewMessage(msg, pkg);
         return;
+    }
+    if (strcasecmp(name, "UI_Sponsorship_new.fng") == 0) {
+        return; // its FEng mapping only forwards Left / Right; the pad is read in Tick (HandleSponsorOfferMessage)
     }
     if (strcasecmp(name, "MC_Main.fng") == 0 || strcasecmp(name, "MC_List.fng") == 0) {
         // Pad messages for the card screens are taken from the pad in Tick(); ignore FEng's copies.
@@ -1113,6 +1154,22 @@ void FEStartupSequence::Tick(uint32_t nowMs)
             HandleSmsMessage(kMsgPadLeft, top);
         else if (pressed & FENativeInterface::kPadRight)
             HandleSmsMessage(kMsgPadRight, top);
+    }
+    if (pressed && top && top->GetName() && top->IsInputEnabled() &&
+        strcasecmp(top->GetName(), "UI_Sponsorship_new.fng") == 0) { // ISSUES #338
+        if (pressed & FENativeInterface::kPadLeft)
+            HandleSponsorOfferMessage(kMsgPadLeft, top);
+        else if (pressed & FENativeInterface::kPadRight)
+            HandleSponsorOfferMessage(kMsgPadRight, top);
+        else if (pressed & FENativeInterface::kPadUp)
+            HandleSponsorOfferMessage(kMsgPadUp, top);
+        else if (pressed & FENativeInterface::kPadDown)
+            HandleSponsorOfferMessage(kMsgPadDown, top);
+        else if (pressed & FENativeInterface::kPadAccept)
+            HandleSponsorOfferMessage(kMsgPadAccept, top);
+        else if (pressed & FENativeInterface::kPadBack)
+            HandleSponsorOfferMessage(kMsgPadBack, top);
+        return;
     }
     if (pressed && top && top->GetName() && top->IsInputEnabled() &&
         strcasecmp(top->GetName(), "UI_DecalMain.fng") == 0) {
@@ -3474,7 +3531,7 @@ void FEStartupSequence::BuildStatusRows()
         return std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), e.id) != m_profile.completedEvents.end();
     };
     int wins[11] = {}, total[11] = {}, completed = 0, listed = 0;
-    uint32_t repByRegion[6] = {}, winsByRegion[6] = {};
+    uint32_t winsByRegion[6] = {};
     for (const Career::Event &e : table.All()) {
         if (e.races.empty())
             continue;
@@ -3488,7 +3545,7 @@ void FEStartupSequence::BuildStatusRows()
         if (done(e)) {
             ++completed, ++wins[type];
             if (e.region < 6)
-                repByRegion[e.region] += e.respect, ++winsByRegion[e.region];
+                ++winsByRegion[e.region];
         }
     }
     auto row = [this](const std::string &label, const std::string &value, bool header = false) {
@@ -3536,7 +3593,7 @@ void FEStartupSequence::BuildStatusRows()
         const size_t at = label.find("%d");
         if (at != std::string::npos)
             label.replace(at, 2, std::to_string(s));
-        snprintf(b, sizeof b, "%u", repByRegion[s]);
+        snprintf(b, sizeof b, "%u", m_profile.repSum[s]);
         row(label, b);
     }
     row(text(0xa63a4af1), "", true); // Average Reputation Per Race
@@ -3545,7 +3602,7 @@ void FEStartupSequence::BuildStatusRows()
         const size_t at = label.find("%d");
         if (at != std::string::npos)
             label.replace(at, 2, std::to_string(s));
-        snprintf(b, sizeof b, "%u", winsByRegion[s] ? repByRegion[s] / winsByRegion[s] : 0u);
+        snprintf(b, sizeof b, "%u", m_profile.repRaces[s] ? m_profile.repSum[s] / m_profile.repRaces[s] : 0u);
         row(label, b);
     }
 }
@@ -3711,11 +3768,16 @@ void FEStartupSequence::HandleStatusMessage(uint32_t msg, FEPackage *pkg)
                         m_engine->UnloadPackage(p);
                     p = next;
                 }
-                if (m_statusPending) { // Continue: on to the crib
+                if (m_statusPending) { // Continue: the sponsor offer if one was earned, then on to the crib
                     m_statusPending = false;
                     m_engine->UnloadPackage(pkg);
-                    RequestRace();
-                    printf("[Career] status -> crib\n");
+                    if (!m_offerHashes.empty()) {
+                        m_engine->PushPackage("UI_Sponsorship_new.fng", 0, 0xff);
+                        printf("[Career] status -> sponsor offer\n");
+                    } else {
+                        RequestRace();
+                        printf("[Career] status -> crib\n");
+                    }
                 } else {
                     m_navPending = true;
                     m_engine->QueuePackageSwitch("UI_Pause.fng", 0xff);
@@ -5409,21 +5471,88 @@ void FEStartupSequence::RefreshCareerWorldMap(FEPackage *pkg)
 
 void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
 {
-    const RaceInfo *r = nullptr;
-    for (const RaceInfo &ri : m_fe->Races())
-        if (ri.number == ev.races[0])
-            r = &ri;
-    if (!r)
-        return;
-    m_raceNumber = r->number;
-    m_raceType = CareerRaceType(ev, *r);
-    m_careerEventRun = true;
+    // 0x00267d40: remembering the event builds its race session (0x00269bc8) and the event screen's
+    // race list; the port runs the races back to back from here (ISSUES #334).
+    m_series = CareerSeries();
+    m_series.eventId = ev.id;
+    m_series.event = &ev;
+    m_series.active = ev.races.size() > 1;
+    m_series.next = 0;
+    for (int16_t number : ev.races)
+        m_series.races.push_back({number, false, 0});
+    m_seriesNextRace = false;
     ++m_profile.racesEntered;
     Career::SaveCareer(m_profile);
-    m_careerReverse = ev.DirectionFor(r->number) != 0;
-    printf("[Career] start event %08x: race %d type %d purse %u direction %s\n", ev.id, m_raceNumber, m_raceType,
-           ev.purse, m_careerReverse ? "Reverse" : "Forward");
+    StartSeriesRace();
+}
+
+// The next race of the series in m_series: its own number, type and direction (the event record's
+// +0x18 slots).  A single-race event is the same call with a one-race series.
+void FEStartupSequence::StartSeriesRace()
+{
+    const Career::Event *ev = m_series.event;
+    if (!ev || m_series.next >= m_series.races.size()) {
+        printf("[Career] race series: no race to start\n");
+        return;
+    }
+    const int number = m_series.races[m_series.next].number;
+    const RaceInfo *r = nullptr;
+    for (const RaceInfo &ri : m_fe->Races())
+        if (ri.number == number)
+            r = &ri;
+    if (!r) {
+        printf("[Career] event %08x: race %d not in the race table\n", ev->id, number);
+        m_series = CareerSeries();
+        return;
+    }
+    m_raceNumber = r->number;
+    m_raceType = CareerRaceType(*ev, *r);
+    m_careerEventRun = true;
+    m_careerReverse = ev->DirectionFor(r->number) != 0;
+    printf("[Career] start event %08x: race %d type %d purse %u direction %s%s\n", ev->id, m_raceNumber, m_raceType,
+           ev->purse, m_careerReverse ? "Reverse" : "Forward",
+           m_series.active ? (m_series.next == 0 ? " (series race 1)" : " (series)") : "");
+    if (m_series.active) {
+        char title[48], body[160];
+        snprintf(title, sizeof(title), "RACE %zu OF %zu", m_series.next + 1, m_series.races.size());
+        // The standings so far: the player and the best opponent (points 8/6/4/3/2/1).
+        int bestRival = 0;
+        size_t bestSlot = 0;
+        for (size_t i = 0; i < m_series.rivals.size(); ++i)
+            if (m_series.rivals[i] > bestRival) {
+                bestRival = m_series.rivals[i];
+                bestSlot = i;
+            }
+        if (m_series.next == 0)
+            snprintf(body, sizeof(body), "EVENT %08X - %zu RACES. WIN THE SERIES ON POINTS.", ev->id,
+                     m_series.races.size());
+        else
+            snprintf(body, sizeof(body), "YOU %d PTS, RIVAL %zu %d PTS. EVERY RACE COUNTS.",
+                     m_series.points, bestSlot + 1, bestRival);
+        m_series.toastTitle = title;
+        m_series.toastBody = body;
+        m_series.toast = true;
+    }
     RequestRace();
+}
+
+std::string FEStartupSequence::SeriesRaceTag() const
+{
+    if (!m_series.active || m_series.next >= m_series.races.size())
+        return std::string();
+    char tag[32];
+    snprintf(tag, sizeof(tag), " - RACE %zu/%zu", m_series.next + 1, m_series.races.size());
+    return tag;
+}
+
+bool FEStartupSequence::TakeSeriesToast(std::string &title, std::string &body)
+{
+    if (!m_series.toast)
+        return false;
+    m_series.toast = false;
+    title = m_series.toastTitle;
+    body = m_series.toastBody;
+    return true;
 }
 
 void FEStartupSequence::HandleCareerWorldMapMessage(uint32_t msg, FEPackage *pkg)
@@ -5695,7 +5824,11 @@ void FEStartupSequence::RefreshSponsorView(FEPackage *pkg)
         return;
     const size_t sel = std::min(m_scroller.Selected(), m_svAreas.size() - 1);
     const int area = m_svAreas[sel];
-    const Career::Sponsor *sp = Career::SponsorTable::Get().Find(m_profile.signedSponsors[area]);
+    FillSponsorPage(pkg, Career::SponsorTable::Get().Find(m_profile.signedSponsors[area]), area);
+}
+
+void FEStartupSequence::FillSponsorPage(FEPackage *pkg, const Career::Sponsor *sp, int area)
+{
     if (!sp)
         return;
     int urlPurse = 0;
@@ -5711,6 +5844,8 @@ void FEStartupSequence::RefreshSponsorView(FEPackage *pkg)
     FENativeInterface::SetString(pkg, 0x195d8d22, text);
     snprintf(text, sizeof(text), "%d", urlPurse);
     FENativeInterface::SetString(pkg, 0x7d8e1791, text);
+    // the offer screens carry the sponsor's logo as image df422345 (126 x 62); the viewer's scroller shows it on its option instead
+    FENativeInterface::SetTextureHash(pkg, 0xdf422345, CarMaterial::NameHash(("DECAL_ICON_" + sp->name).c_str()));
     FENativeInterface::SetLanguageHash(pkg, 0xf13f76b4, CarMaterial::NameHash(("SPONSOR_" + sp->name).c_str()));
     FENativeInterface::SetLanguageHash(pkg, 0xf13cef3f,
                                        CarMaterial::NameHash(("SPONSOR_INFO_" + sp->name).c_str()));
@@ -5749,6 +5884,57 @@ void FEStartupSequence::ShowSponsorTerms(FEPackage *pkg)
     for (size_t i = 0; i < 10; ++i) {
         const size_t at = m_svScroll + i;
         FENativeInterface::SetString(pkg, kLines[i], at < m_svLines.size() ? m_svLines[at].c_str() : "");
+    }
+}
+
+// UI_Sponsorship_new.fng (create 0x002316e8, ctor 0x00231720; ISSUES #338): the post-race sponsor offer.  The original appends
+// UI_SponsorPopup ("SELECT A SPONSOR!", a card per offered sponsor, 0x00231c48) and this page to the post-race screens when
+// 0x0022cf48 holds; Accept runs 0x00231e08 = 0x00267890 (sign the selected sponsor: its signing bonus is paid and the sponsor is
+// stored in the area object).  The port folds the two screens into one: Left / Right browse the offers, Accept signs, Back declines.
+void FEStartupSequence::HandleSponsorOfferLoaded(FEPackage *pkg)
+{
+    m_offerSel = 0;
+    const Career::Sponsor *sp = m_offerHashes.empty() ? nullptr : Career::SponsorTable::Get().Find(m_offerHashes[0]);
+    FillSponsorPage(pkg, sp, m_offerArea);
+}
+
+void FEStartupSequence::FinishSponsorOffer(FEPackage *pkg, bool sign)
+{
+    if (sign && m_offerSel < m_offerHashes.size() && m_offerArea >= 0 && m_offerArea < Career::Profile::kAreas) {
+        if (const Career::Sponsor *sp = Career::SponsorTable::Get().Find(m_offerHashes[m_offerSel])) {
+            m_profile.signedSponsors[m_offerArea] = sp->hash;
+            m_profile.money += sp->signingBonus;
+            Career::SaveCareer(m_profile);
+            printf("[Career] area %d: signed sponsor %s (+%d signing bonus) -> money %d\n", m_offerArea, sp->name.c_str(), sp->signingBonus,
+                   m_profile.money);
+        }
+    } else {
+        printf("[Career] sponsor offer declined (offered again after the next win)\n");
+    }
+    m_offerHashes.clear();
+    m_offerArea = -1;
+    m_engine->UnloadPackage(pkg);
+    RequestRace(); // on to the crib, as the Career Status screen does
+}
+
+void FEStartupSequence::HandleSponsorOfferMessage(uint32_t msg, FEPackage *pkg)
+{
+    if (m_offerHashes.empty() || m_navPending)
+        return;
+    if (msg == kMsgPadAccept || msg == kMsgButtonPressed) {
+        FinishSponsorOffer(pkg, true);
+    } else if (msg == kMsgPadBack) {
+        FinishSponsorOffer(pkg, false);
+    } else if (msg == kMsgPadLeft || msg == kMsgPadRight) {
+        const size_t n = m_offerHashes.size();
+        m_offerSel = msg == kMsgPadRight ? (m_offerSel + 1) % n : (m_offerSel + n - 1) % n;
+        FillSponsorPage(pkg, Career::SponsorTable::Get().Find(m_offerHashes[m_offerSel]), m_offerArea);
+    } else if (msg == kMsgPadUp && m_svScroll > 0) {
+        --m_svScroll;
+        ShowSponsorTerms(pkg);
+    } else if (msg == kMsgPadDown && m_svScroll + 10 < m_svLines.size()) {
+        ++m_svScroll;
+        ShowSponsorTerms(pkg);
     }
 }
 
@@ -8081,6 +8267,13 @@ bool FEStartupSequence::LoadCareerProfile()
                 Career::SaveRecords(m_records);
             }
         }
+        // Dev aid: NFSU2_CURRENT_CAR=<slot> makes that owned car current in memory (with NFSU2_EXTRA_CARS).
+        if (const char *cc = getenv("NFSU2_CURRENT_CAR"))
+            if (atoi(cc) >= 0 && size_t(atoi(cc)) < m_profile.cars.size())
+                m_profile.currentCar = atoi(cc);
+        // The main menu's showroom (#304) shows the garage's current car with its parts and paint, not the default Skyline (ISSUES #352).
+        if (const Career::OwnedCar *car = m_profile.CurrentCar())
+            ApplyOwnedCarPreview(*car);
         return true;
     }
     m_careerExists = false;
@@ -8101,7 +8294,33 @@ int FEStartupSequence::AdjustMoney(int delta)
     return m_profile.money;
 }
 
-void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds, int score)
+// The reward table at 0x004e8648 ({key, margin thresholds 1-3, rewards 1-3}, read from the ELF) and its
+// lookup 0x00264b28: below the first threshold nothing, then 100 / 200 / 300 reputation.  The key is the
+// event's kind/type (0x00264a28): URL 6, circuit 1, drag 2, sprint 3, drift 4, street X 5; outrun has none.
+int FEStartupSequence::ReputationForMargin(const Career::Event &ev, float marginPct)
+{
+    int key = 0;
+    if (ev.kind == 2)
+        key = 6;
+    else if (ev.kind == 1 || ev.kind == 3 || ev.special) // 0x00264a28: any other kind only counts when +0x0d == 1
+        switch (ev.stage) {
+        case 0: key = 1; break;
+        case 4: key = 2; break;
+        case 1: key = 3; break;
+        case 5: key = 4; break;
+        case 2: key = 5; break;
+        default: break;
+        }
+    if (key == 0)
+        return 0;
+    const float t1 = key == 4 ? 10.0f : 1.0f, t2 = key == 4 ? 20.0f : 2.0f, t3 = key == 4 ? 30.0f : 5.0f;
+    if (marginPct < t1)
+        return 0;
+    return marginPct < t2 ? 100 : marginPct < t3 ? 200 : 300;
+}
+
+void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float seconds, int score,
+                                          const std::vector<int> *rivalPlaces, float marginPct)
 {
     if (!m_profile.valid || !IsCareerRun() || place <= 0)
         return;
@@ -8113,6 +8332,12 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     bool recorded = false;
     const int direction = timed ? timed->DirectionFor(raceNumber) : 0;
     if (timed && timed->stage == 5) {
+        // 0x00269f28 for a drift event: the margin is the new score over the stored best (the head of the
+        // results list) minus 1, in percent; with no stored score the divisor is 0 and the margin is 100.
+        if (score > 0 && marginPct < 0.0f) {
+            const int prevBest = m_profile.BestScoreFor(raceNumber, direction);
+            marginPct = prevBest > 0 ? (float(score) / float(prevBest) - 1.0f) * 100.0f : 100.0f;
+        }
         if (score > 0) {
             m_profile.RecordScore(raceNumber, direction, score);
             m_records.RecordScore(raceNumber, direction, score);
@@ -8128,7 +8353,9 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
         Career::SaveCareer(m_profile);
         Career::SaveRecords(m_records);
     }
-    const Career::Event *ev = Career::EventTable::Get().FindByRace(raceNumber);
+    // A running series owns its races: several events can share a race number (ISSUES #334).
+    const Career::Event *ev = (m_series.active && m_series.event) ? m_series.event
+                                                                  : Career::EventTable::Get().FindByRace(raceNumber);
     if (!ev) {
         printf("[Career] race %d is not a career event\n", raceNumber);
         return;
@@ -8136,6 +8363,52 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     if (m_profile.Completed(ev->id)) {
         printf("[Career] event %08x already complete (race %d, P%d)\n", ev->id, raceNumber, place);
         return;
+    }
+    // The race series (ISSUES #334): the finishing place of every race of the event earns the
+    // championship points of DAT_004f11a0 (8/6/4/3/2/1).  The event is only won when all its races
+    // are in and the player leads the points; a tie goes to the player (0x002699d0 prefers slot 0).
+    if (m_series.active && m_series.eventId == ev->id && m_series.next < m_series.races.size()) {
+        static const int kPoints[6] = {8, 6, 4, 3, 2, 1}; // DAT_004f11a0
+        auto pointsFor = [](int p) { return p >= 1 && p <= 6 ? kPoints[p - 1] : 0; };
+        SeriesRace &sr = m_series.races[m_series.next];
+        sr.run = true;
+        sr.place = place;
+        m_series.points += pointsFor(place);
+        if (rivalPlaces) {
+            if (m_series.rivals.size() < rivalPlaces->size())
+                m_series.rivals.resize(rivalPlaces->size(), 0);
+            for (size_t i = 0; i < rivalPlaces->size(); ++i)
+                m_series.rivals[i] += pointsFor((*rivalPlaces)[i]);
+        }
+        int bestRival = 0;
+        for (int p : m_series.rivals)
+            bestRival = std::max(bestRival, p);
+        const size_t done = m_series.next + 1;
+        if (done < m_series.races.size()) {
+            m_series.next = done;
+            m_seriesNextRace = true;
+            m_statusReady = false;
+            m_lastReward = RaceReward(); // a series race pays nothing; the purse is the win's
+            Career::SaveCareer(m_profile);
+            printf("[Career] series %08x race %zu/%zu (%d) P%d: %d points (you %d, best rival %d) -> race %d\n",
+                   ev->id, done, m_series.races.size(), raceNumber, place, pointsFor(place), m_series.points,
+                   bestRival, m_series.races[m_series.next].number);
+            return;
+        }
+        if (m_series.points < bestRival) { // lost the championship: the event stays open
+            printf("[Career] series %08x over: you %d points, best rival %d - event not won, no purse\n", ev->id,
+                   m_series.points, bestRival);
+            m_series = CareerSeries();
+            m_lastReward = RaceReward();
+            Career::SaveCareer(m_profile);
+            return;
+        }
+        printf("[Career] series %08x won on points: %d to the best rival's %d\n", ev->id, m_series.points,
+               bestRival);
+        place = 1; // the championship win pays and completes the event like a single-race win
+        // 0x00269f28 over a series: leader's points / runner-up's points - 1 (0x00269ad8 sums DAT_004f11a0).
+        marginPct = bestRival > 0 ? (float(m_series.points) / float(bestRival) - 1.0f) * 100.0f : 100.0f;
+        m_series = CareerSeries();
     }
     // 0x00268f48: a type-1 event in an area with a signed sponsor pays the sponsor's race purse
     // (record +2) instead of the event's own purse.
@@ -8146,19 +8419,24 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
     int money = 0, respect = 0;
     if (place == 1) {
         money = basePurse;
-        respect = int(ev->respect);
+        respect = marginPct >= 0.0f ? ReputationForMargin(*ev, marginPct) : int(ev->respect);
     } else if (place == 2) {
         money = basePurse / 2;
     } else if (place == 3) {
         money = basePurse / 4;
     }
-    if (money == 0 && respect == 0) {
+    if (money == 0 && respect == 0 && !(place == 1)) {
         printf("[Career] event %08x (race %d): P%d, no purse - win it to complete\n", ev->id, raceNumber,
                place);
         return;
     }
     m_profile.money += money;
     m_profile.respect += respect;
+    // 0x002664c8: the area's reputation sum / race count; the two start events (bStringHash of DDAY_EVENT_A / _B) are left out.
+    if (place == 1 && ev->region < Career::Profile::kAreas && ev->id != 0xdd60e402 && ev->id != 0xdd60e403) {
+        m_profile.repSum[ev->region] += uint32_t(respect);
+        ++m_profile.repRaces[ev->region];
+    }
     m_lastReward = {true, money, respect, place, m_profile.name};
     if (place == 1) {
         m_profile.Complete(ev->id);
@@ -8186,7 +8464,13 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
 // profile + 0x7154). The signing screen itself is not ported; "View Signed Sponsors" lists it.
 void FEStartupSequence::MaybeSignSponsor(const Career::Event &ev)
 {
-    if (ev.kind != 3 || ev.special || ev.region >= Career::Profile::kAreas)
+    // 0x0022cf48: an area from 2 on with no signed sponsor, a sponsor whose threshold (0x34a18 +0x1c) is met by the area's completed
+    // ordinary races (0x002660a0) and whose rating requirement (+0xe) is at most the PREVIOUS area's average reputation per race
+    // (0x00266308: the +0xe0 sum / +0xe4 count that #335 keeps in Profile::repSum / repRaces).  The qualifying sponsors are offered
+    // after the Career Status screen (UI_Sponsorship_new); nothing is signed here.
+    m_offerHashes.clear();
+    m_offerArea = -1;
+    if (ev.kind != 3 || ev.special || ev.region < 2 || ev.region >= Career::Profile::kAreas)
         return;
     if (m_profile.signedSponsors[ev.region] != 0)
         return;
@@ -8194,16 +8478,15 @@ void FEStartupSequence::MaybeSignSponsor(const Career::Event &ev)
     for (const Career::Event &e : Career::EventTable::Get().All())
         if (e.region == ev.region && e.kind == 3 && !e.special && m_profile.Completed(e.id))
             ++completed;
-    const std::vector<const Career::Sponsor *> offers =
-        Career::SponsorTable::Get().Offers(ev.region, completed);
+    const int prev = int(ev.region) - 1;
+    const float rating = m_profile.repRaces[prev] ? float(m_profile.repSum[prev]) / float(m_profile.repRaces[prev]) : 0.0f;
+    const std::vector<const Career::Sponsor *> offers = Career::SponsorTable::Get().Offers(ev.region, completed, rating);
     if (offers.empty())
         return;
-    const Career::Sponsor *pick = offers[size_t(rand()) % offers.size()];
-    m_profile.signedSponsors[ev.region] = pick->hash;
-    m_profile.money += pick->signingBonus;
-    m_pendingSponsor = pick->hash;
-    printf("[Career] area %u: signed sponsor %s (+%d signing bonus) -> money %d\n", unsigned(ev.region),
-           pick->name.c_str(), pick->signingBonus, m_profile.money);
+    for (const Career::Sponsor *sp : offers)
+        m_offerHashes.push_back(sp->hash);
+    m_offerArea = ev.region;
+    printf("[Career] area %u: %zu sponsor(s) on offer (rating %.0f from area %d)\n", unsigned(ev.region), offers.size(), rating, prev);
 }
 
 // Quick Race also feeds the shared 0x4fb4ac table. Only modes 2/4 (Quick Race / split screen) write:
@@ -8634,8 +8917,19 @@ void FEStartupSequence::ReturnFromRace()
     m_navPending = false;
     m_lastPad = 0;
     if (m_careerEventRun) {
+        // The next race of a career event's series (ISSUES #334): the results screen's Continue goes
+        // straight into it, like the original's event screen picking the next race.
+        if (m_series.active && m_seriesNextRace) {
+            m_seriesNextRace = false;
+            m_cribRequested = true;
+            StartSeriesRace();
+            printf("[Career] series: next race %d\n", m_raceNumber);
+            return;
+        }
         // A career event started from the world map (ISSUES #142): back to the crib, as UG2 does.
         m_careerEventRun = false;
+        m_series = CareerSeries(); // a series left before its last race is dropped with the event
+        m_seriesNextRace = false;
         m_raceNumber = 0;
         m_raceType = 9;
         m_cribRequested = true;

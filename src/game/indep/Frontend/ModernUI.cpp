@@ -242,43 +242,18 @@ void ModernUI::Glow(float cx, float cy, float radius, SDL_Color c)
 
 void ModernUI::DrawBackdrop(int w, int h, float t)
 {
+    // Flat charcoal with a few hard diagonal cuts and one signal-yellow tab (ISSUES #357); the blue glow pools, the violet dusk, the
+    // perspective grid and the speed streaks of the first redesign are gone.
     const float W = float(w), H = float(h);
-    // deep midnight gradient
-    Rect(0, 0, W, H, {6, 12, 28, 255}, {2, 4, 10, 255});
-    // slow drifting colour pools: Mediterranean blue, desert amber, and a violet dusk
-    Glow(W * (0.22f + 0.05f * std::sin(t * 0.13f)), H * (0.30f + 0.04f * std::cos(t * 0.11f)), W * 0.55f, {20, 90, 200, 120});
-    Glow(W * (0.82f + 0.04f * std::cos(t * 0.09f)), H * (0.78f + 0.05f * std::sin(t * 0.15f)), W * 0.50f, {230, 120, 30, 90});
-    Glow(W * (0.55f + 0.06f * std::sin(t * 0.07f)), H * 0.10f, W * 0.40f, {110, 40, 170, 70});
-    // light streaks sweeping across (speed lines), a few per second
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
-    for (int i = 0; i < 9; ++i) {
-        const float ph = std::fmod(t * (0.10f + 0.03f * (i % 4)) + i * 0.173f, 1.0f);
-        const float y = H * (0.12f + 0.80f * std::fmod(i * 0.381f, 1.0f));
-        const float len = W * (0.18f + 0.14f * (i % 3));
-        const float x = -len + (W + len * 2) * ph;
-        const float a = std::sin(ph * kPi);
-        const SDL_Color c = i % 3 == 0 ? kWarm : kAccent;
-        Quad({x, y}, {x + len, y}, {x + len, y + 2}, {x, y + 2}, Alpha(c, 0.0f), Alpha(c, 0.45f * a), Alpha(c, 0.45f * a), Alpha(c, 0.0f));
-    }
-    // fine horizon grid for depth
-    const float hy = H * 0.74f;
-    for (int i = -12; i <= 12; ++i) {
-        const float x0 = W * 0.5f + i * W * 0.012f, x1 = W * 0.5f + i * W * 0.11f;
-        SDL_SetRenderDrawColor(m_r, 70, 150, 255, 22);
-        SDL_RenderDrawLineF(m_r, x0, hy, x1, H);
-    }
-    for (int i = 1; i < 9; ++i) {
-        const float k = std::pow(float(i) / 9.0f, 2.0f);
-        SDL_SetRenderDrawColor(m_r, 70, 150, 255, Uint8(14 + 22 * k));
-        SDL_RenderDrawLineF(m_r, 0, hy + (H - hy) * k, W, hy + (H - hy) * k);
-    }
-    // vignette
-    Rect(0, 0, W, H * 0.22f, {0, 0, 0, 150}, {0, 0, 0, 0});
-    Rect(0, H * 0.78f, W, H * 0.22f, {0, 0, 0, 0}, {0, 0, 0, 170});
-    Quad({0, 0}, {W * 0.14f, 0}, {W * 0.14f, H}, {0, H}, {0, 0, 0, 150}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 150});
-    Quad({W * 0.86f, 0}, {W, 0}, {W, H}, {W * 0.86f, H}, {0, 0, 0, 0}, {0, 0, 0, 150}, {0, 0, 0, 150}, {0, 0, 0, 0});
-    // accent line at the very top
-    Quad({0, 0}, {W, 0}, {W, 3}, {0, 3}, kAccent, kWarm, kWarm, kAccent);
+    Rect(0, 0, W, H, {20, 20, 22, 255}, {10, 10, 11, 255});
+    const float drift = 12.0f * std::sin(t * 0.12f);
+    const float c1 = W * 0.58f + drift, c2 = W * 0.82f - drift;
+    Quad({c1, 0}, {c1 + W * 0.20f, 0}, {c1 + W * 0.20f - H * 0.32f, H}, {c1 - H * 0.32f, H}, {255, 255, 255, 9}, {255, 255, 255, 9}, {255, 255, 255, 9}, {255, 255, 255, 9});
+    Quad({c2, 0}, {c2 + W * 0.05f, 0}, {c2 + W * 0.05f - H * 0.32f, H}, {c2 - H * 0.32f, H}, {255, 214, 10, 16}, {255, 214, 10, 16}, {255, 214, 10, 16}, {255, 214, 10, 16});
+    Rect(0, H * 0.80f, W, H * 0.20f, {0, 0, 0, 0}, {0, 0, 0, 150});
+    Rect(0, 0, W, H * 0.12f, {0, 0, 0, 110}, {0, 0, 0, 0});
+    Quad({0, 0}, {W * 0.09f, 0}, {W * 0.09f - 10, 5}, {0, 5}, {255, 214, 10, 255}, {255, 214, 10, 255}, {255, 214, 10, 255}, {255, 214, 10, 255});
 }
 
 void ModernUI::DrawWind(int w, int h, float strength, float nitro, float t)
@@ -524,40 +499,122 @@ void ModernUI::DrawHud(int w, int h, const Hud &hud, float t)
 void ModernUI::DrawDialog(int w, int h, std::string_view title, const char *const *items, int itemCount, int selected, bool confirm,
                           std::string_view question, bool confirmYes, float t)
 {
+    (void)t;
     if (!m_font)
         return;
     const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
-    Rect(0, 0, W, H, {2, 6, 16, 150}, {2, 6, 16, 190}); // dim the scene
-    const float pw = 460 * s, ph = (confirm ? 250.0f : 130.0f + 62.0f * float(itemCount)) * s;
-    const float px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph * 0.5f;
-    Glow(W * 0.5f, H * 0.5f, pw * 1.1f, {20, 80, 170, 60});
-    Glass(px, py, pw, ph, 28 * s, {8, 14, 28, 225}, {120, 190, 255, 170});
-    Quad({px, py}, {px + pw - 28 * s, py}, {px + pw - 28 * s, py + 3 * s}, {px, py + 3 * s}, kAccent, kWarm, kWarm, kAccent);
-    Text(px + 30 * s, py + 18 * s, 40 * s, title, kWhite, 0);
-    char buf[16];
-    (void)buf;
+    Rect(0, 0, W, H, {0, 0, 0, 150}, {0, 0, 0, 190}); // dim the scene
+    // flat panel on the left, like the main menu: a title, a column of caps, a yellow slanted highlight (ISSUES #357)
+    const float pw = 430 * s, ph = (confirm ? 250.0f : 120.0f + 60.0f * float(itemCount) + 56.0f) * s;
+    const float px = 90 * s, py = H * 0.5f - ph * 0.5f;
+    Quad({px, py}, {px + pw, py}, {px + pw, py + ph}, {px, py + ph}, {10, 10, 11, 238}, {10, 10, 11, 238}, {10, 10, 11, 238}, {10, 10, 11, 238});
+    Quad({px, py}, {px + 6 * s, py}, {px + 6 * s, py + ph}, {px, py + ph}, signal, signal, signal, signal);
+    Text(px + 34 * s, py + 22 * s, 38 * s, title, paper, 0);
     if (!confirm) {
         for (int i = 0; i < itemCount; ++i) {
-            const float ry = py + 84 * s + 62 * s * float(i);
+            const float ry = py + 92 * s + 60 * s * float(i);
             const bool on = i == selected;
             if (on) {
-                const float pulse = 0.75f + 0.25f * std::sin(t * 6.0f);
-                Glass(px + 20 * s, ry, pw - 40 * s, 52 * s, 14 * s, {30, 100, 190, Uint8(150 + 50 * pulse)}, {150, 215, 255, 230});
-                Quad({px + 20 * s, ry + 6 * s}, {px + 26 * s, ry + 6 * s}, {px + 26 * s, ry + 46 * s}, {px + 20 * s, ry + 46 * s}, kWarm, kWarm, kWarm, kWarm);
+                const float sl = 14 * s;
+                Quad({px + 22 * s + sl, ry}, {px + pw - 22 * s + sl, ry}, {px + pw - 22 * s, ry + 52 * s}, {px + 22 * s, ry + 52 * s}, signal, signal, signal, signal);
             }
-            Text(px + 50 * s, ry + 6 * s, 34 * s, items[i], on ? kWhite : SDL_Color{175, 200, 230, 235}, 0);
+            Text(px + 44 * s, ry + 6 * s, 32 * s, items[i], on ? ink : SDL_Color{244, 244, 240, 200}, 0);
         }
-        Text(px + pw * 0.5f, py + ph - 34 * s, 17 * s, "UP / DOWN select    ENTER confirm    ESC resume", {140, 175, 215, 220}, 1);
+        Text(px + 34 * s, py + ph - 38 * s, 16 * s, "ARROWS move    ENTER select    ESC resume", {244, 244, 240, 130}, 0);
     } else {
-        Text(px + pw * 0.5f, py + 84 * s, 30 * s, question, kWhite, 1);
-        Text(px + pw * 0.5f, py + 122 * s, 20 * s, "Your race progress will be lost.", {170, 200, 235, 230}, 1);
+        Text(px + 34 * s, py + 92 * s, 28 * s, question, paper, 0);
+        Text(px + 34 * s, py + 128 * s, 18 * s, "Your race progress will be lost.", {244, 244, 240, 160}, 0);
         for (int i = 0; i < 2; ++i) {
             const bool on = (i == 0) == confirmYes;
-            const float bx = px + 40 * s + i * (pw * 0.5f - 20 * s), bw = pw * 0.5f - 60 * s, by = py + 160 * s;
-            Glass(bx, by, bw, 54 * s, 14 * s, on ? SDL_Color{30, 100, 190, 220} : SDL_Color{12, 20, 40, 200}, on ? SDL_Color{150, 215, 255, 230} : SDL_Color{80, 120, 170, 120});
-            Text(bx + bw * 0.5f, by + 8 * s, 34 * s, i == 0 ? "YES" : "NO", on ? kWhite : SDL_Color{175, 200, 230, 235}, 1);
+            const float bx = px + 34 * s + float(i) * (pw * 0.5f - 24 * s), bw = pw * 0.5f - 44 * s, by = py + 168 * s;
+            const SDL_Color fill = on ? signal : SDL_Color{40, 40, 42, 255};
+            Quad({bx + 10 * s, by}, {bx + bw + 10 * s, by}, {bx + bw, by + 52 * s}, {bx, by + 52 * s}, fill, fill, fill, fill);
+            Text(bx + bw * 0.5f + 4 * s, by + 8 * s, 32 * s, i == 0 ? "YES" : "NO", on ? ink : SDL_Color{244, 244, 240, 200}, 1);
         }
+    }
+}
+
+void ModernUI::DrawMainMenu(int w, int h, const MainMenu &m, float t)
+{
+    if (!m_font || m.count <= 0)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    // legibility scrim on the left and a thin shade top and bottom (the car and the street stay visible)
+    Quad({0, 0}, {W * 0.52f, 0}, {W * 0.52f, H}, {0, H}, A(ink, 225), A(ink, 0), A(ink, 0), A(ink, 225));
+    Rect(0, 0, W, 90 * s, A(ink, 150), A(ink, 0));
+    Rect(0, H - 110 * s, W, 110 * s, A(ink, 0), A(ink, 190));
+    // wordmark
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, "NEED FOR SPEED", A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, "UNDERGROUND 2", paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    // the list; the highlight glides to the selected row
+    static float hy = -1.0f, last = -1.0f;
+    const float top = 168 * s, pitch = 60 * s;
+    const float target = top + pitch * float(m.selected);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, t - last);
+    last = t;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float slant = 16 * s, bw = 470 * s, bh = 54 * s;
+    Quad({lx - 22 * s + slant, hy}, {lx - 22 * s + bw + slant, hy}, {lx - 22 * s + bw, hy + bh}, {lx - 22 * s, hy + bh}, signal, signal, signal, signal);
+    for (int i = 0; i < m.count; ++i) {
+        const float ry = top + pitch * float(i);
+        const bool on = i == m.selected;
+        const bool dead = i == 3 && !m.enabledOnline;
+        char idx[8];
+        snprintf(idx, sizeof(idx), "%02d", i + 1);
+        const SDL_Color txt = on ? ink : (dead ? A(paper, 70) : A(paper, 215));
+        Text(lx, ry + 2 * s, 44 * s, m.items[i], txt, 0);
+        Text(lx - 22 * s + bw - 14 * s, ry + 16 * s, 17 * s, idx, on ? A(ink, 170) : A(paper, 80), 2);
+    }
+    if (m.notes && m.selected >= 0 && m.selected < m.count && m.notes[m.selected])
+        Text(lx, top + pitch * float(m.count) + 14 * s, 19 * s, m.notes[m.selected], A(paper, 190), 0);
+    // bottom bar: the player on the left, the keys on the right
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - lx, by - 10 * s}, {W - lx, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    float x = lx;
+    if (!m.player.empty()) {
+        Text(x, by + 2 * s, 22 * s, m.player, paper, 0);
+        x += TextWidth(m.player, 22 * s) + 28 * s;
+    }
+    char buf[48];
+    if (m.money >= 0) {
+        snprintf(buf, sizeof(buf), "$%d,%03d", m.money / 1000, m.money % 1000);
+        if (m.money < 1000)
+            snprintf(buf, sizeof(buf), "$%d", m.money);
+        Text(x, by + 2 * s, 22 * s, buf, signal, 0);
+        x += TextWidth(buf, 22 * s) + 28 * s;
+    }
+    if (m.reputation >= 0) {
+        snprintf(buf, sizeof(buf), "REP %d", m.reputation);
+        Text(x, by + 2 * s, 22 * s, buf, A(paper, 190), 0);
+    }
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ENTER", "SELECT");
+    key("ARROWS", "MOVE");
+    // the car
+    if (!m.car.empty()) {
+        const float cx = W - lx, cy = H - 190 * s;
+        Text(cx, cy, 34 * s, m.car, paper, 2);
+        if (!m.carSub.empty())
+            Text(cx, cy + 38 * s, 17 * s, m.carSub, A(paper, 160), 2);
+        Quad({cx - 46 * s, cy - 10 * s}, {cx, cy - 10 * s}, {cx, cy - 6 * s}, {cx - 46 * s, cy - 6 * s}, signal, signal, signal, signal);
     }
 }
 

@@ -41,6 +41,7 @@ constexpr uint32_t kDriftTotal = 0x39dfbebd;    // SP_DRIFT_TOTAL
 constexpr uint32_t kDriftMult = 0xe5d37182;     // drift_multiplier_text
 constexpr uint32_t kDriftSpeedData = 0x6a4beef0;// SpeedTrap_Speed_DATA (the gain-hint number)
 constexpr uint32_t kDriftBestTime = 0x06e9a0fe; // BestLapTimeText
+constexpr uint32_t kDriftLapTime = 0x6fd8b266;  // the second time slot of the same row (right of BestLapTimeText)
 constexpr uint32_t kDriftAngleDeg = 0x30787b84; // Angle_degrees
 constexpr uint32_t kDriftAngleData = 0xb5c6103b;// Angle_Indicator_DATA
 constexpr uint32_t kCommentData = 0xd555b3ab;   // Comment_DATA
@@ -610,6 +611,8 @@ void RaceSession::UpdateHud(const PlayerCar &car)
         FENativeInterface::SetString(m_hud, kDriftTotal, text);
         FENativeInterface::SetString(m_hud, kDriftBestTime,
                                      m_bestLap > 0 ? FormatTime(m_bestLap).c_str() : "--:--.--");
+        // The row's second time slot (0x6fd8b266) was never filled and drew its design text "XXX:XXX:XXX" (ISSUES #348): the lap in progress.
+        FENativeInterface::SetString(m_hud, kDriftLapTime, FormatTime(m_lapTime).c_str());
         snprintf(text, sizeof(text), "%d", int(std::fabs(m_driftAngle)));
         FENativeInterface::SetString(m_hud, kDriftAngleDeg, text);
         FENativeInterface::SetString(m_hud, kDriftAngleData, text);

@@ -1243,7 +1243,7 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], float k
         GLShader::EnableAttrib(2);
         GLShader::EnableAttrib(3);
         const GLint blurLoc = GLShader::Uniform(m_progCar, "uBlur");
-        const GLint baseLoc = GLShader::Uniform(m_progCar, "uBase"), fwdLoc = GLShader::Uniform(m_progCar, "uFwdC");
+        const GLint baseLoc = GLShader::Uniform(m_progCar, "uBase"), fwdLoc = GLShader::Uniform(m_progCar, "uFwdC"), speedLoc = GLShader::Uniform(m_progCar, "uSpeed");
         const GLint head0Loc = GLShader::Uniform(m_progCar, "uHead0"), head1Loc = GLShader::Uniform(m_progCar, "uHead1");
         const GLint tail0Loc = GLShader::Uniform(m_progCar, "uTail0"), tail1Loc = GLShader::Uniform(m_progCar, "uTail1");
         const GLint lampLoc = GLShader::Uniform(m_progCar, "uLamp");
@@ -1251,6 +1251,7 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], float k
         GLShader::Set1f(glassLoc, 0.0f);
         const Sky::State &sky = Sky::Now();
         GLShader::Set1f(GLShader::Uniform(m_progCar, "uDay"), sky.day);
+        GLShader::Set1f(GLShader::Uniform(m_progCar, "uWet"), getenv("NFSU2_NO_WET") ? 0.0f : (getenv("NFSU2_WET") ? float(atof(getenv("NFSU2_WET"))) : (sky.day > 0.5f ? 0.0f : 0.8f))); // the cars are as wet as the road (#354)
         GLShader::Set3f(GLShader::Uniform(m_progCar, "uSun"), sky.sun[0], sky.sun[1], sky.sun[2]);
         GLShader::Set3f(GLShader::Uniform(m_progCar, "uSunCol"), sky.sunCol[0], sky.sunCol[1], sky.sunCol[2]);
         GLShader::Set1f(GLShader::Uniform(m_progCar, "uSunset"), sky.sunset);
@@ -1269,6 +1270,7 @@ void TrackWorld::DrawCarsGL(const Camera &cam, const float fogColour[4], float k
             // grounding and the lamp internals (ISSUES #312)
             GLShader::Set1f(baseLoc, car.groundZ < 1e8f ? car.groundZ : 0.0f);
             GLShader::Set3f(fwdLoc, car.fwd[0], car.fwd[1], car.fwd[2]);
+            GLShader::Set1f(speedLoc, std::hypot(car.vel[0], car.vel[1])); // the wind that drags the rain over the panels (#354)
             auto lampPos = [](GLint loc, const float *p, bool have) { GLShader::Set3f(loc, have ? p[0] : 1e6f, have ? p[1] : 1e6f, have ? p[2] : 1e6f); };
             lampPos(head0Loc, car.headPos[0], car.haveHead[0]), lampPos(head1Loc, car.headPos[1], car.haveHead[1]);
             lampPos(tail0Loc, car.tailPos[0], car.haveTail[0]), lampPos(tail1Loc, car.tailPos[1], car.haveTail[1]);
@@ -1760,29 +1762,29 @@ void TrackWorld::UpdateFlames(float dt)
         for (int side = 0; side < 2; ++side) {
             if (!car.haveExh[side])
                 continue;
-            car.emitAcc[side] += dt * (95.0f * car.nos + 340.0f * car.burst);
+            car.emitAcc[side] += dt * (60.0f * car.nos + 230.0f * car.burst);
             while (car.emitAcc[side] >= 1.0f && m_flames.size() < 1600) {
                 car.emitAcc[side] -= 1.0f;
                 Flame f;
-                const bool ember = Rnd01(seed) < 0.22f;
-                const float jet = (ember ? 6.0f : 10.0f) + 12.0f * Rnd01(seed);
+                const bool ember = Rnd01(seed) < 0.18f;
+                const float jet = (ember ? 4.0f : 2.5f) + 4.0f * Rnd01(seed); // m/s relative to the car: the gas leaves the pipe slowly
                 const float k = 0.75f + 0.45f * car.nos + 0.7f * car.burst;
                 f.x = car.exhPos[side][0] + ax * 0.12f * Rnd01(seed), f.y = car.exhPos[side][1] + ay * 0.12f * Rnd01(seed), f.z = car.exhPos[side][2];
                 const float spread = ember ? 3.2f : 0.9f;
-                f.vx = car.vel[0] * 0.55f + ax * jet * k + (Rnd01(seed) - 0.5f) * spread;
-                f.vy = car.vel[1] * 0.55f + ay * jet * k + (Rnd01(seed) - 0.5f) * spread;
-                f.vz = car.vel[2] * 0.55f + az * jet * k + (Rnd01(seed) - 0.5f) * spread * 0.8f + 0.4f;
+                f.vx = car.vel[0] * 0.92f + ax * jet * k + (Rnd01(seed) - 0.5f) * spread;  // the air round the car moves with it
+                f.vy = car.vel[1] * 0.92f + ay * jet * k + (Rnd01(seed) - 0.5f) * spread;
+                f.vz = car.vel[2] * 0.92f + az * jet * k + (Rnd01(seed) - 0.5f) * spread * 0.8f + 0.3f;
                 f.kind = ember ? 1 : 0;
                 f.cell = int(Rnd01(seed) * 3.99f);
-                f.life = ember ? 0.45f + 0.7f * Rnd01(seed) : 0.22f + 0.30f * Rnd01(seed);
-                f.size = ember ? 0.05f : 0.20f + 0.20f * Rnd01(seed) + 0.15f * car.burst;
+                f.life = ember ? 0.28f + 0.45f * Rnd01(seed) : 0.07f + 0.12f * Rnd01(seed);
+                f.size = ember ? 0.035f : 0.07f + 0.09f * Rnd01(seed) + 0.07f * car.burst;
                 m_flames.push_back(f);
             }
         }
     }
     for (Flame &f : m_flames) {
         f.age += dt;
-        const float drag = f.kind == 1 ? 1.6f : 5.5f; // the air stops the fire quickly; the embers fly on
+        const float drag = f.kind == 1 ? 2.2f : 9.0f; // the air stops the fire quickly; the embers fly on a little further
         f.vx -= f.vx * std::min(1.0f, drag * dt), f.vy -= f.vy * std::min(1.0f, drag * dt);
         f.vz += (f.kind == 1 ? -9.0f : 2.4f) * dt; // the flames rise, the embers fall
         f.x += f.vx * dt, f.y += f.vy * dt, f.z += f.vz * dt;
@@ -1874,46 +1876,56 @@ void TrackWorld::DrawCarFlames(const Camera &cam) const
             if (!car.haveExh[side])
                 continue;
             const float *p = car.exhPos[side];
-            const float flick = 0.88f + 0.12f * std::sin(m_flameClock * 53.0f + float(side) * 2.0f) + 0.06f * std::sin(m_flameClock * 91.0f);
-            const float L = (0.45f + 1.35f * car.nos + 1.1f * car.burst) * flick; // jet length in metres
-            // jet: a chain of turbulent sprites along the pipe axis
-            GLShader::Set1f(modeLoc, 0.0f);
-            glBindTexture(GL_TEXTURE_2D, m_glWhite);
-            const int n = 14;
-            for (int i = 0; i < n; ++i) {
-                const float t = (float(i) + 0.5f) / float(n);
-                float r, g, b;
-                flameColour(t, r, g, b);
-                const float wob = std::sin(m_flameClock * 31.0f + float(i) * 1.9f + float(side) * 3.1f) * 0.035f * t;
-                const float wob2 = std::cos(m_flameClock * 27.0f + float(i) * 2.3f) * 0.03f * t;
-                const float px = p[0] + ax * L * t + wob, py = p[1] + ay * L * t + wob2, pz = p[2] + az * L * t + 0.35f * L * t * t * 0.2f;
-                const float size = (0.07f + 0.14f * std::pow(t, 0.8f)) * (0.7f + 0.5f * power);
-                const float a = power * (1.0f - t) * (1.0f - t * 0.4f) * 0.30f * dayK;
-                GLShader::Set1f(seedLoc, float(i) * 0.37f + float(side) * 1.3f);
-                sprite(px, py, pz, size, 2.6f - 1.2f * t, ax, ay, az, r, g, b, a);
+            // A real exhaust flame is short and ragged: it pulses with the engine's firing (a fast, irregular flicker rather than a steady cone),
+            // a blue-white core hugs the pipe, orange tongues tear off it and die within a metre (ISSUES #355).
+            const float pulse = 0.55f + 0.30f * std::fabs(std::sin(m_flameClock * 37.0f + float(side) * 1.7f)) + 0.15f * std::sin(m_flameClock * 83.0f + 0.6f * float(side));
+            const float L = (0.16f + 0.40f * car.nos + 0.38f * car.burst) * pulse; // jet length in metres (a real exhaust flame is a few tens of centimetres)
+            // up to three tongues: the main jet and two shorter ones that fan a few degrees away and flicker out of step
+            for (int tongue = 0; tongue < 3; ++tongue) {
+                const float tl = L * (tongue == 0 ? 1.0f : tongue == 1 ? 0.62f : 0.46f) * (0.75f + 0.25f * std::sin(m_flameClock * (29.0f + 11.0f * float(tongue)) + float(tongue) * 2.2f + float(side)));
+                const float fan = tongue == 0 ? 0.0f : (tongue == 1 ? 0.16f : -0.2f) * (0.6f + 0.4f * std::sin(m_flameClock * 23.0f + float(side)));
+                // a unit vector across the stream (horizontal, perpendicular to the exhaust direction) to fan the tongue sideways
+                const float sx = -ay, sy = ax;
+                const float dx = ax + sx * fan, dy = ay + sy * fan, dz = az + 0.10f * fan;
+                GLShader::Set1f(modeLoc, 0.0f);
+                glBindTexture(GL_TEXTURE_2D, m_glWhite);
+                const int n = 9;
+                for (int i = 0; i < n; ++i) {
+                    const float t = (float(i) + 0.5f) / float(n);
+                    float r, g, b;
+                    flameColour(0.0f + 0.50f * t, r, g, b); // blue-white at the pipe, orange further out, never the dark red tail: it just fades
+                    const float wob = std::sin(m_flameClock * 41.0f + float(i) * 1.9f + float(side) * 3.1f + float(tongue)) * 0.045f * t;
+                    const float wob2 = std::cos(m_flameClock * 33.0f + float(i) * 2.3f + float(tongue) * 1.3f) * 0.04f * t;
+                    const float px = p[0] + dx * tl * t + wob, py = p[1] + dy * tl * t + wob2, pz = p[2] + dz * tl * t + 0.10f * tl * t * t;
+                    const float size = (0.022f + 0.060f * std::pow(t, 0.75f)) * (0.7f + 0.4f * power) * (tongue == 0 ? 1.0f : 0.7f);
+                    const float a = power * (1.0f - t) * (1.0f - t * 0.5f) * (tongue == 0 ? 0.26f : 0.16f) * dayK;
+                    GLShader::Set1f(seedLoc, float(i) * 0.37f + float(side) * 1.3f + float(tongue) * 2.9f);
+                    sprite(px, py, pz, size, 1.5f - 0.5f * t, dx, dy, dz, r, g, b, a);
+                }
             }
-            // shock diamonds: bright beads in the first third of the jet
+            // shock diamonds: bright beads close to the pipe (nitrous only)
             GLShader::Set1f(modeLoc, 3.0f);
-            for (int i = 0; i < 3; ++i) {
-                const float t = 0.10f + 0.12f * float(i);
-                const float pulse = 0.65f + 0.35f * std::sin(m_flameClock * 70.0f + float(i) * 2.0f);
-                sprite(p[0] + ax * L * t, p[1] + ay * L * t, p[2] + az * L * t, 0.075f * (0.9f + 0.4f * power), 1.5f, ax, ay, az, 0.75f, 0.88f, 1.0f,
-                       power * pulse * (1.0f - 1.5f * t) * 0.95f * dayK);
-            }
+            if (car.nos > 0.1f)
+                for (int i = 0; i < 2; ++i) {
+                    const float t = 0.10f + 0.14f * float(i);
+                    const float pls = 0.55f + 0.45f * std::sin(m_flameClock * 70.0f + float(i) * 2.0f);
+                    sprite(p[0] + ax * L * t, p[1] + ay * L * t, p[2] + az * L * t, 0.045f * (0.9f + 0.4f * power), 1.4f, ax, ay, az, 0.70f, 0.85f, 1.0f,
+                           car.nos * pls * (1.0f - 1.6f * t) * 0.8f * dayK);
+                }
             // the glare at the pipe mouth and the ignition flash
             GLShader::Set1f(modeLoc, 1.0f);
             glBindTexture(GL_TEXTURE_2D, glareTex);
             GLShader::Set2f(cellLoc, 0.0f, 0.0f);
             GLShader::Set1f(cellScaleLoc, 1.0f);
-            sprite(p[0] + ax * 0.12f, p[1] + ay * 0.12f, p[2] + az * 0.12f, 0.55f + 0.5f * power, 1.0f, ax, ay, az, 1.0f, 0.62f, 0.30f,
-                   (0.55f * power + 0.7f * car.burst) * dayK);
+            sprite(p[0] + ax * 0.08f, p[1] + ay * 0.08f, p[2] + az * 0.08f, 0.20f + 0.22f * power, 1.0f, ax, ay, az, 1.0f, 0.66f, 0.34f,
+                   (0.30f * power + 0.55f * car.burst) * dayK);
         }
         // a warm pool on the road behind the car and a soft glow around the tail
         GLShader::Set1f(modeLoc, 3.0f);
         glBindTexture(GL_TEXTURE_2D, m_glWhite);
         const float cx = 0.5f * (car.exhPos[0][0] + car.exhPos[1][0]) + ax * 1.6f, cy = 0.5f * (car.exhPos[0][1] + car.exhPos[1][1]) + ay * 1.6f;
-        const float gz = car.groundZ + 0.04f, R = 3.6f * (0.6f + 0.6f * power);
-        glColor4f(1.0f, 0.55f, 0.22f, 0.40f * power * dayK);
+        const float gz = car.groundZ + 0.04f, R = 1.7f * (0.6f + 0.5f * power);
+        glColor4f(1.0f, 0.55f, 0.22f, 0.13f * power * dayK);
         glBegin(GL_QUADS);
         glTexCoord2f(0, 0), glVertex3f(cx - R, cy - R, gz);
         glTexCoord2f(1, 0), glVertex3f(cx + R, cy - R, gz);

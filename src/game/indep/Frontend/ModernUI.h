@@ -38,6 +38,17 @@ public:
     bool Init(SDL_Renderer *r);
     bool Ready() const { return m_font != nullptr; }
     // Menus: the animated backdrop under the 4:3 FEng box (call with the logical size reset, before engine->Render()).
+    // The main menu (ISSUES #357): drawn over the 3D showroom, replacing the FEng icon carousel.  Flat and high contrast: a column of big
+    // caps with a hard-edged yellow highlight on the selected row, the player's standing bottom left, the car's name bottom right.
+    struct MainMenu {
+        const char *const *items = nullptr;
+        const char *const *notes = nullptr; // one line under the list for the selected item
+        int count = 0, selected = 0;
+        bool enabledOnline = false;         // the row index 3 (Online) is shown dimmed when false
+        std::string player, car, carSub;
+        int money = -1, reputation = -1;    // < 0: not shown
+    };
+    void DrawMainMenu(int w, int h, const MainMenu &m, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);

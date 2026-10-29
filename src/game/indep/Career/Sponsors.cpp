@@ -82,7 +82,7 @@ const Sponsor *SponsorTable::Find(uint32_t hash) const
     return nullptr;
 }
 
-std::vector<const Sponsor *> SponsorTable::Offers(int area, int completed) const
+std::vector<const Sponsor *> SponsorTable::Offers(int area, int completed, float rating) const
 {
     std::vector<const Sponsor *> out;
     const SponsorArea *a = Area(area);
@@ -91,7 +91,8 @@ std::vector<const Sponsor *> SponsorTable::Offers(int area, int completed) const
     for (int i = 0; i < a->count; ++i)
         if (a->thresholds[size_t(i)] <= completed)
             if (const Sponsor *s = Find(a->hashes[size_t(i)]))
-                out.push_back(s);
+                if (float(s->extra) <= rating)
+                    out.push_back(s);
     return out;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -76,7 +77,10 @@ public:
     // plus single start/finish markers. Returns each grid's slots in file order.
     std::vector<std::vector<Camera>> GridsFromMarkers(const std::vector<uint8_t> &markers, int raceNumber) const;
     // The race's first single marker (start/finish line) position.
-    bool LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const;
+    // The race's start/finish line marker; with a point (the chosen grid) the single marker nearest to it, since a race lists a
+    // line for each of its two start setups (ISSUES #345).
+    bool LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y, float nearX = 1e30f,
+                         float nearY = 1e30f) const;
     void Render(SDL_Renderer *renderer, const Camera &cam, int width, int height);
     // Hardware path (TrackWorldGL.cpp): draws the world with OpenGL and a depth buffer between
     // SDL_Renderer batches. Returns false when the renderer is not SDL's OpenGL backend.
@@ -135,6 +139,7 @@ public:
     // Imported car (the police car, ISSUES #318): an RGBA texture by hash with the gloss class its triangles take in the car shader,
     // and smooth normals for a car's model (9 floats per triangle, car space; replaces the built ones).
     void AddCustomTexture(uint32_t hash, int w, int h, std::vector<uint32_t> rgba, uint8_t gloss);
+    bool HasCustomTexture(uint32_t hash) const { return m_customTex.count(hash) != 0; } // IlAssets registers each texture once
     void SetCarNormals(size_t index, std::vector<float> normals);
     // Car texture packs (CARS\<name>\TEXTURES.BIN, CARS\TEXTURES.BIN): their textures join the
     // world's by name hash.
@@ -243,6 +248,8 @@ public:
 
     // Race barriers (XO_TrackBarrier* scenery) are kept out of the world until a race enables the
     // ones it needs (UG2 selects barrier groups per race; see ISSUES.md #107). keep(bbox[6]).
+    // Keep the street props off the race route (call before Load; x, y pairs sampled along the route).
+    void SetPropAvoid(std::vector<float> xy) { m_propAvoid = std::move(xy); }
     void EnableBarriers(const std::function<bool(const float *bbox)> &keep);
 
     // Number of collision-mesh faces loaded (0: physics falls back to the render triangles).
@@ -310,6 +317,9 @@ private:
     std::unordered_map<int64_t, std::vector<uint32_t>> m_propGrid; // 16 m cell -> indices into m_propSolids
     bool PropWall(const float *a, const float *b, float *normal) const;
     void AddIsraeliProps(); // ISSUES #273 (IsraelProps.cpp)
+    std::vector<float> m_propAvoid; // x, y pairs along the race route: no props within a few metres (ISSUES #344)
+    // Imported intersections on the road mesh (ISSUES #336, IlSites.cpp): own triangle ranges and circular keep-outs {x, y, r, z} are returned.
+    void PlaceIlIntersections(std::vector<RTri> &props, std::vector<std::pair<size_t, size_t>> &ownRanges, std::vector<std::array<float, 4>> &keepOut, std::vector<PropSolid> &solids);
     bool BauhausReplace(const char *name, const std::vector<SolidMesh::Triangle> &tris, const float *pos, const float *rot); // ISSUES #279: true = the instance is replaced / hidden
     void FlushBauhaus();
     std::vector<RTri> m_bauhaus;

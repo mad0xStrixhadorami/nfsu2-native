@@ -347,20 +347,32 @@ void Minimap::RenderFull(const RaceRoute *route, const std::vector<Dot> &dots, i
     const float cx = m_x0 + float(m_w) * kRes * 0.5f, cy = m_y0 + float(m_h) * kRes * 0.5f;
     std::vector<Dot> all = dots;
     Render(cx, cy, 0.0f, metres, false, route, all, size, out, false);
-    if (player) { // a larger marker with a heading tick
+    if (player) { // the legend's blue triangle ("Your Car"), pointing the way the car heads, with a white rim
         const float R = metres * 0.5f;
         const float sx = ((player->x - cx) / R * 0.5f + 0.5f) * size, sv = (0.5f - (player->y - cy) / R * 0.5f) * size;
-        const int rad = std::max(5, size / 45);
-        for (int dy = -rad; dy <= rad; ++dy)
-            for (int dx = -rad; dx <= rad; ++dx) {
-                const int x = int(sx) + dx, y = int(sv) + dy;
-                if (dx * dx + dy * dy <= rad * rad && x >= 0 && y >= 0 && x < size && y < size)
-                    out[size_t(y) * size + x] = 0xffffffffu;
+        const float rad = float(std::max(7, size / 36));
+        // vertices (screen y grows downwards, the world's yaw turns anticlockwise): the tip ahead and two rear corners
+        const float vx[3] = {sx + std::cos(playerYaw) * rad * 1.6f, sx + std::cos(playerYaw + 2.5f) * rad * 1.3f,
+                             sx + std::cos(playerYaw - 2.5f) * rad * 1.3f};
+        const float vy[3] = {sv - std::sin(playerYaw) * rad * 1.6f, sv - std::sin(playerYaw + 2.5f) * rad * 1.3f,
+                             sv - std::sin(playerYaw - 2.5f) * rad * 1.3f};
+        const int x0 = std::max(0, int(std::min({vx[0], vx[1], vx[2]})) - 2), x1 = std::min(size - 1, int(std::max({vx[0], vx[1], vx[2]})) + 2);
+        const int y0 = std::max(0, int(std::min({vy[0], vy[1], vy[2]})) - 2), y1 = std::min(size - 1, int(std::max({vy[0], vy[1], vy[2]})) + 2);
+        const float area = (vx[1] - vx[0]) * (vy[2] - vy[0]) - (vx[2] - vx[0]) * (vy[1] - vy[0]);
+        const float sgn = area < 0 ? -1.0f : 1.0f;
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                // distance in pixels to the nearest edge, positive inside: the fill is the inside, the rim a 3 px band
+                float d = 1e9f;
+                for (int e = 0; e < 3; ++e) {
+                    const int f = (e + 1) % 3;
+                    const float ex = vx[f] - vx[e], ey = vy[f] - vy[e], len = std::max(1e-3f, std::hypot(ex, ey));
+                    d = std::min(d, sgn * (ex * (float(y) - vy[e]) - ey * (float(x) - vx[e])) / len);
+                }
+                if (d >= 2.0f)
+                    out[size_t(y) * size + x] = 0xffffaa00u; // blue (ABGR)
+                else if (d >= -1.0f)
+                    out[size_t(y) * size + x] = 0xffffffffu; // white rim
             }
-        for (int k = rad; k < rad * 3; ++k) {
-            const int x = int(sx + std::cos(playerYaw) * k), y = int(sv - std::sin(playerYaw) * k);
-            if (x >= 0 && y >= 0 && x < size && y < size)
-                out[size_t(y) * size + x] = 0xffffffffu;
-        }
     }
 }

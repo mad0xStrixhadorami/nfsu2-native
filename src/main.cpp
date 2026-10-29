@@ -707,8 +707,8 @@ int main(int argc, char **argv)
             printf("[Sponsors] area %d: %d sponsors\n", a, area->count);
             for (int i = 0; i < area->count; ++i)
                 if (const Career::Sponsor *s = t.Find(area->hashes[size_t(i)]))
-                    printf("[Sponsors]   %-16s threshold %d bonus %d race purse %d\n", s->name.c_str(),
-                           area->thresholds[size_t(i)], s->signingBonus, s->racePurse);
+                    printf("[Sponsors]   %-16s threshold %d bonus %d race purse %d rating needed %d\n", s->name.c_str(),
+                           area->thresholds[size_t(i)], s->signingBonus, s->racePurse, s->extra);
         }
         fflush(stdout);
     }
@@ -750,6 +750,7 @@ int main(int argc, char **argv)
         Uint32 ms;
         u32 mask;
         bool sent = false;
+        bool menuRelative = false; // "m<ms>:button": ms after the main menu is reached (the intro length varies)
     };
     std::vector<ScriptedPress> script;
     // NFSU2_DRIVE="from-to:button,..." (ms since start; up down left right): buttons held for a window,
@@ -787,11 +788,14 @@ int main(int argc, char **argv)
             char name[16] = {};
             unsigned ms = 0;
             int used = 0;
+            const bool rel = *p == 'm';
+            if (rel)
+                ++p;
             if (sscanf(p, "%u:%15[a-z]%n", &ms, name, &used) != 2)
                 break;
             for (auto &b : kButtons)
                 if (strcmp(b.name, name) == 0)
-                    script.push_back({ms, b.mask});
+                    script.push_back({ms, b.mask, false, rel});
             p += used;
             if (*p == ',')
                 ++p;
@@ -833,6 +837,14 @@ int main(int argc, char **argv)
         size_t sig = mix(reinterpret_cast<size_t>(sc.model->data()), sc.model->size());
         for (SDL_Color c : {sc.body, sc.rim, sc.caliper, sc.mirror, sc.spoiler, sc.roof, sc.engine, sc.exhaust})
             sig = col(sig, c);
+        // the vinyl livery (ISSUES #352): the layers' designs and colours are part of what the stage car is built from
+        const std::vector<CarSkin::Layer> stageVinyls = fe.PreviewVinyls().empty() ? fe.TestVinyls() : fe.PreviewVinyls();
+        for (const CarSkin::Layer &l : stageVinyls) {
+            sig = mix(sig, std::hash<std::string>()(l.design));
+            for (auto &c4 : l.color)
+                for (uint8_t v : c4)
+                    sig = mix(sig, v);
+        }
         if (sig != stageSig || sc.name != stageName) {
             stageWorld->ClearCars();
             for (const char *shared : {"CARS\\TEXTURES.BIN", "CARS\\WHEELS\\TEXTURES.BIN"})
@@ -856,6 +868,16 @@ int main(int argc, char **argv)
                         lo[a] = std::min(lo[a], c3[a]), hi[a] = std::max(hi[a], c3[a]);
                 }
             const float m[12] = {1, 0, 0, -(lo[0] + hi[0]) * 0.5f, 0, 1, 0, -(lo[1] + hi[1]) * 0.5f, 0, 0, 1, -lo[2]};
+            if (!stageVinyls.empty()) { // the livery goes on before the transform builds the car's triangles (ISSUES #352)
+                std::vector<uint32_t> skin;
+                const bool shop = fe.EnsureVinylShop();
+                const bool composed = shop && fe.ComposeVinylSkin(sc.body, stageVinyls, skin);
+                const uint32_t slot = CarSkin::DetectBodySlot(*sc.model, *sc.slots, sc.name);
+                if (getenv("NFSU2_STAGE_DEBUG"))
+                    printf("[Stage] vinyl: %zu layers, shop %d, composed %d, body slot %08x\n", stageVinyls.size(), int(shop), int(composed), slot);
+                if (composed)
+                    stageWorld->SetCarSkin(idx, slot, std::move(skin));
+            }
             stageWorld->SetCarTransform(idx, m);
             if (sc.name != stageName)
                 stageSwitch = seconds;
@@ -877,6 +899,9 @@ int main(int argc, char **argv)
             sp.shiftX = 0.36f;
             sp.distance = 9.0f;
             sp.lookZ = 1.0f;
+            // a warm concrete-and-sodium studio instead of the default blue wash (the menu itself carries the one accent colour)
+            sp.accent[0] = 0.42f, sp.accent[1] = 0.36f, sp.accent[2] = 0.28f;
+            sp.accent2[0] = 0.20f, sp.accent2[1] = 0.17f, sp.accent2[2] = 0.08f;
         }
         sp.time = seconds;
         SDL_RenderSetLogicalSize(ren, 0, 0);
@@ -1000,6 +1025,8 @@ int main(int argc, char **argv)
     const Career::Trigger *tipArmed = nullptr; // a tip spot delivers its message once per visit (ISSUES #308)
     std::string tipTitle, tipBody;
     Uint32 tipStart = 0;
+    std::string seriesTitle, seriesBody; // a career series race start's toast (ISSUES #334)
+    Uint32 seriesToastStart = 0;
     int engageSel = 0;
     const Career::Hotspot *hotArmed = nullptr; // a hot spot stays disarmed until the car leaves its circle
 
@@ -1149,6 +1176,7 @@ int main(int argc, char **argv)
             }
         for (const auto &n : neighbourData)
             neighbours.push_back(&n);
+        printf("[World] %zu neighbouring stream(s) read for borrowed solids\n", neighbours.size());
         world.SetExtraPack({});
         // The location's dynamic textures (TRACKS\\LOC<n>DYNTEX.BIN, an 0xb3300000 pack the region streams do not
         // carry): the tree canopies and other foliage name textures that only live here (ISSUES #254).
@@ -1164,6 +1192,30 @@ int main(int argc, char **argv)
         }
         loadBase = 0.3f, loadSpan = 0.55f, loadStage = "Building the city";
         world.SetProgress([&](float f) { loadingFrame("", f); });
+        { // the street props stay off the race route (ISSUES #344): sample it before the world builds them
+            int rn = startup.RaceNumber(), rtype = startup.RaceType();
+            if (const char *n = getenv("NFSU2_RACE"))
+                rn = atoi(n);
+            if (const char *t = getenv("NFSU2_RACETYPE"))
+                rtype = atoi(t);
+            std::vector<float> xy;
+            if (rn && rtype != 9) {
+                float trackLen = 0.0f;
+                for (const RaceInfo &r : fe.Races())
+                    if (r.number == rn)
+                        trackLen = float(r.length);
+                char pp[64];
+                snprintf(pp, sizeof(pp), "TRACKS\\ROUTES%s\\PATHS%d.BIN", region.c_str(), rn);
+                RaceRoute propRoute;
+                if (propRoute.Load(ReadGameFile(*fs, pp), trackLen))
+                    for (float s = 0.0f; s < propRoute.Length(); s += 3.0f) {
+                        float x, y, dx, dy;
+                        propRoute.Sample(s, x, y, dx, dy);
+                        xy.push_back(x), xy.push_back(y);
+                    }
+            }
+            world.SetPropAvoid(std::move(xy));
+        }
         const bool loaded = !stream.empty() && world.Load(stream, neighbours);
         world.SetProgress(nullptr);
         loadStage = nullptr;
@@ -1239,6 +1291,7 @@ int main(int argc, char **argv)
         // original keeps the race number and only flips the direction global (0x0053e404), which
         // selects the other start grid (+0xec tables) and the reverse route run.
         const bool reverse = !freeRoam && (startup.RaceReverse() || getenv("NFSU2_REVERSE") != nullptr);
+        const int freeSpawnRace = raceNumber; // a free run on a track starts on that track's grid (ISSUES #349)
         if (freeRoam)
             raceNumber = 0;
         else if (raceNumber && route.Load(ReadGameFile(*fs, pathsPath), raceConfig.trackLength)) {
@@ -1277,18 +1330,59 @@ int main(int argc, char **argv)
         std::vector<uint8_t> markers = ReadGameFile(*fs, markersPath.c_str());
         std::vector<TrackWorld::Camera> grid;
         if (raceNumber) {
-            float best = -2.0f;
+            // Each race lists two start setups (a grid of 8 and its line marker), one per direction, and they can lie far
+            // apart.  Take the setup on the route (a grid hundreds of metres off it is another layout's); if the route runs
+            // against the grid's heading the Paths file is stored the other way round, so run it backwards (ISSUES #345).
+            float best = -1e9f;
+            bool flip = false;
             for (auto &g : world.GridsFromMarkers(markers, raceNumber)) {
-                float align = 1.0f;
+                float align = 1.0f, off = 0.0f;
                 if (route.Valid()) {
                     float x, y, dx, dy;
-                    route.Sample(route.Project(g[0].x, g[0].y), x, y, dx, dy);
+                    const float gs = route.Project(g[0].x, g[0].y);
+                    route.Sample(gs, x, y, dx, dy);
+                    off = std::hypot(g[0].x - x, g[0].y - y);
+                    // At the end of an open route the sampled direction is a clamp artifact: use the last 5 m's chord.
+                    if (!route.Closed() && (gs < 5.0f || gs > route.Length() - 5.0f)) {
+                        float x0, y0, x1, y1, t0, t1;
+                        const float e = gs < 5.0f ? 0.0f : route.Length() - 5.0f;
+                        route.Sample(e, x0, y0, t0, t1);
+                        route.Sample(e + 5.0f, x1, y1, t0, t1);
+                        const float cl = std::max(1e-3f, std::hypot(x1 - x0, y1 - y0));
+                        dx = (x1 - x0) / cl, dy = (y1 - y0) / cl;
+                    }
                     align = std::cos(g[0].yaw) * dx + std::sin(g[0].yaw) * dy;
+                    if (getenv("NFSU2_ROUTE_DUMP"))
+                        printf("[Route] grid of %zu at %.1f %.1f yaw %.2f: route %.1f %.1f (%.0f m off) align %.2f\n", g.size(), g[0].x, g[0].y,
+                               g[0].yaw, x, y, off, align);
                 }
-                if (align > best) {
-                    best = align;
-                    grid = g;
+                const float base = off < 30.0f ? 0.0f : -off;
+                for (int rev = 0; rev < (route.Valid() && off < 60.0f ? 2 : 1); ++rev) { // 60 m: an open route can start a lead-in away from its grid
+                    const float score = base + (rev ? -align - 0.1f : align); // an aligned grid wins over reversing the route
+                    if (score > best) {
+                        best = score;
+                        grid = g;
+                        flip = rev != 0;
+                    }
                 }
+            }
+            if (flip && route.Valid()) {
+                route.Reverse();
+                printf("[World] race %d: the route runs against its start grid, reversed\n", raceNumber);
+            }
+        }
+        // Free run on a race track region: the region's default camera is not on any road (L4RC: under the map, L4RF: on a girder),
+        // so start on the start grid of the selected track, or of the region's first track. The city (L4RA) keeps its own start.
+        if (freeRoam && region != "L4RA") {
+            int spawnRace = freeSpawnRace;
+            if (!spawnRace)
+                for (const RaceInfo &r : fe.Races())
+                    if (!spawnRace && region == r.region && r.length > 0 && !r.special)
+                        spawnRace = r.number;
+            const auto spawnGrids = spawnRace ? world.GridsFromMarkers(markers, spawnRace) : std::vector<std::vector<TrackWorld::Camera>>();
+            if (!spawnGrids.empty()) {
+                camera = spawnGrids[0][0];
+                printf("[World] free run: start at the grid of race %d (%.1f, %.1f)\n", spawnRace, camera.x, camera.y);
             }
         }
         int opponents = freeRoam || grid.empty() || flyCamera ? 0 : std::min<int>(raceConfig.type == 8 ? 1 : startup.RaceOpponents(), int(grid.size()) - 1);
@@ -1301,7 +1395,7 @@ int main(int argc, char **argv)
             printf("[World] race %d: grid of %zu, %d opponents\n", raceNumber, grid.size(), opponents);
             raceConfig.dirX = std::cos(camera.yaw);
             raceConfig.dirY = std::sin(camera.yaw);
-            raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY);
+            raceConfig.hasLine = world.LineFromMarkers(markers, raceNumber, raceConfig.lineX, raceConfig.lineY, grid[0].x, grid[0].y);
             if (route.Valid()) {
                 // Anchor the line to the front grid slot: on a multi-lap Paths file the line marker's
                 // nearest copy and the player's back slot can be one lap apart, while the front slot
@@ -1314,6 +1408,12 @@ int main(int argc, char **argv)
                 // instead of projecting freely (which jumps to the next lap and starts the race at
                 // the finish).
                 raceConfig.startS = route.Project(camera.x, camera.y, raceConfig.lineS);
+                if (getenv("NFSU2_ROUTE_DUMP")) // dev aid: the route every 10 m around the start grid (ISSUES #345)
+                    for (float d = -20.0f; d <= 140.0f; d += 10.0f) {
+                        float rx, ry, rdx, rdy;
+                        route.Sample(raceConfig.startS + d, rx, ry, rdx, rdy);
+                        printf("[Route] start%+4.0f m: %.1f %.1f dir %.2f %.2f\n", d, rx, ry, rdx, rdy);
+                    }
                 if (getenv("NFSU2_WORLD_DEBUG"))
                     printf("[World] line %s %.1f,%.1f lineS %.1f grid0 %.1f,%.1f s %.1f\n",
                            raceConfig.hasLine ? "marker" : "grid", raceConfig.lineX, raceConfig.lineY,
@@ -1439,7 +1539,12 @@ int main(int argc, char **argv)
             if (const char *spawn = getenv("NFSU2_SPAWN")) // dev aid: x,y,yaw (rad) -- put the player there (any grid)
                 sscanf(spawn, "%f,%f,%f", &camera.x, &camera.y, &camera.yaw), camera.z = getenv("NFSU2_SPAWN_Z") ? float(atof(getenv("NFSU2_SPAWN_Z"))) : 20.0f;
             float ground = camera.z - 2.0f;
-            world.GroundHeight(camera.x, camera.y, camera.z, ground);
+            // Some grids (L4RG 4701/4703) carry a marker z far below the surface: nothing is found under
+            // it and the car would start underground. Look again from above.
+            if (!world.GroundHeight(camera.x, camera.y, camera.z, ground)) {
+                const bool above = world.GroundHeight(camera.x, camera.y, camera.z + 120.0f, ground);
+                printf("[World] start ground not under marker z %.1f: %s %.1f\n", camera.z, above ? "from above" : "none", ground);
+            }
             car.Place(camera.x, camera.y, ground, camera.yaw);
             if (getenv("NFSU2_WORLD_DEBUG"))
                 for (float zMax : {16.0f, 18.0f, 18.5f, 19.0f, 19.5f, 20.0f, 21.0f, 25.0f}) {
@@ -1481,7 +1586,8 @@ int main(int argc, char **argv)
                     if (const uint8_t *rec = fe.CarRecordData(name))
                         opponentCars[i].UseUG2Physics(rec);
                 float ground = slot.z;
-                world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground);
+                if (!world.GroundHeight(slot.x, slot.y, slot.z + 2.0f, ground))
+                    world.GroundHeight(slot.x, slot.y, slot.z + 120.0f, ground);
                 opponentCars[i].Place(slot.x, slot.y, ground, slot.yaw);
                 // Rivals wear their own model's stock colours (#288): the default paint, or the second default when it
                 // would match the player's car.
@@ -2152,8 +2258,11 @@ int main(int argc, char **argv)
         }
         // NFSU2_INPUT="ms:button,..." emits one-update taps so a held press cannot cascade through screens.
         // Buttons: up down left right accept back start.
+        static Uint32 menuReachedMs = 0; // when UI_Main.fng first showed (for the menu-relative taps)
+        if (!menuReachedMs && startup.CurrentPackage() && strcasecmp(startup.CurrentPackage(), "UI_Main.fng") == 0)
+            menuReachedMs = std::max<Uint32>(1, elapsed);
         for (ScriptedPress &p : script) {
-            if (!p.sent && elapsed >= p.ms) {
+            if (!p.sent && (p.menuRelative ? (menuReachedMs && elapsed >= menuReachedMs + p.ms) : elapsed >= p.ms)) {
                 fe.SetSimulatedPadMask(p.mask);
                 p.sent = true;
                 releaseInjectedPadAfterUpdate = true;
@@ -2666,7 +2775,26 @@ int main(int argc, char **argv)
                     const int driftScore = race.IsDrift() ? int(race.DriftTotal()) : 0;
                     if (const char *forced = getenv("NFSU2_CAREER_TEST")) // dev aid: NFSU2_CAREER_TEST=<place> pays the race as a career event finished there
                         place = std::max(1, atoi(forced));
-                    startup.AwardCareerResult(worldRaceNumber, place, race.BestLap(), driftScore);
+                    // A career event's race series (ISSUES #334): each opponent slot's finishing place
+                    // earns its championship points.
+                    std::vector<int> rivalPlaces(oppNames.size(), 0);
+                    for (size_t i = 0; i < rows.size(); ++i)
+                        if (rows[i].name.rfind("RIVAL ", 0) == 0) {
+                            const int slot = atoi(rows[i].name.c_str() + 6) - 1;
+                            if (slot >= 0 && slot < int(rivalPlaces.size()))
+                                rivalPlaces[size_t(slot)] = int(i) + 1;
+                        }
+                    // 0x00269f28 for a single race: (1 - player time / best rival time) * 100 (drift: score / rival score - 1).
+                    float marginPct = -1.0f;
+                    if (!race.IsDrift())
+                        for (const PostRaceRow &r : rows)
+                            if (r.name == "YOU")
+                                for (const PostRaceRow &o : rows)
+                                    if (o.name != "YOU" && o.time > 0 && r.time > 0) {
+                                        marginPct = (1.0f - r.time / o.time) * 100.0f; // vs the best rival
+                                        break;
+                                    }
+                    startup.AwardCareerResult(worldRaceNumber, place, race.BestLap(), driftScore, &rivalPlaces, marginPct);
                     if (race.IsDrift())
                         startup.RecordQuickRaceScore(worldRaceNumber, worldRaceReverse, driftScore);
                     else
@@ -3189,7 +3317,7 @@ int main(int argc, char **argv)
                             }
                         } else {
                             for (const PlayerCar &o : opponentCars)
-                                dots.push_back({o.X(), o.Y(), 255, 70, 70});
+                                dots.push_back({o.X(), o.Y(), 255, 150, 40}); // the legend's orange "Opponent Car"
                             // The shops and the garage (the same colours as their light columns): the legend lists them (#293).
                             {
                                 for (const Career::Hotspot &h : Career::HotspotTable::Get().All()) {
@@ -3201,6 +3329,9 @@ int main(int argc, char **argv)
                                     }
                                 }
                             }
+                            // The open event locators, car shows and Unique spots the HUD minimap draws (#327) belong on the full map too.
+                            for (const Minimap::Dot &d : poiDots)
+                                dots.push_back(d);
                             marker = {car.X(), car.Y(), 255, 255, 255};
                             markerYaw = car.Yaw();
                             haveMarker = true;
@@ -3293,10 +3424,13 @@ int main(int argc, char **argv)
                 mh.drifting = car.Drifting(), mh.driftAngle = car.DriftAngleDeg(), mh.driftChain = car.DriftChain();
                 mh.driftMult = car.DriftMultiplier(), mh.driftBanner = car.DriftBanner(), mh.driftBank = car.DriftLastBank();
                 mh.driftTotal = car.DriftTotal();
+                std::string evName; // owns the HUD's event label until the draw call
                 if (mapNative) {
                     static const char *const kEventNames[] = {"CIRCUIT", "SPRINT", "DRAG", "DRIFT", "U.R.L.", "RACE", "RACE", "RACE", "RACE", "FREE ROAM", "STREET X"};
                     const int rt = race.RaceType();
-                    mh.eventName = race.IsFreeRun() ? "FREE ROAM" : (rt >= 0 && rt <= 10 ? kEventNames[rt] : "RACE");
+                    evName = race.IsFreeRun() ? "FREE ROAM" : (rt >= 0 && rt <= 10 ? kEventNames[rt] : "RACE");
+                    evName += startup.SeriesRaceTag(); // " - RACE 2/3" while a career series runs
+                    mh.eventName = evName.c_str();
                     mh.mapNew = mapFresh, mh.mapPixels = minimapPixels.data(), mh.mapSize = 256, mh.mapRotate = mapRotate, mh.mapYaw = car.Yaw(), mh.mapMetres = mapWindow;
                     mh.finishKm = (race.IsFreeRun() || race.RaceLength() < 50.0f || !route.Valid()) ? -1.0f : std::max(0.0f, (race.RaceLength() - race.PlayerDistance()) * 0.001f);
                 }
@@ -3319,6 +3453,23 @@ int main(int argc, char **argv)
                 pu.nearest = ph.nearest, pu.banner = ph.banner, pu.resultTimer = float(now - pursuitResultStart) * 0.001f, pu.amount = ph.state == Pursuit::kBusted ? ph.fine : ph.reward;
                 pu.bannerText = ph.bannerText.c_str(), pu.bannerSub = ph.bannerSub.c_str();
                 modernUi.DrawPursuit(w, h, pu, float(now) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            }
+            // A career series race start (ISSUES #334): the toast comes up once the race world is in.
+            if (inWorld && modernUi.Ready() && !pausePkg && !cribPkg && (!seriesToastStart || now - seriesToastStart >= 6000)) {
+                std::string t, b;
+                if (startup.TakeSeriesToast(t, b)) {
+                    seriesTitle = t;
+                    seriesBody = b;
+                    seriesToastStart = now ? now : 1;
+                }
+            }
+            if (seriesToastStart && modernUi.Ready() && !pausePkg && !cribPkg && now - seriesToastStart < 6000) {
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int tw, th;
+                SDL_GetRendererOutputSize(ren, &tw, &th);
+                modernUi.DrawToast(tw, th, "CAREER SERIES", seriesTitle, seriesBody,
+                                   float(now - seriesToastStart) * 0.001f, 6.0f);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
             if (tipStart && modernUi.Ready() && !pausePkg && !cribPkg && now - tipStart < 12000) {
@@ -3401,7 +3552,32 @@ int main(int argc, char **argv)
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
             }
             startup.PreRender(); // after the FEng script update, before the frame is drawn
-            engine->Render();
+            // The main menu (ISSUES #357): the FEng carousel keeps running as the logic (input, selection, navigation) but the native menu
+            // draws it.  NFSU2_CLASSIC_MENU=1 shows the original package instead.
+            size_t menuSel = 0;
+            std::string menuPlayer;
+            int menuMoney = -1, menuRep = -1;
+            const bool nativeMenu = staged && !getenv("NFSU2_CLASSIC_MENU") && !fe.PreviewScreenOpen() && fe.MainMenuOpen() && startup.CurrentPackage() &&
+                                    strcasecmp(startup.CurrentPackage(), "UI_Main.fng") == 0 && !startup.IsMessageDialogOpen() &&
+                                    startup.MainMenuState(menuSel, menuPlayer, menuMoney, menuRep);
+            if (nativeMenu) {
+                static const char *const kItems[] = {"CAREER", "QUICK RACE", "2 PLAYER", "ONLINE", "CUSTOMIZE", "PROFILE", "OPTIONS"};
+                static const char *const kNotes[] = {"Build your reputation across five districts.", "Jump straight into a single event.",
+                                                     "Head to head on one screen.", "Not available in this build.",
+                                                     "Paint, vinyls, parts and performance.", "Create, save and manage profiles.",
+                                                     "Controls, video, audio and gameplay."};
+                ModernUI::MainMenu mm;
+                mm.items = kItems, mm.notes = kNotes, mm.count = 7, mm.selected = int(menuSel);
+                mm.player = menuPlayer, mm.money = menuMoney, mm.reputation = menuRep;
+                mm.car = fe.CarDisplayName(fe.PreviewCarName());
+                mm.carSub = "CURRENT CAR";
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                int mw, mh;
+                SDL_GetRendererOutputSize(ren, &mw, &mh);
+                modernUi.DrawMainMenu(mw, mh, mm, float(elapsed) * 0.001f);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+            } else
+                engine->Render();
             // The dialog is a package on top of the shop; the preview overlay is drawn outside the
             // package stack, so it would cover the prompt (ISSUES #189).
             if (!startup.IsMessageDialogOpen())

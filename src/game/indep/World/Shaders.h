@@ -657,6 +657,8 @@ uniform vec3 uSunCol; // the sun's colour: white at noon, orange at sunset, dim 
 uniform float uSunset; // 0 .. 1 while the sun is near the horizon
 uniform float uStage; // 1 in the menu showroom (ISSUES #304): studio strip lights instead of the city
 uniform vec3 uStageA, uStageB;
+uniform float uWet;   // 0 dry .. 1 soaked (ISSUES #354): rain on the paint, drops, trails, a water film on the clear coat and the glass
+uniform float uSpeed; // the car's speed in m/s: the wind drags the drops over the panels
 // Per-car data for grounding and the lamp internals (ISSUES #312): the lowest point of the car, the lamp centres (left / right head, left /
 // right tail; far away when the car has none) and the car's forward axis.
 uniform float uBase;
@@ -758,7 +760,78 @@ float fogOf(float dist) {
     float f = clamp((dist - uFogStart) / max(uFogEnd - uFogStart, 1.0), 0.0, 1.0);
     return f * f * (3.0 - 2.0 * f);
 }
-
+// Water drops on a panel (ISSUES #354).  Each drop is a spherical cap sitting on the surface at a contact angle of about 65 deg: its
+// surface normal tilts away from the panel's by up to that angle at the rim, which is what makes it a lens.  Three scales (about 6 mm,
+// 15 mm and 35 mm across; mostly the small ones) share the panel.  Gravity pulls the water down the panel's slope and the wind of the
+// car's speed drags it rearwards along the surface; a drop is stretched along that flow in proportion to how strongly it acts, and the
+// biggest ones leave a thin trail of water behind them.  Returns the coverage 0..1 and, for the nearest drop, its cap normal (world),
+// the distance from its centre in drop radii, the unit offset in the (flow, across) frame, a trail mask and the frame itself.
+float waterDrops(vec3 N, vec3 P, float wet, bool glass, out vec3 capN, out float dn, out vec2 nxy, out float trail, out vec3 fOut, out vec3 tOut) {
+    capN = N; dn = 1.0; nxy = vec2(0.0); trail = 0.0;
+    vec3 gr = vec3(0.0, 0.0, -1.0);
+    vec3 fg = gr - N * dot(gr, N);                       // down the slope, in the panel
+    float slope = length(fg);
+    vec3 fgn = fg / max(slope, 1e-4);
+    vec3 fw = -uFwdC - N * dot(-uFwdC, N);                // the air flows back over the car
+    vec3 fwn = fw / max(length(fw), 1e-4);
+    float windK = smoothstep(3.0, 22.0, uSpeed) * min(1.0, 0.25 + length(fw) * 1.3);
+    vec3 fl = fgn * slope * (1.0 - windK) + fwn * windK;
+    float flen = length(fl);
+    vec3 f = flen > 0.04 ? fl / flen : (length(fw) > 0.02 ? fwn : vec3(1.0, 0.0, 0.0));
+    f = normalize(f - N * dot(f, N) + vec3(1e-5));
+    vec3 t = normalize(cross(N, f));
+    fOut = f; tOut = t;
+    vec2 uv = vec2(dot(P, f), dot(P, t));
+    float stretch = clamp(flen, 0.0, 1.0);
+    // drops are blown off the surfaces that face into the wind
+    float headOn = max(dot(N, uFwdC), 0.0) * smoothstep(8.0, 30.0, uSpeed);
+    float cover = 0.0, best = 1e9;
+    const float sinA = 0.90;
+    for (int i = 0; i < 3; ++i) {
+        float sc = i == 0 ? 83.0 : (i == 1 ? 36.0 : 14.0);             // cells per metre: 12, 28 and 70 mm cells (drops 4-8, 10-19 and 24-48 mm across)
+        float dens = (i == 0 ? 0.42 : (i == 1 ? 0.20 : 0.07)) * wet * (1.0 - 0.7 * headOn * (i == 2 ? 1.0 : 0.5));
+        vec2 g = uv * sc;
+        vec2 cell = floor(g);
+        vec2 loc = fract(g) - 0.5;
+        float hr = h13(vec3(cell, 3.7 + float(i) * 11.0));
+        float present = step(1.0 - dens, hr);
+        vec2 off = (vec2(h13(vec3(cell, 8.1 + float(i))), h13(vec3(cell, 12.9 + float(i))) ) - 0.5) * 0.30;
+        float sz = h13(vec3(cell, 21.3 + float(i)));
+        float rad = 0.17 + 0.17 * sz;
+        // the drop is stretched along the flow: a sagging teardrop on the upright panels, a streak where the wind has it
+        float e = 1.0 + stretch * (0.35 + 1.5 * sz) * (i == 0 ? 0.45 : 1.0);
+        e = min(e, 0.47 / rad);
+        vec2 dv = loc - off;
+        // a teardrop: rounder at the leading edge (down-stream), pinched at the tail
+        float tail = smoothstep(0.0, -rad * e, dv.x);
+        vec2 q = vec2(dv.x / (e * mix(1.0, 0.72, tail * stretch)), dv.y);
+        float d = length(q) / rad;
+        // a drop smaller than a pixel cannot be drawn without sparkling: it fades into the film instead
+        float px = length(fwidth(P));
+        float resolved = smoothstep(0.8 * px, 2.2 * px, 2.0 * rad / sc);
+        float inside = present * resolved * (1.0 - smoothstep(0.90, 1.0, d));
+        // the thin trail of water a big drop has left on its way down (only on the 12 mm scale, on tilted panels)
+        if (i == 2 && present > 0.5) {
+            float behind = off.x - e * rad * 0.8 - loc.x;
+            float wtr = rad * 0.20 * (1.0 - clamp(behind / 0.5, 0.0, 1.0));
+            float tr = step(0.0, behind) * (1.0 - smoothstep(wtr * 0.6, wtr, abs(dv.y))) * smoothstep(0.0, 0.05, 0.5 - loc.x - 0.0) * stretch;
+            trail = max(trail, tr * (1.0 - inside));
+        }
+        if (inside > 0.0 && d < best) {
+            best = d;
+            cover = max(cover, inside);
+            vec2 n2 = q / rad;
+            float dd = length(n2);
+            nxy = dd > 1e-3 ? n2 / dd : vec2(0.0);
+            float sinT = sinA * min(dd, 1.0);
+            capN = normalize(N * sqrt(max(1.0 - sinT * sinT, 0.03)) + (f * n2.x + t * n2.y) * sinA);
+            dn = d;
+        } else {
+            cover = max(cover, inside);
+        }
+    }
+    return cover;
+}
 void main() {
     vec4 tex = texture2D(uTex, vUV);
     vec4 base = tex * vColor;
@@ -889,10 +962,18 @@ void main() {
     bool glass = vGloss > 1.5;
     float near = 1.0 - smoothstep(10.0, 42.0, vDist);
     vec3 Np = N;
-    if (!glass && near > 0.0) { // orange peel: a faint, fine ripple in the surface normal that breaks up reflections
+    if (!glass && near > 0.0) { // orange peel: a faint, fine ripple in the surface normal that breaks up reflections (a water film fills it in)
         vec3 pn = vec3(vn2(vPos.xy * 70.0 + vPos.z * 41.0), vn2(vPos.yz * 70.0 + 11.0), vn2(vPos.zx * 70.0 + 23.0)) - 0.5;
-        Np = normalize(N + pn * 0.055 * near);
+        Np = normalize(N + pn * 0.055 * near * (1.0 - 0.85 * uWet));
     }
+    // rain (ISSUES #354): water drops sit on the panel as small lenses (see waterDrops); the rest of the surface carries a thin film
+    float wetK = uWet * near;
+    vec3 capN = N, fDir = vec3(1.0, 0.0, 0.0), tDir = vec3(0.0, 1.0, 0.0);
+    float dropCover = 0.0, dropD = 1.0, trail = 0.0;
+    vec2 dropNxy = vec2(0.0);
+    if (wetK > 0.01)
+        dropCover = waterDrops(N, vPos, wetK, glass, capN, dropD, dropNxy, trail, fDir, tDir);
+    float film = clamp(0.55 * wetK + 0.35 * trail * wetK, 0.0, 1.0);   // how much water covers this spot
     float NdV = max(dot(Np, V), 0.0);
     float NdL = dot(Np, L);
     float wrap = clamp((NdL + 0.30) / 1.30, 0.0, 1.0);
@@ -905,6 +986,8 @@ void main() {
     vec3 sunCol = mix(vec3(0.14, 0.16, 0.24), uSunCol, smoothstep(-0.04, 0.10, uSun.z));
     float ao = mix(1.0, vAO, 0.6);
     vec3 lit = base.rgb * (amb * ao + sunCol * wrap * (uStage > 0.5 ? 0.6 : 1.0) * 0.95);
+    lit *= 1.0 - 0.34 * film * (glass ? 0.0 : 1.0);   // wet paint reads darker and richer: the water film cuts the diffuse scatter
+    lit = mix(lit, lit * lit * 1.8, 0.18 * film * (glass ? 0.0 : 1.0));  // and a little more saturated
     // sitting on the road: the lower panels fall into the shadow of the car itself and pick up the dark asphalt
     float rel = vPos.z - uBase;
     float low = 1.0 - smoothstep(0.04, 0.60, rel);
@@ -912,14 +995,14 @@ void main() {
     lit += vec3(0.020, 0.019, 0.018) * low * (0.5 - 0.5 * Np.z);
     // clear coat: Fresnel-weighted environment reflection + a hot, tight sun lobe + a broad sheen
     vec3 R = reflect(-V, Np);
-    float F0 = glass ? 0.10 : 0.068;
+    float F0 = (glass ? 0.10 : 0.068) + 0.055 * film;                               // water on clear coat: a second, brighter interface
     float fres = F0 + (1.0 - F0) * pow(1.0 - NdV, 5.0);
-    float reflectivity = glass ? 1.0 : 0.95;
+    float reflectivity = glass ? 1.0 : mix(0.95, 1.0, film);
     vec3 env = environment(R);
     vec3 H = normalize(L + V);
     float NdH = max(dot(Np, H), 0.0);
-    float tight = pow(NdH, glass ? 420.0 : 260.0) * 2.4;
-    float broad = pow(NdH, 28.0) * 0.20;
+    float tight = pow(NdH, glass ? 420.0 : mix(260.0, 520.0, film)) * (2.4 + 2.2 * film);
+    float broad = pow(NdH, 28.0) * 0.20 * (1.0 - 0.5 * film);
     vec3 spec = sunCol * (tight + broad) * smoothstep(-0.05, 0.25, NdL) * (bright ? 1.0 : 0.5);
     // metallic flakes: tiny mirrors scattered in the paint that glint with the view
     float flake = 0.0;
@@ -928,13 +1011,43 @@ void main() {
         float rr = h13(cell);
         vec3 fn = normalize((vec3(h13(cell + 1.3), h13(cell + 5.7), h13(cell + 9.1)) * 2.0 - 1.0) * 0.8 + N * 1.4);
         float sp = pow(max(dot(reflect(-V, fn), L), 0.0), 40.0) + 0.35 * pow(max(dot(reflect(-V, fn), normalize(R + vec3(0.0, 0.0, 0.5))), 0.0), 18.0);
-        flake = step(0.93, rr) * sp * 0.55 * near * (bright ? 1.0 : 0.35);
+        flake = step(0.93, rr) * sp * 0.55 * near * (bright ? 1.0 : 0.35) * (1.0 - 0.6 * film);   // flakes sit under the water: they sparkle less
     }
-    vec3 col = lit * (1.0 - fres * reflectivity * 0.62) + env * fres * reflectivity * (1.0 - 0.35 * low) + spec + (0.35 + base.rgb * 1.6) * flake;
+    vec3 col = lit * (1.0 - fres * reflectivity * 0.62) + env * fres * reflectivity * (1.0 - 0.35 * low) * (1.0 + 0.55 * film) + spec + (0.35 + base.rgb * 1.6) * flake;
+    col += env * film * (glass ? 0.0 : 0.10) * (0.4 + 0.6 * fres);  // the water sheet: a broad, glassy second reflection
     if (glass) {
         // tinted glass: dark interior seen through it, almost everything else is reflection
         col = base.rgb * amb * 0.30 + env * (0.38 + 0.95 * fres) * vec3(0.92, 1.0, 0.98) + spec * 1.1;
     }
+    // water drops, each a lens (ISSUES #354): the Fresnel reflection of the surroundings in the cap (about 2 % head on, almost a mirror at the
+    // rim), the paint (or the dark cabin) seen through the water a little darker and richer, the sun's catch-light on the cap, a bright
+    // crescent inside the drop on the side away from the light where the refracted light lands, and the rim where the view turns grazing
+    if (dropCover > 0.0) {
+        vec3 Rd = environment(reflect(-V, capN));
+        float Fw = 0.02 + 0.98 * pow(1.0 - max(dot(capN, V), 0.0), 5.0);
+        float cap = pow(max(dot(capN, H), 0.0), 150.0) * 3.0 * smoothstep(-0.05, 0.25, dot(N, L));
+        float rim = smoothstep(0.70, 0.97, dropD);
+        vec2 ld = normalize(vec2(dot(L, fDir), dot(L, tDir)) + vec2(1e-4));
+        float cres = smoothstep(0.25, 0.90, dot(dropNxy, -ld)) * smoothstep(0.45, 0.95, dropD) * smoothstep(-0.2, 0.3, dot(N, L));
+        vec3 dropCol;
+        if (glass) {
+            vec3 refr = environment(normalize(vec3(-V.xy * 0.6, abs(V.z) + 0.3)));   // the world seen inverted through the little lens
+            dropCol = mix(refr * 0.55 + col * 0.40, Rd, clamp(Fw * 0.9 + 0.15, 0.0, 1.0));
+        } else {
+            // the dome magnifies and brightens the paint beneath it, and mirrors the sky over it (added, not mixed: a dark ground
+            // reflection must not turn the drop into a black speck)
+            vec3 under = lit * 0.95 + base.rgb * 0.16;
+            dropCol = under * 1.16 + Rd * (0.10 + 0.55 * Fw);
+            dropCol += under * cres * 0.70;
+        }
+        dropCol += sunCol * cap;
+        if (glass)
+            dropCol = mix(dropCol, Rd * 0.9 + 0.12 * col, rim * 0.30);
+        col = mix(col, dropCol, dropCover);
+        // the thin dark line where the edge of the water meets the paint
+        col *= 1.0 - 0.20 * smoothstep(0.86, 0.96, dropD) * (1.0 - smoothstep(0.96, 1.0, dropD)) * dropCover;
+    }
+    col = mix(col, col * 0.88 + env * 0.10, trail * wetK);   // the thin trail a drop leaves: a sliver of water
     gl_FragColor = vec4(mix(col, uFogColor, fogOf(vDist)), base.a);
 }
 )";

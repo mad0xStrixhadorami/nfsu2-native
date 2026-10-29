@@ -16,7 +16,7 @@ constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187), v10 the fitted
 // hood, headlights and taillights (#188), v11 the fitted front/rear bumpers and side skirts (#190),
 // v12 the fitted wide-body kit (#193), v13 the fitted performance parts (#198), v14 the tuning slider bytes (#214).
-constexpr uint32_t kVersion = 21;
+constexpr uint32_t kVersion = 22;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -221,6 +221,12 @@ std::vector<uint8_t> Serialize(const Profile &p)
         PutU32(payload, uint32_t(e.read) | uint32_t(e.popupShown) << 1 | uint32_t(e.deleted) << 2 |
                             uint32_t(e.filed) << 3);
     }
+    // v22: reputation earned per area and the races it came from (#335): the Status screen's totals
+    // and averages (the area object's +0xe0 sum and +0xe4 count, 0x002664c8).
+    for (int a = 0; a < Profile::kAreas; ++a) {
+        PutU32(payload, p.repSum[a]);
+        PutU32(payload, p.repRaces[a]);
+    }
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -242,7 +248,7 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
     uint32_t version, size, sum;
     if (!GetU32(data, o, version) || !GetU32(data, o, size) || !GetU32(data, o, sum))
         return false;
-    if ((version < 1 || version > 21) || o + size > data.size())
+    if ((version < 1 || version > kVersion) || o + size > data.size())
         return false;
     std::vector<uint8_t> payload(data.begin() + o, data.begin() + o + size);
     uint32_t check = 0;
@@ -566,6 +572,10 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
             p.inbox.push_back(e);
         }
     }
+    if (version >= 22)
+        for (int a = 0; a < Profile::kAreas; ++a)
+            if (!GetU32(payload, q, p.repSum[a]) || !GetU32(payload, q, p.repRaces[a]))
+                return false;
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;
     p.valid = true;

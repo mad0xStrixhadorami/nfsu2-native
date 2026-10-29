@@ -6,6 +6,7 @@
 
 #include "game/indep/World/PlayerCar.h"
 #include "game/indep/World/RaceRoute.h"
+#include "game/indep/World/TrackWorld.h"
 
 void AiDriver::Init(PlayerCar *car, const RaceRoute *route, float lane, float skill, float startS)
 {
@@ -17,6 +18,8 @@ void AiDriver::Init(PlayerCar *car, const RaceRoute *route, float lane, float sk
     m_progress = 0;
     m_steer = 0;
     m_stuck = 0;
+    m_adj = m_adjTarget = 0;
+    m_probe = 0;
 }
 
 static float kUg2Max = getenv("NFSU2_AI_MAX") ? atof(getenv("NFSU2_AI_MAX")) : 40.0f;
@@ -38,8 +41,32 @@ float AiDriver::Update(const TrackWorld &world, float dt, bool go)
         // Target: a point ahead on the route, shifted into this driver's lane.
         float x, y, dx, dy;
         m_route->Sample(s + 12.0f + speed * 0.55f, x, y, dx, dy);
-        x += -dy * m_lane;
-        y += dx * m_lane;
+        // Wall avoidance: the route is the road's centre line, which on a divided road is the median with its barrier. Every
+        // 0.15 s the line from the car to the aim point is tested against the collision walls and, when blocked, the lane
+        // is shifted sideways to the nearest clear offset (sticky, so it does not flip-flop); it relaxes back when free.
+        m_probe += dt;
+        if (m_probe > 0.15f) {
+            m_probe = 0;
+            const float z = car.Z() + 0.6f;
+            auto blocked = [&](float off) {
+                const float a[3] = {car.X(), car.Y(), z}, b[3] = {x - dy * (m_lane + off), y + dx * (m_lane + off), z};
+                float n[3];
+                return world.CollisionWall(a, b, n);
+            };
+            static const float kOffsets[] = {3.0f, -3.0f, 6.0f, -6.0f, 9.0f, -9.0f};
+            if (blocked(m_adjTarget)) {
+                for (float o : kOffsets)
+                    if (!blocked(o)) {
+                        m_adjTarget = o;
+                        break;
+                    }
+            } else if (m_adjTarget != 0.0f && !blocked(0.0f)) {
+                m_adjTarget = 0.0f;
+            }
+        }
+        m_adj += std::clamp(m_adjTarget - m_adj, -4.0f * dt, 4.0f * dt);
+        x += -dy * (m_lane + m_adj);
+        y += dx * (m_lane + m_adj);
         float want = std::atan2(y - car.Y(), x - car.X());
         float err = std::remainder(want - car.Yaw(), 6.2831853f);
         steer = std::clamp(err * 2.2f, -1.0f, 1.0f);

@@ -49,6 +49,16 @@ switchable off with environment variables (see the table at the bottom) if you w
 
 <table>
 <tr>
+<td colspan="2" align="center"><img src="docs/media/main_menu_2026.gif" width="70%" alt="The new main menu"/><br/><sub><b>New main menu</b> — flat and high-contrast: a column of big caps, a hard-edged signal-yellow highlight that glides to the selected row, a one-line description, your player, cash, reputation and current car, and the 3D showroom behind it. The original FEng carousel still runs underneath as the logic (input, selection, navigation); <code>NFSU2_CLASSIC_MENU=1</code> shows the original screen.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/media/wet_night.gif" alt="Wet paint"/><br/><sub><b>Rain on the paint</b> — water drops modelled as spherical caps (about 65° contact angle): Fresnel reflection, catch-lights, a caustic crescent, drops stretched by gravity and by the wind of the car's speed, trails behind the big ones (<code>NFSU2_WET=&lt;0..1&gt;</code>).</sub></td>
+<td width="50%"><img src="docs/media/exhaust_flames_v2.gif" alt="Exhaust flames"/><br/><sub><b>Exhaust flames</b> — short, ragged and pulsing (a few tens of centimetres, three tongues, blue-white at the pipe fading to orange) instead of the old missile trail (<code>NFSU2_FORCE_FLAMES=1</code> to preview).</sub></td>
+</tr>
+</table>
+
+<table>
+<tr>
 <td width="50%"><img src="docs/media/loading.gif" alt="Loading screen"/><br/><sub><b>Loading screen</b> — an animated full-window backdrop (the artwork with drifting smoke, played back and forth with a cross-fade), a glass progress bar that only moves forward across every load phase (menus, race interface, streaming and building the city), stage names and rotating hints.</sub></td>
 <td width="50%"><img src="docs/media/menu_stage.gif" alt="Main menu showroom"/><br/><sub><b>Main-menu showroom</b> — the real 3D car on a dark studio floor with a mirrored reflection, softbox light panels and a gentle camera sway, behind the original menu.</sub></td>
 </tr>
@@ -86,8 +96,9 @@ switchable off with environment variables (see the table at the bottom) if you w
 | **Screen transitions** | A slanted, glowing light edge wipes one screen away to reveal the next: the menu frame into the loading screen, the finished loading frame over the game (`ModernUI::CaptureFrame` / `DrawWipe`); the graphics upload is done in slices under the loading screen so it never freezes at 100 % | #311 |
 | **Menu showroom** | `TrackWorld::RenderStage`: dark studio backdrop shader, the car drawn by the race's car shader in a *studio* environment (overhead strip box, tall coloured panels), mirrored reflection pass, glossy fading floor, light pool, bloom | #304 |
 | **Modern HUD** | Glass minimap rendered from the live road mesh, speed dial with nitrous gauge, drift counter, wind streaks and a radial speed blur (references: NFS Unbound) | #276, #295–#298 |
-| **Hybrid UI theme** | The original FEng menus keep their layout but are recoloured to the HUD palette | #290 |
-| **Pause dialog** | Glass panel on Esc: resume, restart, options, main menu, quit | #281 |
+| **Main menu and flat theme** | A native main menu (flat caps, angled yellow highlight, player / cash / car) over the 3D showroom with a warm studio instead of the blue wash; the shared backdrop and the pause / confirm dialogs use the same flat style. The old blue-glow, violet and perspective-grid backdrop is gone | #352, #357 |
+| **Hybrid UI theme** | The original FEng menus keep their layout but sit on the flat backdrop | #290, #357 |
+| **Wet cars** | Drop-based rain on paint and glass | #356 |
 | **Built-in profiler** | `F3`: frame time, CPU sections, GPU timer queries, a bound-ness verdict; draw-call batching and a single vertex arena took the city from 27 to a locked 60 fps | #282, #283 |
 | **Memory telemetry** | `F4`: every resident texture, vertex arena, cell list, car and sound buffer with its cost, priority and last use; `--mem-report` prints the loaded world's report and quits | #331 |
 | **Texture residency manager** | Over a VRAM budget the least recently used world textures are paged out and decoded again the next time their cell is in view (`NFSU2_TEX_BUDGET_MB`, `NFSU2_TEX_IDLE`); the report and the F4 panel show the budget and what was trimmed | #332 |
@@ -157,8 +168,8 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **333 entries** in [`ISSUES.md`](ISSUES.md) |
-| Commits | **377+** |
+| Findings, decodes and design notes logged | **356 entries** in [`ISSUES.md`](ISSUES.md) |
+| Commits | **382** |
 | C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
 | Triangles in view in the city | ≈ 1.1 million per frame, ≈ 560 draw calls |

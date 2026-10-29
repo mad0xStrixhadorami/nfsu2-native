@@ -6,10 +6,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "game/indep/Texture/TexturePack.h"
+#include "game/indep/World/IlAssets.h"
 #include "game/indep/World/SignGen.h"
 #include "game/indep/World/TrackWorld.h"
 
@@ -61,6 +63,46 @@ District DistrictAt(float x, float y)
     d.tlv /= sum, d.jer /= sum, d.hai /= sum, d.bsh /= sum;
     return d;
 }
+
+// Exact road membership: the road triangles bucketed in 8 m cells, so "is this point on the road, at this height" is a few
+// point-in-triangle tests (the imported street furniture of ISSUES #336 is fitted against it).
+struct RoadIndex {
+    const std::vector<float> *tris = nullptr;
+    const std::vector<float> *zs = nullptr;
+    std::unordered_map<int64_t, std::vector<uint32_t>> cells;
+    void Build(const std::vector<float> &t, const std::vector<float> &z)
+    {
+        tris = &t, zs = &z, cells.clear();
+        for (size_t i = 0; i + 5 < t.size(); i += 6) {
+            const int x0 = int(std::floor(std::min({t[i], t[i + 2], t[i + 4]}) / 8.0f)), x1 = int(std::floor(std::max({t[i], t[i + 2], t[i + 4]}) / 8.0f));
+            const int y0 = int(std::floor(std::min({t[i + 1], t[i + 3], t[i + 5]}) / 8.0f)), y1 = int(std::floor(std::max({t[i + 1], t[i + 3], t[i + 5]}) / 8.0f));
+            for (int gx = x0; gx <= x1; ++gx)
+                for (int gy = y0; gy <= y1; ++gy)
+                    cells[Key(gx, gy)].push_back(uint32_t(i / 6));
+        }
+    }
+    // A road triangle covers (x, y) with its centroid height within `tol` of zRef.
+    bool On(float x, float y, float zRef, float tol) const
+    {
+        auto it = cells.find(Key(int(std::floor(x / 8.0f)), int(std::floor(y / 8.0f))));
+        if (it == cells.end())
+            return false;
+        const std::vector<float> &t = *tris;
+        for (uint32_t n : it->second) {
+            const size_t i = size_t(n) * 6;
+            if (n < zs->size() && std::fabs((*zs)[n] - zRef) > tol)
+                continue;
+            const float ax = t[i], ay = t[i + 1], bx = t[i + 2], by = t[i + 3], cx = t[i + 4], cy = t[i + 5];
+            const float d1 = (x - bx) * (ay - by) - (ax - bx) * (y - by);
+            const float d2 = (x - cx) * (by - cy) - (bx - cx) * (y - cy);
+            const float d3 = (x - ax) * (cy - ay) - (cx - ax) * (y - ay);
+            const bool neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
+            if (!(neg && pos))
+                return true;
+        }
+        return false;
+    }
+};
 
 } // namespace
 
@@ -1197,6 +1239,31 @@ float ShikunBuilding(PropBuilder &b, float W, float D, float zb, int floors, flo
 
 } // namespace
 
+static size_t g_ilTowers = 0, g_ilShikun = 0; // imported buildings placed (ISSUES #336)
+namespace {
+// Fits an imported building model (long side x, short side y, origin at the footprint centre) into the oriented footprint
+// (W along u, D along v, centre cx, cy, ground zb, height H).  The model's long side takes the longer footprint side; the fit is
+// refused when it would stretch the model visibly (so the procedural building is used instead).
+bool FitIlBuilding(const IlAssets::Model &m, float W, float D, float H, float ux, float uy, float vx, float vy, float cx, float cy, float zb,
+                   float minS, float maxS, float minH, float maxH, bool flip, IlAssets::Instance &inst)
+{
+    const float L = m.hi[0] - m.lo[0], S = m.hi[1] - m.lo[1], T = m.hi[2] - std::min(0.0f, m.lo[2]);
+    const bool alongU = W >= D; // the model's long axis runs along the footprint's long side
+    const float fl = alongU ? W : D, fs = alongU ? D : W;
+    const float sx = fl / L, sy = fs / S, sz = H / T;
+    if (sx < minS || sx > maxS || sy < minS || sy > maxS || sz < minH || sz > maxH || sx / sy < 0.7f || sx / sy > 1.45f)
+        return false;
+    inst.sx = sx, inst.sy = sy, inst.sz = sz;
+    inst.yaw = alongU ? std::atan2(uy, ux) : std::atan2(vy, vx);
+    if (flip)
+        inst.yaw += 3.14159265f;
+    inst.x = cx, inst.y = cy;
+    inst.z = zb - std::min(0.0f, m.lo[2]) * sz;
+    (void)D;
+    return true;
+}
+} // namespace
+
 bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::Triangle> &tris, const float *pos, const float *m)
 {
     if (strncmp(name, "XB_", 3) != 0 || tris.empty())
@@ -1218,6 +1285,55 @@ bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::T
                 lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
         }
     float W = (hi[0] - lo[0]) * sx, D = (hi[1] - lo[1]) * sy, H = (hi[2] - lo[2]) * m[8];
+    // ISSUES #336: a tall block becomes the imported residential tower (28 floors, balconies down one side), stretched at most 1.5x.
+    if (H >= 40.0f && H <= 150.0f && W >= 12.0f && W <= 34.0f && D >= 12.0f && D <= 34.0f && !getenv("NFSU2_NO_IL_TOWER")) {
+        if (const IlAssets::Model *tw = IlAssets::Get("SM_Building_IL_Tower_01")) {
+            const float tux = m[0] / sx, tuy = m[1] / sx, tvx = m[3] / sy, tvy = m[4] / sy;
+            const float tox = pos[0] + lo[0] * m[0] + lo[1] * m[3], toy = pos[1] + lo[0] * m[1] + lo[1] * m[4];
+            const float tcx = tox + tux * W * 0.5f + tvx * D * 0.5f, tcy = toy + tuy * W * 0.5f + tvy * D * 0.5f;
+            const float zb = pos[2] + lo[2] * m[8];
+            const int64_t tkey = Key(int(tcx * 0.5f), int(tcy * 0.5f)) ^ (int64_t(int(W)) << 50) ^ (int64_t(int(D)) << 40);
+            if (getenv("NFSU2_PROP_DEBUG")) {
+                static int nCand = 0;
+                if (++nCand % 3 == 1)
+                    printf("[IL] tower candidate %.0f x %.0f x %.0f (scale %.2f %.2f %.2f)\n", W, D, H, std::max(W, D) / 19.2f, std::min(W, D) / 17.2f, H / 82.2f);
+            }
+            // one building in three keeps its original look: the skyline stays mixed
+            if ((HashXY(int(tcx), int(tcy), 41) % 3) == 0 && getenv("NFSU2_PROP_DEBUG"))
+                printf("[IL] tower candidate kept original (hash)\n");
+            if ((HashXY(int(tcx), int(tcy), 41) % 3) != 0) {
+                IlAssets::Instance inst;
+                // a block lower than the 25-floor model loses whole 3 m floors from its repeating middle instead of being squashed
+                const float T = tw->hi[2];
+                const int cut = H < T * 0.88f ? std::clamp(int((T - H) / 3.0f + 0.5f), 0, 17) : 0;
+                const float sz = H / (T - 3.0f * float(cut));
+                if (sz >= 0.8f && sz <= 1.7f &&
+                    FitIlBuilding(*tw, W, D, H, tux, tuy, tvx, tvy, tcx, tcy, zb, 0.7f, 1.5f, 0.0f, 99.0f, (HashXY(int(tcx), int(tcy), 43) & 1) != 0, inst)) {
+                    inst.sz = sz;
+                    if (getenv("NFSU2_PROP_DEBUG"))
+                        printf("[IL] tower fits: %.0f x %.0f x %.0f cut %d floors sz %.2f\n", W, D, H, cut, sz);
+                    if (!m_bauhausDone.insert(tkey).second)
+                        return true;
+                    if (m_bauhaus.size() > 2200000) {
+                        static bool said = false;
+                        if (!said && (said = true))
+                            printf("[IL] building budget reached (%zu triangles): the rest keep their original look\n", m_bauhaus.size());
+                        return false;
+                    }
+                    IlAssets::EmitOptions eo;
+                    eo.lightScale = 0.78f;
+                    if (cut)
+                        eo.cutLo = 7.5f, eo.cutHi = 7.5f + 3.0f * float(cut);
+                    IlAssets::Emit(*this, *tw, inst, eo, m_bauhaus);
+                    static int nTower = 0;
+                    ++g_ilTowers;
+                    if (getenv("NFSU2_PROP_DEBUG") && ++nTower % 5 == 1)
+                        printf("[IL] tower at %.1f %.1f z %.1f footprint %.1f x %.1f H %.1f (scale %.2f %.2f %.2f)\n", tcx, tcy, zb, W, D, H, inst.sx, inst.sy, inst.sz);
+                    return true;
+                }
+            }
+        }
+    }
     if (W < 9.0f || D < 9.0f || W > 65.0f || D > 65.0f || H < 7.0f || H > 48.0f)
         return ++cSize, cTall += H > 48.0f, false;
     const float ux = m[0] / sx, uy = m[1] / sx, vx = m[3] / sy, vy = m[4] / sy; // unit axes in the world
@@ -1240,6 +1356,21 @@ bool TrackWorld::BauhausReplace(const char *name, const std::vector<SolidMesh::T
     std::vector<RTri> local;
     PropBuilder b{&local, 4000000, nullptr};
     Rng rng(HashXY(int(cx * 10), int(cy * 10), 77));
+    if (shikun && !getenv("NFSU2_NO_IL_SHIKUN") && HashXY(int(cx), int(cy), 53) % 100 < 60) { // ISSUES #336: the imported apartment block where its proportions fit the footprint
+        if (const IlAssets::Model *sk = IlAssets::Get("SM_Building_IL_Shikun_01")) {
+            IlAssets::Instance inst;
+            if (FitIlBuilding(*sk, W, D, H, ux, uy, vx, vy, cx, cy, pos[2] + lo[2] * m[8], 0.6f, 1.9f, 0.5f, 1.5f, (HashXY(int(cx), int(cy), 47) & 1) != 0, inst)) {
+                IlAssets::EmitOptions eo;
+                eo.lightScale = 0.74f; // the bright plaster and white roof would otherwise clip in the sun
+                IlAssets::Emit(*this, *sk, inst, eo, m_bauhaus);
+                static int nShikun = 0;
+                ++g_ilShikun;
+                if (getenv("NFSU2_PROP_DEBUG") && ++nShikun % 8 == 1)
+                    printf("[IL] shikun at %.1f %.1f z %.1f footprint %.1f x %.1f H %.1f (scale %.2f %.2f %.2f)\n", cx, cy, pos[2] + lo[2] * m[8], W, D, H, inst.sx, inst.sy, inst.sz);
+                return true;
+            }
+        }
+    }
     if (shikun) {
         static const uint8_t plaster[4][3] = {{214, 202, 176}, {196, 184, 160}, {222, 208, 190}, {188, 186, 178}},
                              stone[3] = {212, 194, 156}, concreteWall[3] = {186, 182, 172}, frames[4][3] = {{232, 232, 228}, {96, 70, 52}, {58, 60, 64}, {210, 206, 196}};
@@ -1467,6 +1598,32 @@ void TrackWorld::AddIsraeliProps()
 {
     if (getenv("NFSU2_NO_PROPS") || m_scene)
         return;
+    if (const char *dump = getenv("NFSU2_DUMP_ROADS")) { // dev aid: road surface triangles by texture class (tools/find_il_intersections.py)
+        if (FILE *f = fopen(dump, "wb")) {
+            size_t n = 0;
+            for (auto &entry : m_cells)
+                for (const RTri &t : entry.second.render) {
+                    if (!t.tex || t.v[0].a != 255)
+                        continue;
+                    auto src = m_textures.find(t.tex);
+                    if (src == m_textures.end())
+                        continue;
+                    const std::string &name = src->second.first->At(src->second.second).name;
+                    float cls = 0;
+                    if (name.compare(0, 8, "RDP_LANE") == 0 || name.compare(0, 13, "RDP_INTERSECT") == 0 || name.compare(0, 14, "RDP_ROADSTRIP_") == 0)
+                        cls = 1; // asphalt carriageway
+                    else if (name.compare(0, 12, "ARC_SIDEWALK") == 0)
+                        cls = 2;
+                    if (cls == 0)
+                        continue;
+                    const float row[8] = {t.v[0].x, t.v[0].y, t.v[1].x, t.v[1].y, t.v[2].x, t.v[2].y, (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f, cls};
+                    fwrite(row, 4, 8, f);
+                    ++n;
+                }
+            fclose(f);
+            printf("[IL] %zu road surface triangles -> %s\n", n, dump);
+        }
+    }
     const unsigned t0 = SDL_GetTicks();
     unsigned gTicks = 0, gCalls = 0;
     const int savedSource = m_groundSource;
@@ -1514,6 +1671,13 @@ void TrackWorld::AddIsraeliProps()
 
     // Road proximity: 4 m cells hold road triangle centroids; 8 m cells (and their ring) mark "near a road".
     std::unordered_set<int64_t> road4;
+    std::unordered_set<int64_t> avoid; // 4 m cells within ~6 m of the race route
+    for (size_t i = 0; i + 1 < m_propAvoid.size(); i += 2) {
+        const int ax = int(std::floor(m_propAvoid[i] / 4.0f)), ay = int(std::floor(m_propAvoid[i + 1] / 4.0f));
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                avoid.insert(Key(ax + dx, ay + dy));
+    }
     std::unordered_map<int64_t, std::pair<float, float>> near8; // 8 m cell (and its ring) -> lowest / highest road height
     for (size_t i = 0; i + 5 < m_roadTris.size(); i += 6) {
         const float cx = (m_roadTris[i] + m_roadTris[i + 2] + m_roadTris[i + 4]) / 3.0f;
@@ -1571,6 +1735,136 @@ void TrackWorld::AddIsraeliProps()
         gTicks += SDL_GetTicks() - a0, ++gCalls;
         return r;
     };
+    // The imported bus stop (ISSUES #336, assets IL_BusStop_01_Urban): a 13 x 4.5 m platform whose kerb side is its -y edge.  It is
+    // fitted to the real road edge: the nearest road is found by marching rays from the candidate, a line through the hit points
+    // gives the kerb direction (a curved kerb is refused), the platform's front edge is laid on it, and the whole footprint must be
+    // flat pavement at the candidate's height and off the road.
+    RoadIndex roads;
+    const IlAssets::Model *ilBus = getenv("NFSU2_PROC_BUSSTOP") ? nullptr : IlAssets::Get("IL_BusStop_01_Urban");
+    if (ilBus)
+        roads.Build(m_roadTris, m_roadTriZ);
+    size_t nIlBus = 0, nIlBusRejected = 0;
+    struct IlKeep { // one placed platform: its own triangle / solid ranges and its footprint, for the keep-out pass below
+        size_t t0, t1, s0, s1;
+        IlAssets::Instance inst;
+    };
+    std::vector<IlKeep> ilKeep;
+    auto PlaceIlBusStop = [&](V3 q) -> bool {
+        for (const IlKeep &k : ilKeep)
+            if (std::fabs(k.inst.x - q.x) < 40.0f && std::fabs(k.inst.y - q.y) < 40.0f)
+                return false; // one stop per stretch of kerb
+        auto march = [&](float th, float &hx, float &hy) { // the first road point along the ray (0.25 m steps)
+            const float cx = std::cos(th), sy = std::sin(th);
+            for (float d = 0.5f; d <= 16.0f; d += 0.25f)
+                if (roads.On(q.x + cx * d, q.y + sy * d, q.z, 1.6f)) {
+                    hx = q.x + cx * d, hy = q.y + sy * d;
+                    return d;
+                }
+            return -1.0f;
+        };
+        float bestD = 1e9f, bestA = 0;
+        for (int a = 0; a < 48; ++a) {
+            float hx, hy;
+            const float d = march(a * 0.1309f, hx, hy);
+            if (d > 0 && d < bestD)
+                bestD = d, bestA = a * 0.1309f;
+        }
+        if (bestD > 12.0f)
+            return false;
+        // a line through the kerb: hits around the nearest direction, principal axis of the points
+        float px[9], py[9];
+        int nh = 0;
+        for (int k = -4; k <= 4; ++k) {
+            float hx, hy;
+            if (march(bestA + k * 0.11f, hx, hy) > 0)
+                px[nh] = hx, py[nh] = hy, ++nh;
+        }
+        if (nh < 7)
+            return false;
+        float mx = 0, my = 0;
+        for (int i = 0; i < nh; ++i)
+            mx += px[i], my += py[i];
+        mx /= nh, my /= nh;
+        float sxx = 0, sxy = 0, syy = 0;
+        for (int i = 0; i < nh; ++i)
+            sxx += (px[i] - mx) * (px[i] - mx), sxy += (px[i] - mx) * (py[i] - my), syy += (py[i] - my) * (py[i] - my);
+        const float ang = 0.5f * std::atan2(2.0f * sxy, sxx - syy);
+        V3 tt{std::cos(ang), std::sin(ang), 0};
+        V3 nn{-tt.y, tt.x, 0}; // normal of the kerb line, turned to point from the candidate towards the road
+        if ((mx - q.x) * nn.x + (my - q.y) * nn.y < 0)
+            nn = nn * -1.0f;
+        float resid = 0;
+        for (int i = 0; i < nh; ++i)
+            resid = std::max(resid, std::fabs((px[i] - mx) * nn.x + (py[i] - my) * nn.y));
+        if (resid > 0.45f)
+            return false; // a curved kerb / a junction mouth
+        const float off = (mx - q.x) * nn.x + (my - q.y) * nn.y; // candidate -> kerb line
+        const float edgeX = q.x + nn.x * off, edgeY = q.y + nn.y * off;
+        // model +x runs along the kerb (t = nn rotated by +90 degrees), model +y points away from the road, the kerb edge is y = -1.92
+        tt = V3{-nn.y, nn.x, 0};
+        IlAssets::Instance inst;
+        inst.yaw = std::atan2(tt.y, tt.x);
+        inst.x = edgeX - nn.x * 1.92f, inst.y = edgeY - nn.y * 1.92f;
+        inst.z = q.z - 0.13f; // the platform top (0.15) sits 2 cm over the pavement
+        for (float mxm = -6.4f; mxm <= 6.41f; mxm += 1.0f)
+            for (float mym = -1.8f; mym <= 2.51f; mym += 0.9f) {
+                float wx, wy, wz, g;
+                IlAssets::ToWorld(inst, mxm, mym, 0, wx, wy, wz);
+                if (roads.On(wx, wy, q.z, 1.6f) || !GroundHeightT(wx, wy, q.z + 0.5f, g) || std::fabs(g - q.z) > 0.3f)
+                    return false;
+            }
+        IlAssets::EmitOptions eo;
+        const size_t t0 = props.size(), s0 = solids.size();
+        // posts, lamp and sign poles stop a car like the procedural ones did
+        static const float post[][2] = {{-3.2f, -0.4f}, {0.5f, -0.4f}, {-3.2f, 1.4f}, {0.5f, 1.4f}, {6.2f, -0.75f}, {4.9f, -0.97f}};
+        for (int i = 0; i < 6; ++i) {
+            float wx, wy, wz;
+            IlAssets::ToWorld(inst, post[i][0], post[i][1], 0, wx, wy, wz);
+            solids.push_back({wx, wy, i < 4 ? 0.12f : 0.16f, q.z, q.z + (i < 4 ? 3.0f : 8.0f)});
+        }
+        IlAssets::Emit(*this, *ilBus, inst, eo, props);
+        ilKeep.push_back({t0, props.size(), s0, solids.size(), inst});
+        if (getenv("NFSU2_PROP_DEBUG"))
+            printf("[IL] bus stop at %.1f %.1f z %.2f yaw %.0f\n", inst.x, inst.y, q.z, inst.yaw * 57.3f);
+        return true;
+    };
+    if (getenv("NFSU2_ROAD_TEX")) { // dev aid: the textures that cover the most road, with brightness / saturation / variation
+        RoadIndex ri;
+        ri.Build(m_roadTris, m_roadTriZ);
+        std::map<uint32_t, double> areaBy;
+        for (auto &entry : m_cells)
+            for (const RTri &t : entry.second.render) {
+                if (!t.tex || t.v[0].a != 255)
+                    continue;
+                const float cx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f, cy = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f, cz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f;
+                if (!ri.On(cx, cy, cz, 0.5f))
+                    continue;
+                const V3 n = Cross(V3{t.v[1].x - t.v[0].x, t.v[1].y - t.v[0].y, t.v[1].z - t.v[0].z}, V3{t.v[2].x - t.v[0].x, t.v[2].y - t.v[0].y, t.v[2].z - t.v[0].z});
+                areaBy[t.tex] += 0.5 * Len(n);
+            }
+        std::vector<std::pair<double, uint32_t>> order;
+        for (auto &kv : areaBy)
+            order.push_back({kv.second, kv.first});
+        std::sort(order.rbegin(), order.rend());
+        for (size_t i = 0; i < order.size() && i < 10; ++i) {
+            auto src = m_textures.find(order[i].second);
+            if (src == m_textures.end())
+                continue;
+            const auto &info = src->second.first->At(src->second.second);
+            DecodedTexture dt;
+            double lum = 0, lum2 = 0, sat = 0;
+            if (src->second.first->Decode(info, dt) && !dt.rgba.empty()) {
+                for (uint32_t px : dt.rgba) {
+                    const float r = float(px & 255), g = float((px >> 8) & 255), b = float((px >> 16) & 255);
+                    const float l = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f, mx = std::max({r, g, b}), mn = std::min({r, g, b});
+                    lum += l, lum2 += l * l, sat += mx > 0 ? (mx - mn) / mx : 0;
+                }
+                const double n = double(dt.rgba.size());
+                lum /= n, lum2 = std::sqrt(std::max(0.0, lum2 / n - lum * lum)), sat /= n;
+            }
+            printf("[RoadTex] %08x %-28s %4dx%-4d area %9.0f  lum %.2f sd %.3f sat %.2f\n", order[i].second, info.name.c_str(), info.width, info.height, order[i].first, lum, lum2, sat);
+        }
+    }
     size_t cellNo = 0;
     for (auto &entry : m_cells) {
         const float cellF = 0.7f + 0.29f * float(cellNo++) / float(std::max<size_t>(m_cells.size(), 1));
@@ -1589,6 +1883,10 @@ void TrackWorld::AddIsraeliProps()
             const V3 c = (p0 + p1 + p2) * (1.0f / 3.0f);
             const float minz = std::min({p0.z, p1.z, p2.z}), maxz = std::max({p0.z, p1.z, p2.z});
             const int c4x = int(std::floor(c.x / 4.0f)), c4y = int(std::floor(c.y / 4.0f));
+            if (!avoid.empty() && (avoid.count(Key(c4x, c4y)) || avoid.count(Key(int(std::floor(p0.x / 4.0f)), int(std::floor(p0.y / 4.0f)))) ||
+                                   avoid.count(Key(int(std::floor(p1.x / 4.0f)), int(std::floor(p1.y / 4.0f)))) ||
+                                   avoid.count(Key(int(std::floor(p2.x / 4.0f)), int(std::floor(p2.y / 4.0f))))))
+                continue; // the race route runs here (a brick crossing in the road must not get a dumpster in the lane, ISSUES #344)
             Rng rng(HashXY(int(c.x * 10), int(c.y * 10), uint32_t(c.z * 7)));
             auto inTri = [&](float shrink) {
                 float a = rng.f(), bb = rng.f();
@@ -1692,7 +1990,17 @@ void TrackWorld::AddIsraeliProps()
                     }
                     if (area > 6.0f && rng.f() < area / 1100.0f)
                         FlowerBed(b, inTri(0.8f), yawE, rng), ++nBushes;
-                    if (area > 4.0f && rng.f() < area / 2200.0f && busCells.insert(Key(c4x / 12, c4y / 12)).second) {
+                    if (ilBus) { // imported stop: only where the platform really fits (a few tries per triangle)
+                        if (area > 6.0f && rng.f() < area / 700.0f && !busCells.count(Key(c4x / 12, c4y / 12))) {
+                            bool placed = false;
+                            for (int attempt = 0; attempt < 3 && !placed; ++attempt)
+                                placed = PlaceIlBusStop(attempt == 0 ? c : inTri(0.6f));
+                            if (placed)
+                                busCells.insert(Key(c4x / 12, c4y / 12)), ++nBus, ++nIlBus;
+                            else
+                                ++nIlBusRejected;
+                        }
+                    } else if (area > 4.0f && rng.f() < area / 2200.0f && busCells.insert(Key(c4x / 12, c4y / 12)).second) {
                         BusStop(b, inTri(0.5f), yawE), ++nBus;
                     }
                     if (g_signs && area > 3.0f && rng.f() < area / 1500.0f && streetCells.insert(Key(c4x / 15, c4y / 15)).second) {
@@ -1929,6 +2237,75 @@ void TrackWorld::AddIsraeliProps()
                 printf("[Poster] %.1f %.1f %.1f out %.2f %.2f\n", ps.c.x, ps.c.y, ps.c.z, ps.out.x, ps.out.y);
             PosterOnWall(b, ps.c, ps.along, ps.out, i % 5 == 0 ? 3.2f : 1.1f, i % 5 == 0 ? 3.2f : 1.55f), ++nPosters;
         }
+    // The imported intersections (ISSUES #336): placed on the road mesh, their triangle ranges and brick-block keep-outs join the pass below.
+    std::vector<std::pair<size_t, size_t>> siteRanges;
+    std::vector<std::array<float, 4>> siteKeep;
+    const size_t sitePole0 = solids.size();
+    PlaceIlIntersections(props, siteRanges, siteKeep, solids);
+    const size_t sitePole1 = solids.size();
+    // Keep-out of the imported platforms (ISSUES #336): trees, bushes, signs and scooters that were scattered over a platform before it was
+    // placed are dropped (triangles and their collision posts); the platform's own triangles and posts stay.
+    if (!ilKeep.empty() || !siteKeep.empty()) {
+        auto inside = [&](const IlKeep &k, float x, float y, float z, float pad) {
+            const float c = std::cos(k.inst.yaw), sn = std::sin(k.inst.yaw), dx = x - k.inst.x, dy = y - k.inst.y;
+            const float mx = c * dx + sn * dy, my = -sn * dx + c * dy;
+            return mx > -7.0f - pad && mx < 7.0f + pad && my > -2.1f - pad && my < 3.2f + pad && z > k.inst.z - 0.6f && z < k.inst.z + 9.0f;
+        };
+        std::vector<RTri> kept;
+        kept.reserve(props.size());
+        size_t dropped = 0, droppedSolids = 0;
+        size_t ki = 0; // ilKeep is ordered by t0
+        for (size_t i = 0; i < props.size(); ++i) {
+            while (ki < ilKeep.size() && i >= ilKeep[ki].t1)
+                ++ki;
+            if (ki < ilKeep.size() && i >= ilKeep[ki].t0) {
+                kept.push_back(props[i]);
+                continue;
+            }
+            bool ownSite = false;
+            for (const auto &r : siteRanges)
+                ownSite |= i >= r.first && i < r.second;
+            if (ownSite) {
+                kept.push_back(props[i]);
+                continue;
+            }
+            const RTri &t = props[i];
+            const float cx = (t.v[0].x + t.v[1].x + t.v[2].x) / 3.0f, cy = (t.v[0].y + t.v[1].y + t.v[2].y) / 3.0f, cz = (t.v[0].z + t.v[1].z + t.v[2].z) / 3.0f;
+            bool drop = false;
+            for (const IlKeep &k : ilKeep)
+                if (std::fabs(cx - k.inst.x) < 12.0f && std::fabs(cy - k.inst.y) < 12.0f && inside(k, cx, cy, cz, 0.3f)) {
+                    drop = true;
+                    break;
+                }
+            for (const auto &k : siteKeep)
+                if (!drop && std::fabs(cx - k[0]) < k[2] && std::fabs(cy - k[1]) < k[2] && cz > k[3] - 0.6f && cz < k[3] + 9.0f)
+                    drop = true;
+            if (drop)
+                ++dropped;
+            else
+                kept.push_back(t);
+        }
+        props.swap(kept);
+        std::vector<PropSolid> keptSolids;
+        keptSolids.reserve(solids.size());
+        for (size_t i = 0; i < solids.size(); ++i) {
+            bool own = i >= sitePole0 && i < sitePole1, drop = false;
+            for (const IlKeep &k : ilKeep) {
+                own |= i >= k.s0 && i < k.s1;
+                if (!own && inside(k, solids[i].x, solids[i].y, solids[i].z0 + 0.5f, 0.4f))
+                    drop = true;
+            }
+            for (const auto &k : siteKeep)
+                if (!own && std::fabs(solids[i].x - k[0]) < k[2] && std::fabs(solids[i].y - k[1]) < k[2])
+                    drop = true;
+            if (drop && !own)
+                ++droppedSolids;
+            else
+                keptSolids.push_back(solids[i]);
+        }
+        solids.swap(keptSolids);
+        printf("[IL] keep-out around %zu platforms: %zu prop triangles and %zu posts removed\n", ilKeep.size(), dropped, droppedSolids);
+    }
     // Solid props join the wall query (ISSUES #275).
     m_propSolids = std::move(solids);
     m_propGrid.clear();
@@ -1944,6 +2321,9 @@ void TrackWorld::AddIsraeliProps()
     }
     printf("[Props] flat %zu, ground-level %zu (road %zu, near-road non-road %zu)\n", flatTris, flatGround, flatRoad, flatNear);
     m_groundSource = savedSource;
+    printf("[IL] imported buildings: %zu shikun blocks, %zu towers\n", g_ilShikun, g_ilTowers);
+    if (ilBus)
+        printf("[IL] bus stops: %zu placed, %zu candidates rejected (no straight kerb / platform off flat pavement)\n", nIlBus, nIlBusRejected);
     printf("[Props] built in %u ms (%u ground queries, %u ms)\n", SDL_GetTicks() - t0, gCalls, gTicks);
     printf("[Props] %zu pavement triangles flagged, %zu bushes and flower beds\n", nPave, nBushes);
     printf("[Props] %zu triangles: %zu trees, %zu rooftop items, %zu facade AC, %zu kerb faces, %zu bike-lane strips, %zu bus stops, "

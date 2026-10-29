@@ -13,7 +13,7 @@ sleep "$delay"
 info=$(xwininfo -name "Need for Speed Underground 2 (native)")
 X=$(echo "$info" | awk '/Absolute upper-left X/{print $4}'); Y=$(echo "$info" | awk '/Absolute upper-left Y/{print $4}')
 WIDTH=$(echo "$info" | awk '/Width:/{print $2}'); HEIGHT=$(echo "$info" | awk '/Height:/{print $2}')
-ffmpeg -loglevel error -y -f x11grab -framerate "$fps" -video_size "${WIDTH}x${HEIGHT}" -i "$DISPLAY+$X,$Y" -t "$dur" "$tmp/cap.mkv"
+ffmpeg -loglevel error -y -f x11grab -draw_mouse 0 -framerate "$fps" -video_size "${WIDTH}x${HEIGHT}" -i "$DISPLAY+$X,$Y" -t "$dur" "$tmp/cap.mkv"
 kill $game 2>/dev/null || true
 ffmpeg -loglevel error -y -i "$tmp/cap.mkv" -vf "fps=$fps,scale=$width:-1:flags=lanczos,palettegen=max_colors=48:stats_mode=diff" "$tmp/pal.png"
 ffmpeg -loglevel error -y -i "$tmp/cap.mkv" -i "$tmp/pal.png" -lavfi "fps=$fps,scale=$width:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=2:diff_mode=rectangle" "$out"

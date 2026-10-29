@@ -37,7 +37,9 @@ public:
     const SponsorArea *Area(int area) const { return area >= 0 && area < int(m_areas.size()) ? &m_areas[size_t(area)] : nullptr; }
 
     // Sponsors area `area` offers after `completed` ordinary races there (0x002663d8's count).
-    std::vector<const Sponsor *> Offers(int area, int completed) const;
+    // 0x002663d8: the sponsors whose completed-race threshold is met and whose rating requirement (+0xe) is at most `rating`, the
+    // average reputation per race of the previous area (0x00266308).
+    std::vector<const Sponsor *> Offers(int area, int completed, float rating = 1e9f) const;
 
     static SponsorTable &Get();
 

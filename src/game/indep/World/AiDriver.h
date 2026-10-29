@@ -28,5 +28,7 @@ private:
     float m_progress = 0;
     float m_steer = 0;
     float m_stuck = 0; // seconds without progress while trying to drive
+    float m_adj = 0, m_adjTarget = 0; // metres the lane is shifted to clear a wall on the line ahead (ISSUES #346)
+    float m_probe = 0; // seconds since the last wall probe
     float m_power = 1; // engine torque scale (drag gearbox)
 };

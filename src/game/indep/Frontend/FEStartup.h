@@ -192,6 +192,8 @@ public:
 
     bool IsFinished() const { return m_finished; }
     const char *CurrentPackage() const;
+    // The main menu's state for the native menu (ISSUES #357): the highlighted icon and the saved player's standing.
+    bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
     bool IsMessageDialogOpen() const { return m_dialogPackage != nullptr; }
@@ -207,8 +209,23 @@ public:
     const Career::Profile &CareerProfile() const { return m_profile; } // the garage room shows its cars (#252)
 
     // Race result of a career race: find the 0x34a11 event that runs this race (0x002635d8) and pay
-    // its purse/respect, marking it complete on a win. Called from the results screen.
-    void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f, int score = 0);
+    // its purse/respect, marking it complete on a win. Called from the results screen.  `rivalPlaces`
+    // is the finishing place of each opponent slot (1-based) for a series race (ISSUES #334).
+    // `marginPct` is the win margin the reputation reward is read from (0x00269f28, ISSUES #335):
+    // (1 - player time / best rival time) * 100 for a single race; < 0 = unknown (the event's flat respect).
+    void AwardCareerResult(int raceNumber, int place, float seconds = 0.0f, int score = 0,
+                           const std::vector<int> *rivalPlaces = nullptr, float marginPct = -1.0f);
+    // The reputation a win pays for a margin: the 0x004e8648 table through 0x00264b28 (0, 100, 200 or 300).
+    static int ReputationForMargin(const Career::Event &ev, float marginPct);
+
+    // A career event with several races is a points series (0x00269bc8 builds the session, 0x0026a138
+    // completes the event, 0x002699d0 picks its leader): every race of the event is run in turn, the
+    // finishing places earn the championship points 8/6/4/3/2/1 (DAT_004f11a0) and the event only
+    // counts when all its races are done and the player leads the points (a tie goes to the player).
+    bool SeriesActive() const { return m_series.active; }
+    std::string SeriesRaceTag() const; // " - RACE 2/3", empty outside a series (the HUD's event label)
+    // The toast a series race start shows (race number and standings); taken once.
+    bool TakeSeriesToast(std::string &title, std::string &body);
     // What the last finished career event paid (ISSUES #313), for UI_PostRaceReward.fng: set by AwardCareerResult, taken once.
     struct RaceReward {
         bool valid = false;
@@ -219,7 +236,11 @@ public:
     bool HasRaceReward() const { return m_lastReward.valid; }
     RaceReward m_lastReward;
     void MaybeSignSponsor(const Career::Event &ev); // ISSUES #165
-    uint32_t m_pendingSponsor = 0;                   // set when a win signed a sponsor
+    // A win that qualifies for a sponsor offers them after the Career Status screen (ISSUES #338): the offered sponsors' hashes, the
+    // area they belong to and the one on show.
+    std::vector<uint32_t> m_offerHashes;
+    int m_offerArea = -1;
+    size_t m_offerSel = 0;
 
     // Quick Race / non-career best lap for the shared 0x4fb4ac table (0x00272e18). The track select
     // always reads the forward key (item +0x10 is 0), but reverse QR runs are stored under direction
@@ -586,6 +607,10 @@ private:
     std::vector<std::string> m_smsBody;
     std::chrono::steady_clock::time_point m_dialogClosedAt{}; // the Yes / No dialog's Accept also reaches the screen under it
     bool m_smsPopup = false;        // the dialog was opened for a single unread message (iGpffffd14c == 1)
+    void FillSponsorPage(FEPackage *pkg, const Career::Sponsor *sp, int area); // shared by the viewer and the offer screen
+    void HandleSponsorOfferLoaded(FEPackage *pkg);
+    void HandleSponsorOfferMessage(uint32_t msg, FEPackage *pkg);
+    void FinishSponsorOffer(FEPackage *pkg, bool sign);
     std::vector<int> m_svAreas;
     std::vector<std::string> m_svLines; // wrapped SPONSOR_DETAILS text
     size_t m_svScroll = 0;
@@ -594,6 +619,26 @@ private:
     std::vector<const Career::Event *> m_wmEvents;
     bool m_careerEventRun = false; // the running world session is a career event started from the map
     bool m_careerReverse = false;  // the event slot's direction flag (0x00263848)
+    // The career event's race series (ISSUES #334).  `active` when the event has more than one race;
+    // a single-race event keeps the plain win-completes rule.
+    struct SeriesRace {
+        int number = 0;   // the race-database number (+0x18 slot of the event record)
+        bool run = false; // this race's result is in
+        int place = 0;    // the player's finishing place
+    };
+    struct CareerSeries {
+        bool active = false;
+        uint32_t eventId = 0;
+        const Career::Event *event = nullptr;
+        std::vector<SeriesRace> races;
+        size_t next = 0;          // index of the race being run / about to run
+        int points = 0;           // the player's championship points
+        std::vector<int> rivals;  // each opponent slot's championship points
+        std::string toastTitle, toastBody;
+        bool toast = false;       // the start toast has not been taken yet
+    } m_series;
+    bool m_seriesNextRace = false; // the results screen's Continue starts the next race of the series
+    void StartSeriesRace();
     std::vector<bool> m_trackLocked; // per m_tracks entry: Quick Race lock (0x001facc0 item +8, #157)
     std::vector<int> m_cribActions;
     // Memory-card step (MC_Main.fng, create 0x00225f50). UG2 routes New Career (0x00259328, mode

@@ -814,7 +814,9 @@ void Vehicle::DriveTorque(float h)
         if (wheelSpeedAtEngine < idleSpeed * 0.9f) {
             // Below idle in gear: slip the clutch like a launch instead of stalling.
             e.speed = idleSpeed + throttle * (e.redline * 0.45f - e.idle) / kRadToRpm;
-            toWheels = EngineTorque(e.speed, throttle) * G;
+            // The slipping clutch only passes drive torque: the engine-braking part of the curve (negative at zero throttle)
+            // would push a standing car backwards in gear (free roam rolled back 14 m with no input, ISSUES #342).
+            toWheels = std::max(0.0f, EngineTorque(e.speed, throttle)) * G;
         } else {
             e.speed = std::min(wheelSpeedAtEngine, e.maxRpm / kRadToRpm);
             toWheels = te * G;

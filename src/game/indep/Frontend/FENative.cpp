@@ -250,7 +250,8 @@ bool FENativeInterface::PreviewStageCar(StageCar &out)
 {
     if (!m_carPreviewLoadAttempted) {
         m_carPreviewLoadAttempted = true;
-        LoadCarPreview("SKYLINE");
+        if (m_carPreviewModel.empty()) // a car chosen earlier (the career's current car on the main menu, ISSUES #352) stays
+            LoadCarPreview("SKYLINE");
     }
     if (m_carPreviewModel.empty())
         return false;
@@ -299,7 +300,8 @@ void FENativeInterface::RenderCarPreviewOverlay()
 
     if (!m_carPreviewLoadAttempted) {
         m_carPreviewLoadAttempted = true;
-        LoadCarPreview("SKYLINE");
+        if (m_carPreviewModel.empty()) // a car chosen earlier (the career's current car on the main menu, ISSUES #352) stays
+            LoadCarPreview("SKYLINE");
     }
     if (m_carPreviewTris.empty())
         return;

@@ -6,3 +6,6 @@ reference/
 __pycache__/
 build64/
 run_window.log
+
+# meshes converted from third-party asset packs supplied by the project owner (licence not cleared for redistribution); tools/import_il_assets.py regenerates them
+assets/israel/il/

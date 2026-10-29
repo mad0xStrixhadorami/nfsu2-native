@@ -395,6 +395,11 @@ bool TrackWorld::CollisionWall(const float *a, const float *b, float *normal, in
                                 const float tt = (e2x * qx + e2y * qy + e2z * qz) * inv;
                                 if (tt < 0 || tt > 1)
                                     continue;
+                                if (f.group > 0 && getenv("NFSU2_WALL_ONESIDED")) { // experiment (ISSUES #339): a race barrier face only blocks what moves against its normal
+                                    const float fnx = e1y * e2z - e1z * e2y, fny = e1z * e2x - e1x * e2z, fnz = e1x * e2y - e1y * e2x;
+                                    if (fnx * dx + fny * dy + fnz * dz > 0)
+                                        continue;
+                                }
                                 if (getenv("NFSU2_WALL_DEBUG"))
                                     printf("[Wall] group %u (%s) flags %02x surface %u at %.1f,%.1f,%.1f\n", f.group,
                                            f.group < m_groupNames.size() ? m_groupNames[f.group].c_str() : "?", f.flags,
@@ -970,14 +975,23 @@ std::vector<std::vector<TrackWorld::Camera>> TrackWorld::GridsFromMarkers(const 
     return grids;
 }
 
-bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y) const
+bool TrackWorld::LineFromMarkers(const std::vector<uint8_t> &markers, int raceNumber, float &x, float &y, float nearX,
+                                 float nearY) const
 {
+    bool found = false;
+    float bestD = 1e38f;
     for (const auto &g : MarkerGroups(markers, raceNumber))
         if (g.size() == 1) {
-            x = g[0].x, y = g[0].y;
-            return true;
+            const float d = nearX > 1e29f ? 0.0f : std::hypot(g[0].x - nearX, g[0].y - nearY);
+            if (!found || d < bestD) {
+                x = g[0].x, y = g[0].y;
+                bestD = d;
+                found = true;
+            }
+            if (nearX > 1e29f)
+                break;
         }
-    return false;
+    return found;
 }
 
 bool TrackWorld::LoadScene(const std::vector<uint8_t> &file, bool keepWorld)
