@@ -115,6 +115,15 @@ public:
         bool mapNew = false;
     };
     void DrawWorldMap(int w, int h, const WorldMap &m, float seconds);
+    // The career Status pages (ISSUES #377).
+    struct Status {
+        std::string title;
+        struct Row { std::string label, value; bool header = false; };
+        std::vector<Row> rows;
+        int top = 0, page = 0;
+        float rating = -1.0f;
+    };
+    void DrawStatus(int w, int h, const Status &st, float seconds);
     // The paint shop (ISSUES #372): the part list on the left, the colour grid along the bottom with the selected swatch ringed.
     struct PaintShop {
         std::vector<std::string> parts;

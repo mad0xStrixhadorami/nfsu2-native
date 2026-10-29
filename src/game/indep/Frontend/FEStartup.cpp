@@ -3791,6 +3791,84 @@ void FEStartupSequence::BuildStatusRows()
     }
 }
 
+bool FEStartupSequence::StatusOpen() const
+{
+    if (!m_engine)
+        return false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        if (p->GetName() && strcasecmp(p->GetName(), "UI_Status_Master.fng") == 0)
+            return true;
+    return false;
+}
+
+bool FEStartupSequence::StatusState(StatusInfo &out) const
+{
+    if (!m_engine)
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_Status_Master.fng") == 0);
+    if (!on)
+        return false;
+    out = StatusInfo();
+    out.page = m_statusPage;
+    out.top = m_statusTop;
+    const Career::EventTable &table = Career::EventTable::Get();
+    auto fin = [this](uint32_t id) { return std::find(m_profile.completedEvents.begin(), m_profile.completedEvents.end(), id) != m_profile.completedEvents.end(); };
+    if (m_statusPage == 0) {
+        out.title = "OVERALL CAREER";
+        for (const StatusRow &r : m_statusRows)
+            out.rows.push_back({r.label, r.value, r.header});
+        if (const Career::OwnedCar *car = const_cast<FEStartupSequence *>(this)->ShopCar())
+            out.rating = const_cast<FEStartupSequence *>(this)->VisualRating(*car);
+    } else if (m_statusPage == 1) {
+        const int area = std::clamp(m_wmArea, 1, 5);
+        out.title = "STAGE " + std::to_string(area) + " - " + m_fe->LanguageText(0xc08af0b2u + uint32_t(area));
+        int n = 0, d = 0, sp = 0, spAll = 0, url = 0, urlAll = 0, wev = 0, wevAll = 0;
+        for (const Career::Event &e : table.All()) {
+            if (e.races.empty() || e.region != area)
+                continue;
+            const bool f = fin(e.id);
+            ++n, d += f;
+            if (e.kind == 2)
+                ++urlAll, url += f;
+            else if (e.special)
+                ++spAll, sp += f;
+            else
+                ++wevAll, wev += f;
+        }
+        char b[32];
+        snprintf(b, sizeof b, "%d%%", n ? d * 100 / n : 0);
+        out.rows.push_back({"Stage Completion", b, false});
+        snprintf(b, sizeof b, "%d / %d", wev, wevAll);
+        out.rows.push_back({"Events", b, false});
+        snprintf(b, sizeof b, "%d / %d", sp, spAll);
+        out.rows.push_back({"Special Events", b, false});
+        snprintf(b, sizeof b, "%d / %d", url, urlAll);
+        out.rows.push_back({"URL Events", b, false});
+    } else {
+        out.title = "DVD UNLOCKS";
+        int stage = 2;
+        while (stage < 5 && table.StageCleared(stage, m_profile.completedEvents))
+            ++stage;
+        int number = 0;
+        for (const Career::MediaRecord &m : table.Media()) {
+            if (!m.dvd)
+                continue;
+            ++number;
+            if (m.stage != stage)
+                continue;
+            char t[64], u[64];
+            snprintf(t, sizeof t, "DVD Cover #%d  %.1f Star Car", number, double(m.threshold));
+            snprintf(u, sizeof u, fin(m.id) ? "Won" : "Achieve %.1f star rating", double(m.threshold));
+            out.rows.push_back({t, u, false});
+        }
+        if (out.rows.empty())
+            out.rows.push_back({"Not Available", "", false});
+    }
+    return true;
+}
+
 void FEStartupSequence::ShowStatusRows(FEPackage *pkg)
 {
     for (size_t i = 0; i < 7; ++i) {
@@ -3973,7 +4051,7 @@ void FEStartupSequence::HandleStatusMessage(uint32_t msg, FEPackage *pkg)
             SwitchStatusPage(+1);
         } else if (msg == kMsgPadUp && m_statusTop > 0) {
             --m_statusTop;
-        } else if (msg == kMsgPadDown && m_statusTop + 7 < m_statusRows.size()) {
+        } else if (msg == kMsgPadDown && m_statusTop + 9 < m_statusRows.size()) { // 9 rows show in the native page
             ++m_statusTop;
         }
         if (msg == kMsgPadUp || msg == kMsgPadDown)

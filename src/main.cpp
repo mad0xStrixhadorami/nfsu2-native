@@ -960,6 +960,22 @@ int main(int argc, char **argv)
             }
         }
         {
+            FEStartupSequence::StatusInfo si;
+            if (startup.StatusState(si)) { // the career status pages (ISSUES #377)
+                ModernUI::Status st;
+                st.title = si.title, st.top = int(si.top), st.page = si.page, st.rating = si.rating;
+                for (const auto &r : si.rows)
+                    st.rows.push_back({r.label, r.value, r.header});
+                for (auto &r : st.rows)
+                    r.label.erase(std::remove(r.label.begin(), r.label.end(), '?'), r.label.end());
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawStatus(lw, lh, st, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = false;
+                return true;
+            }
+        }
+        {
             FEStartupSequence::PaintShopInfo pa;
             if (startup.PaintShopState(pa)) { // the paint shop (ISSUES #372)
                 ModernUI::PaintShop ps;
@@ -3747,7 +3763,7 @@ int main(int argc, char **argv)
                 }
             }
             bool nativeGarageList = false;
-            if (!nativeGarage && !nativeWorldMap && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause))) {
+            if (!nativeGarage && !nativeWorldMap && ((cribPkg && sceneMode && !pausePkg && !modernPause) || (pausePkg && !modernPause) || startup.StatusOpen())) {
                 int glw, glh;
                 SDL_GetRendererOutputSize(ren, &glw, &glh);
                 if (pausePkg) { // the road behind a pause screen is dimmed so the list reads (ISSUES #370)

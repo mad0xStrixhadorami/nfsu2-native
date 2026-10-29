@@ -1250,6 +1250,76 @@ void ModernUI::DrawWorldMap(int w, int h, const WorldMap &m, float tm)
     key("UP / DOWN", "EVENT");
 }
 
+void ModernUI::DrawStatus(int w, int h, const Status &st, float tm)
+{
+    (void)tm;
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Rect(0, 0, W, H, A(ink, 175), A(ink, 205));
+    const float cut = W * 0.62f, sl = H * 0.1f;
+    Quad({0, 0}, {cut + sl, 0}, {cut, H}, {0, H}, A(ink, 238), A(ink, 238), A(ink, 238), A(ink, 238));
+    Quad({cut + sl, 0}, {cut + sl + 6 * s, 0}, {cut + 6 * s, H}, {cut, H}, signal, signal, signal, signal);
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, "CAREER STATUS", A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, st.title, paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    const int n = int(st.rows.size()), vis = st.rating >= 0.0f ? 9 : 11;
+    const float top = 140 * s, pitch = 42 * s, rw = cut - lx - 40 * s;
+    for (int i = 0; i < vis && st.top + i < n; ++i) {
+        const auto &r = st.rows[size_t(st.top + i)];
+        const float ry = top + pitch * float(i);
+        if (r.header) {
+            Quad({lx - 10 * s, ry + 6 * s}, {lx + rw * 0.55f, ry + 6 * s}, {lx + rw * 0.55f - 8 * s, ry + pitch - 4 * s}, {lx - 18 * s, ry + pitch - 4 * s}, signal, signal, signal, signal);
+            Text(lx, ry + 9 * s, 22 * s, r.label, ink, 0);
+        } else {
+            Text(lx, ry + 7 * s, 26 * s, r.label, A(paper, 215), 0);
+            Text(lx + rw, ry + 7 * s, 26 * s, r.value, paper, 2);
+            Quad({lx, ry + pitch - 3 * s}, {lx + rw, ry + pitch - 3 * s}, {lx + rw, ry + pitch - 2 * s}, {lx, ry + pitch - 2 * s}, A(paper, 28), A(paper, 28), A(paper, 28), A(paper, 28));
+        }
+    }
+    if (n > vis) { // scrollbar
+        const float bx = lx + rw + 24 * s, bh = pitch * float(vis);
+        Quad({bx, top}, {bx + 3 * s, top}, {bx + 3 * s, top + bh}, {bx, top + bh}, A(paper, 50), A(paper, 50), A(paper, 50), A(paper, 50));
+        const float th = std::max(24 * s, bh * float(vis) / float(n)), ty = top + (bh - th) * float(st.top) / float(std::max(1, n - vis));
+        Quad({bx - 1 * s, ty}, {bx + 4 * s, ty}, {bx + 4 * s, ty + th}, {bx - 1 * s, ty + th}, signal, signal, signal, signal);
+    }
+    // the visual rating: ten stars (blocks) under the list on page 0
+    if (st.rating >= 0.0f) {
+        const float y = H - 128 * s;
+        Text(lx, y - 26 * s, 15 * s, "VISUAL RATING", A(paper, 150), 0);
+        for (int i = 0; i < 10; ++i) {
+            const bool lit = float(i) + 0.5f <= st.rating;
+            const float x = lx + float(i) * 30 * s;
+            const SDL_Color c = lit ? signal : A(paper, 40);
+            Quad({x + 5 * s, y}, {x + 27 * s, y}, {x + 22 * s, y + 18 * s}, {x, y + 18 * s}, c, c, c, c);
+        }
+    }
+    // the page dots and keys
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {cut - 10 * s, by - 10 * s}, {cut - 10 * s, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    for (int i = 0; i < 3; ++i) {
+        const SDL_Color c = i == st.page ? signal : A(paper, 70);
+        const float x = lx + float(i) * 26 * s;
+        Quad({x, by + 8 * s}, {x + 18 * s, by + 8 * s}, {x + 18 * s, by + 13 * s}, {x, by + 13 * s}, c, c, c, c);
+    }
+    float kx = cut - 20 * s;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 22 * s;
+    };
+    key("ENTER", "CONTINUE");
+    key("LEFT / RIGHT", "PAGE");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

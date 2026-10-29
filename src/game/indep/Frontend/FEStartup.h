@@ -245,6 +245,18 @@ public:
     bool WorldMapState(WorldMapInfo &out) const;
     // The garage's own car select (UI_CareerCarSelect.fng): the highlighted slot and the number of owned cars (ISSUES #376).
     bool GarageCarSelectState(int &slot, int &count) const;
+    // The Career Status pages for the native screen (ISSUES #377): the page title, its rows (headers have no value), the scroll position
+    // and the visual rating (0..10, page 0 only; < 0 elsewhere).
+    struct StatusInfo {
+        std::string title;
+        struct Row { std::string label, value; bool header = false; };
+        std::vector<Row> rows;
+        size_t top = 0;
+        int page = 0;
+        float rating = -1.0f;
+    };
+    bool StatusState(StatusInfo &out) const;
+    bool StatusOpen() const; // UI_Status_Master.fng is on screen
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
