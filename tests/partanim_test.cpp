@@ -33,6 +33,19 @@ int main()
     memcpy(file.data(), &id, 4), memcpy(file.data() + 4, &sz, 4);
     file.insert(file.end(), payload.begin(), payload.end());
 
+    // the mapping chunk: 16 matrices of 80 bytes from +0x18; the translation row of entries 0 / 12 / 8 is the hood / left door / right door hinge
+    {
+        std::vector<uint8_t> map(0x18 + 16 * 80, 0);
+        auto put = [&](int entry, float x, float y, float z) {
+            const float row[4] = {x, y, z, 1.0f};
+            memcpy(map.data() + 0x18 + size_t(entry) * 80 + 48, row, 16);
+        };
+        put(0, 0.769f, 0.0f, 0.731f), put(12, 0.81f, 0.892f, 0.507f), put(8, 0.81f, -0.892f, 0.507f);
+        const uint32_t mid = 0x37100, msz = uint32_t(map.size());
+        file.insert(file.end(), reinterpret_cast<const uint8_t *>(&mid), reinterpret_cast<const uint8_t *>(&mid) + 4);
+        file.insert(file.end(), reinterpret_cast<const uint8_t *>(&msz), reinterpret_cast<const uint8_t *>(&msz) + 4);
+        file.insert(file.end(), map.begin(), map.end());
+    }
     CarPartAnims anims;
     if (!anims.Load(file))
         return Fail("no clips");
@@ -49,6 +62,13 @@ int main()
         return Fail("curve");
     if (std::fabs(c->Duration() - 1.0f) > 1e-4f)
         return Fail("duration");
+    float h[3];
+    if (!anims.Hinge(1, h) || std::fabs(h[0] - 0.769f) > 1e-4f || std::fabs(h[2] - 0.731f) > 1e-4f)
+        return Fail("hood hinge");
+    if (!anims.Hinge(3, h) || std::fabs(h[1] - 0.892f) > 1e-4f || !anims.Hinge(4, h) || std::fabs(h[1] + 0.892f) > 1e-4f)
+        return Fail("door hinges");
+    if (anims.Hinge(2, h))
+        return Fail("boot hinge must not exist");
     printf("partanim_test: ok\n");
     return 0;
 }

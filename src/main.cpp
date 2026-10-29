@@ -902,8 +902,13 @@ int main(int argc, char **argv)
                     stageWorld->SetCarSkin(idx, slot, std::move(skin));
             }
             stageCarIdx = idx;
-            if (sc.parts)
-                stageWorld->SetCarParts(idx, sc.parts, sc.hinge);
+            if (sc.parts) {
+                float hinge[5][3];
+                memcpy(hinge, sc.hinge, sizeof(hinge));
+                for (int pi : {1, 3, 4})
+                    stageAnims.Hinge(pi, hinge[pi]);
+                stageWorld->SetCarParts(idx, sc.parts, hinge);
+            }
             stageWorld->SetCarPartAngles(idx, stageAng);
             stageWorld->SetCarTransform(idx, m);
             if (sc.name != stageName)
@@ -3437,7 +3442,11 @@ int main(int argc, char **argv)
                                 partT[p] = std::clamp(partT[p] + (want[p] ? 1.0f : -1.0f) * (dt > 0.0f ? dt : 0.016f) * 0.8f, 0.0f, cl->Duration());
                                 ang[p] = std::fabs(cl->At(partT[p]));
                             }
-                        world.SetCarParts(size_t(playerSkinIndex), &car.TrianglePart(), reinterpret_cast<const float(*)[3]>(car.PartHinge(0)));
+                        float hinge[5][3];
+                        memcpy(hinge, car.PartHinge(0), sizeof(hinge));
+                        for (int pi : {1, 3, 4}) // the original's hinge points (#374) replace the geometry estimate
+                            partAnims.Hinge(pi, hinge[pi]);
+                        world.SetCarParts(size_t(playerSkinIndex), &car.TrianglePart(), hinge);
                         world.SetCarPartAngles(size_t(playerSkinIndex), ang);
                         garageHoodOpen = ang[1];
                     }

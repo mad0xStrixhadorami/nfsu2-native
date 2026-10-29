@@ -20,6 +20,7 @@ float CarPartAnims::Clip::At(float t) const
 bool CarPartAnims::Load(const std::vector<uint8_t> &f)
 {
     m_clips.clear();
+    memset(m_haveHinge, 0, sizeof(m_haveHinge));
     size_t o = 0;
     while (o + 8 <= f.size()) {
         uint32_t id, sz;
@@ -76,6 +77,14 @@ bool CarPartAnims::Load(const std::vector<uint8_t> &f)
                 m_clips.push_back(std::move(c));
             }
         }
+        if (id == 0x37100 && sz >= 0x18 + 13 * 80 + 64) {
+            // group k (k = 0, 4, 8, 12) starts at +0x18 + k * 80; its translation row is the last row of the 4x4 matrix
+            static const struct { int entry, part; } kMap[] = {{0, 1}, {12, 3}, {8, 4}};
+            for (const auto &m : kMap) {
+                memcpy(m_hinge[m.part], p + 0x18 + size_t(m.entry) * 80 + 48, 12);
+                m_haveHinge[m.part] = true;
+            }
+        }
         o += 8 + sz;
     }
     return !m_clips.empty();
@@ -88,4 +97,12 @@ const CarPartAnims::Clip *CarPartAnims::Find(const char *part) const
         if (c.name.size() >= want.size() && c.name.compare(c.name.size() - want.size(), want.size(), want) == 0)
             return &c;
     return nullptr;
+}
+
+bool CarPartAnims::Hinge(int part, float out[3]) const
+{
+    if (part < 1 || part > 4 || !m_haveHinge[part])
+        return false;
+    memcpy(out, m_hinge[part], 12);
+    return true;
 }
