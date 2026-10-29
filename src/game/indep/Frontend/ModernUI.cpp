@@ -282,7 +282,7 @@ void ModernUI::DrawShotTitle(int w, int h, const char *title, const char *sub, f
     // the title cuts in behind the blade, holds, fades
     const float inP = ease((age - 0.30f) / 0.45f), out = 1.0f - ease((age - (entry ? 1.9f : 1.35f)) / 0.45f);
     if (inP > 0.0f && out > 0.0f) {
-        const float lx = 72 * s + (1.0f - inP) * -90 * s * dir, ty = H * 0.70f;
+        const float lx = 72 * s + (1.0f - inP) * -90 * s * dir, ty = H * 0.46f;
         const float al = inP * out;
         Text(lx, ty - 34 * s, 20 * s, sub, A(signal, al), 0);
         Text(lx, ty - 6 * s, 92 * s, title, A(paper, al), 0);

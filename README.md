@@ -52,6 +52,9 @@ switchable off with environment variables (see the table at the bottom) if you w
 <td colspan="2" align="center"><img src="docs/media/main_menu_2026.gif" width="70%" alt="The new main menu"/><br/><sub><b>New main menu</b> — flat and high-contrast: a column of big caps, a hard-edged signal-yellow highlight that glides to the selected row, a one-line description, your player, cash, reputation and current car, and the 3D showroom behind it. The original FEng carousel still runs underneath as the logic (input, selection, navigation); <code>NFSU2_CLASSIC_MENU=1</code> shows the original screen.</sub></td>
 </tr>
 <tr>
+<td colspan="2" align="center"><img src="docs/media/garage_shops.gif" width="70%" alt="Garage and Body Shop"/><br/><sub><b>Garage and Body Shop</b> — the garage list over the 3D room, then the Body Shop: a category column, the highlighted part with its price, total cost and cash, the camera swooping to the part's side of the car with a title card on every change, and the engine, hood and doors the original's animation data opens. The paint shop, world map, car select, results, reward and countdown are drawn natively the same way.</sub></td>
+</tr>
+<tr>
 <td colspan="2" align="center"><img src="docs/media/menu_flow.gif" width="70%" alt="Quick Race menus"/><br/><sub><b>Quick Race menus</b> — mode select and track select redrawn natively in the same flat style (a sliding yellow blade, a windowed list with lock marks and a scrollbar, the highlighted track's type, distance and best time); the car select, Options categories and the race options use the same list, settings and car panels. The original screens keep running underneath as the logic.</sub></td>
 </tr>
 <tr>
