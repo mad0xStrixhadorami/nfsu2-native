@@ -5532,6 +5532,19 @@ void FEStartupSequence::StartCareerEvent(const Career::Event &ev)
     for (int16_t number : ev.races)
         m_series.races.push_back({number, false, 0});
     m_seriesNextRace = false;
+    // a series quit half-way carries on where it stopped (ISSUES #365)
+    if (m_series.active && m_profile.valid && m_profile.seriesEvent == ev.id && m_profile.seriesNext > 0 && m_profile.seriesNext < ev.races.size() &&
+        m_profile.seriesPlaces.size() >= m_profile.seriesNext) {
+        m_series.next = m_profile.seriesNext;
+        m_series.points = m_profile.seriesPoints;
+        m_series.rivals.assign(m_profile.seriesRivals.begin(), m_profile.seriesRivals.end());
+        for (size_t i = 0; i < m_series.next; ++i)
+            m_series.races[i].run = true, m_series.races[i].place = m_profile.seriesPlaces[i];
+        printf("[Career] series %08x resumed at race %zu/%zu (%d points)\n", ev.id, m_series.next + 1, ev.races.size(), m_series.points);
+    } else if (m_profile.valid && m_profile.seriesEvent) {
+        m_profile.seriesEvent = 0, m_profile.seriesNext = 0, m_profile.seriesPoints = 0;
+        m_profile.seriesRivals.clear(), m_profile.seriesPlaces.clear();
+    }
     ++m_profile.racesEntered;
     Career::SaveCareer(m_profile);
     StartSeriesRace();
@@ -8440,6 +8453,11 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
             m_seriesNextRace = true;
             m_statusReady = false;
             m_lastReward = RaceReward(); // a series race pays nothing; the purse is the win's
+            m_profile.seriesEvent = ev->id, m_profile.seriesNext = uint32_t(m_series.next), m_profile.seriesPoints = m_series.points;
+            m_profile.seriesRivals.assign(m_series.rivals.begin(), m_series.rivals.end());
+            m_profile.seriesPlaces.clear();
+            for (const SeriesRace &sr2 : m_series.races)
+                m_profile.seriesPlaces.push_back(sr2.run ? sr2.place : 0);
             Career::SaveCareer(m_profile);
             printf("[Career] series %08x race %zu/%zu (%d) P%d: %d points (you %d, best rival %d) -> race %d\n",
                    ev->id, done, m_series.races.size(), raceNumber, place, pointsFor(place), m_series.points,
@@ -8451,6 +8469,8 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
                    m_series.points, bestRival);
             m_series = CareerSeries();
             m_lastReward = RaceReward();
+            m_profile.seriesEvent = 0, m_profile.seriesNext = 0, m_profile.seriesPoints = 0;
+            m_profile.seriesRivals.clear(), m_profile.seriesPlaces.clear();
             Career::SaveCareer(m_profile);
             return;
         }
@@ -8460,6 +8480,8 @@ void FEStartupSequence::AwardCareerResult(int raceNumber, int place, float secon
         // 0x00269f28 over a series: leader's points / runner-up's points - 1 (0x00269ad8 sums DAT_004f11a0).
         marginPct = bestRival > 0 ? (float(m_series.points) / float(bestRival) - 1.0f) * 100.0f : 100.0f;
         m_series = CareerSeries();
+        m_profile.seriesEvent = 0, m_profile.seriesNext = 0, m_profile.seriesPoints = 0;
+        m_profile.seriesRivals.clear(), m_profile.seriesPlaces.clear();
     }
     // 0x00268f48: a type-1 event in an area with a signed sponsor pays the sponsor's race purse
     // (record +2) instead of the event's own purse.

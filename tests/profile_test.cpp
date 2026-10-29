@@ -196,6 +196,7 @@ int main()
     p.RecordScore(4311, 0, 12345);
     p.RecordScore(4311, 1, 15000);
     p.RecordScore(4311, 1, 14000);
+    p.seriesEvent = 0x1185ef08, p.seriesNext = 2, p.seriesPoints = 14, p.seriesRivals = {8, 6}, p.seriesPlaces = {1, 2, 0};
     p.signedSponsors[2] = 0x167a374f;
     p.signedSponsors[5] = 0x5e96e1be;
     if (!Career::SaveCareer(p))
@@ -204,6 +205,8 @@ int main()
     Career::Profile q;
     if (!Career::LoadCareer(q, "TEST"))
         return Fail("v3 load failed");
+    if (q.seriesEvent != 0x1185ef08 || q.seriesNext != 2 || q.seriesPoints != 14 || q.seriesRivals.size() != 2 || q.seriesRivals[1] != 6 || q.seriesPlaces.size() != 3 || q.seriesPlaces[1] != 2)
+        return Fail("series state round trip");
     if (q.BestTimeFor(4012, 0) != 90000)
         return Fail("forward key mismatch");
     if (q.BestTimeFor(4012, 1) != 89000)

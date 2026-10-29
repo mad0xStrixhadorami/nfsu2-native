@@ -140,6 +140,10 @@ struct Profile {
     // Career statistics for the Career Status screen (ISSUES #243).
     uint32_t racesEntered = 0; // career races started
     uint32_t moneySpent = 0;   // total spent in the shops
+    // A career race series left half-way (ISSUES #365): the event, the next race, the championship points and every race's result.
+    uint32_t seriesEvent = 0, seriesNext = 0;
+    int32_t seriesPoints = 0;
+    std::vector<int32_t> seriesRivals, seriesPlaces;
     uint32_t repSum[kAreas] = {};   // reputation won per area (ISSUES #335)
     uint32_t repRaces[kAreas] = {}; // the races that paid it
     // Best finishing times (the 0x4fb4ac best-time table, 0x00272e18: {race s16, direction u8, value}).

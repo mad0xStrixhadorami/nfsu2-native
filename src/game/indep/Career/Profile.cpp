@@ -16,7 +16,7 @@ constexpr char kMagic[8] = {'U', '2', 'C', 'A', 'R', 'E', 'E', 'R'};
 // fitted roof scoop and exhaust tip (#186), v9 the owned Body Shop parts (#187), v10 the fitted
 // hood, headlights and taillights (#188), v11 the fitted front/rear bumpers and side skirts (#190),
 // v12 the fitted wide-body kit (#193), v13 the fitted performance parts (#198), v14 the tuning slider bytes (#214).
-constexpr uint32_t kVersion = 22;
+constexpr uint32_t kVersion = 23;
 
 void PutU32(std::vector<uint8_t> &b, uint32_t v)
 {
@@ -227,6 +227,16 @@ std::vector<uint8_t> Serialize(const Profile &p)
         PutU32(payload, p.repSum[a]);
         PutU32(payload, p.repRaces[a]);
     }
+    // v23: a series left half-way (#365).
+    PutU32(payload, p.seriesEvent);
+    PutU32(payload, p.seriesNext);
+    PutU32(payload, uint32_t(p.seriesPoints));
+    PutU32(payload, uint32_t(p.seriesRivals.size()));
+    for (int32_t v : p.seriesRivals)
+        PutU32(payload, uint32_t(v));
+    PutU32(payload, uint32_t(p.seriesPlaces.size()));
+    for (int32_t v : p.seriesPlaces)
+        PutU32(payload, uint32_t(v));
 
     std::vector<uint8_t> out;
     out.insert(out.end(), kMagic, kMagic + 8);
@@ -576,6 +586,24 @@ bool Deserialize(const std::vector<uint8_t> &data, Profile &out)
         for (int a = 0; a < Profile::kAreas; ++a)
             if (!GetU32(payload, q, p.repSum[a]) || !GetU32(payload, q, p.repRaces[a]))
                 return false;
+    if (version >= 23) {
+        uint32_t pts = 0, n = 0, v = 0;
+        if (!GetU32(payload, q, p.seriesEvent) || !GetU32(payload, q, p.seriesNext) || !GetU32(payload, q, pts) || !GetU32(payload, q, n) || n > 64)
+            return false;
+        p.seriesPoints = int32_t(pts);
+        for (uint32_t k = 0; k < n; ++k)
+            if (!GetU32(payload, q, v))
+                return false;
+            else
+                p.seriesRivals.push_back(int32_t(v));
+        if (!GetU32(payload, q, n) || n > 64)
+            return false;
+        for (uint32_t k = 0; k < n; ++k)
+            if (!GetU32(payload, q, v))
+                return false;
+            else
+                p.seriesPlaces.push_back(int32_t(v));
+    }
     if (p.currentCar < 0 || p.currentCar > int(p.cars.size()))
         p.currentCar = 0;
     p.valid = true;
