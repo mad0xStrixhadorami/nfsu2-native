@@ -1394,31 +1394,46 @@ void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_vie
 {
     if (!m_font)
         return;
+    // The street prompt (events, shops, car shows) as a flat card on the right (ISSUES #379): ink, a yellow tick, big caps, two buttons.
+    static float born = -100.0f, lastT = -100.0f;
+    if (t - lastT > 0.5f)
+        born = t; // a new prompt: restart the slide-in
+    lastT = t;
     const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
     SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
-    Rect(0, 0, W, H, {2, 6, 16, 110}, {2, 6, 16, 170});
-    const float pw = 520 * s, ph = (170.0f + 30.0f * float(lineCount) + 70.0f) * s;
-    const float px = W * 0.5f - pw * 0.5f, py = H * 0.5f - ph * 0.5f;
-    Glow(W * 0.5f, H * 0.5f, pw * 1.1f, {20, 80, 170, 60});
-    Glass(px, py, pw, ph, 28 * s, {8, 14, 28, 230}, {120, 190, 255, 170});
-    Quad({px, py}, {px + pw - 28 * s, py}, {px + pw - 28 * s, py + 3 * s}, {px, py + 3 * s}, kAccent, kWarm, kWarm, kAccent);
-    Text(px + 30 * s, py + 18 * s, 17 * s, kicker, Alpha(kWarm, 0.95f), 0);
-    Text(px + 30 * s, py + 38 * s, 44 * s, title, kWhite, 0);
-    for (int i = 0; i < lineCount; ++i) { // "label|value": two columns
+    const float u = std::clamp((t - born) / 0.35f, 0.0f, 1.0f), e = 1.0f - (1.0f - u) * (1.0f - u) * (1.0f - u);
+    Rect(0, 0, W, H, A(ink, int(110 * e)), A(ink, int(160 * e)));
+    const float pw = 470 * s, ph = (150.0f + 40.0f * float(lineCount) + 86.0f) * s;
+    const float px = W - pw - 70 * s + (1.0f - e) * 120 * s, py = H * 0.5f - ph * 0.5f;
+    const float sl = 26 * s;
+    Quad({px + sl, py}, {px + pw, py}, {px + pw, py + ph}, {px, py + ph}, A(ink, 244), A(ink, 244), A(ink, 244), A(ink, 244));
+    Quad({px + sl, py}, {px + sl + 6 * s, py}, {px + 6 * s, py + ph}, {px, py + ph}, signal, signal, signal, signal);
+    const float lx = px + 46 * s;
+    Text(lx, py + 24 * s, 16 * s, kicker, A(signal, 255), 0);
+    float tsz = 50 * s;
+    const float tw = TextWidth(title, tsz);
+    if (tw > pw - 80 * s)
+        tsz *= (pw - 80 * s) / tw;
+    Text(lx, py + 46 * s, tsz, title, paper, 0);
+    for (int i = 0; i < lineCount; ++i) { // "label|value"
         const char *bar = std::strchr(lines[i], '|');
         const std::string label = bar ? std::string(lines[i], size_t(bar - lines[i])) : std::string(lines[i]);
-        Text(px + 32 * s, py + 104 * s + 30 * s * float(i), 22 * s, label, {140, 175, 215, 235}, 0);
+        const float ry = py + 130 * s + 40 * s * float(i);
+        Quad({lx, ry + 33 * s}, {px + pw - 36 * s, ry + 33 * s}, {px + pw - 36 * s, ry + 34 * s}, {lx, ry + 34 * s}, A(paper, 28), A(paper, 28), A(paper, 28), A(paper, 28));
+        Text(lx, ry + 6 * s, 20 * s, label, A(paper, 150), 0);
         if (bar)
-            Text(px + 190 * s, py + 104 * s + 30 * s * float(i), 22 * s, bar + 1, kWhite, 0);
+            Text(px + pw - 36 * s, ry + 4 * s, 26 * s, bar + 1, i == lineCount - 1 ? signal : paper, 2);
     }
     for (int i = 0; i < 2; ++i) {
         const bool on = i == selected;
-        const float bw = pw * 0.5f - 45 * s, bx = px + 30 * s + float(i) * (bw + 30 * s), by = py + ph - 78 * s;
-        const float pulse = 0.75f + 0.25f * std::sin(t * 6.0f);
-        Glass(bx, by, bw, 54 * s, 14 * s, on ? SDL_Color{30, 100, 190, Uint8(170 + 50 * pulse)} : SDL_Color{12, 20, 40, 200},
-              on ? SDL_Color{150, 215, 255, 230} : SDL_Color{80, 120, 170, 120});
-        Text(bx + bw * 0.5f, by + 8 * s, 34 * s, i == 0 ? "ACCEPT" : "DECLINE", on ? kWhite : SDL_Color{175, 200, 230, 235}, 1);
+        const float bw = (pw - 46 * s - 36 * s - 14 * s) * 0.5f, bx = lx + float(i) * (bw + 14 * s), by = py + ph - 76 * s, bh = 52 * s, k = 12 * s;
+        const SDL_Color fill = on ? signal : A(paper, 30);
+        Quad({bx + k, by}, {bx + bw + k, by}, {bx + bw, by + bh}, {bx, by + bh}, fill, fill, fill, fill);
+        Text(bx + bw * 0.5f + k * 0.5f, by + 9 * s, 32 * s, i == 0 ? "ACCEPT" : "DECLINE", on ? ink : A(paper, 220), 1);
     }
+    (void)t;
 }
 
 void ModernUI::DrawToast(int w, int h, std::string_view kicker, std::string_view title, std::string_view body, float age, float life)

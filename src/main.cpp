@@ -2626,6 +2626,18 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            if (const char *tp = getenv("NFSU2_TO_EVENT")) { // dev aid: put the player on the n-th open event locator (ISSUES #379)
+                static bool done = false;
+                if (!done && race.IsFreeRun()) {
+                    done = true;
+                    int n = atoi(tp);
+                    for (const Career::Trigger &t : Career::TriggerTable::Get().All())
+                        if (t.kind == Career::Trigger::kEvent && n-- <= 0) {
+                            car.Place(t.x, t.y, car.Z() + 3.0f, car.Yaw());
+                            break;
+                        }
+                }
+            }
             // Free-roam career events (#303): driving into an event locator offers its event (Accept starts the race).
             if (!pausePkg && !cribPkg && !modernPause && race.IsFreeRun() && startup.CareerProfile().valid && !flyCamera) {
                 const Career::Trigger *inside = nullptr;
