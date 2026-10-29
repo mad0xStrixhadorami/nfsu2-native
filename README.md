@@ -175,9 +175,9 @@ Honest numbers first, because "percent complete" means different things for a de
 | Functions in the PS2 executable (Ghidra) | **16,897** |
 | Functions individually traced to an address in our source/notes | **≈ 810 (4.8 %)** — about **8 %** of the code by size |
 | UI screens (`.fng` packages) ported | **≈ 65 of 150** — about **62 % of the 104 that are not online / debug / demo** |
-| Findings, decodes and design notes logged | **356 entries** in [`ISSUES.md`](ISSUES.md) |
-| Commits | **382** |
-| C++ written | **≈ 42,000 lines in 122 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
+| Findings, decodes and design notes logged | **373 entries** in [`ISSUES.md`](ISSUES.md) |
+| Commits | **393** |
+| C++ written | **≈ 46,500 lines in 131 files** (plus ≈ 287,000 lines of vendored CC0 engine core) |
 | Frame rate | **60 fps** at 1280×720 with MSAA 4× on an integrated GPU (Intel Iris Xe); the new god-ray pass costs ≈ 1.7 ms |
 | Triangles in view in the city | ≈ 1.1 million per frame, ≈ 560 draw calls |
 
