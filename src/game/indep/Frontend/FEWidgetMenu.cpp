@@ -29,6 +29,7 @@ void FEWidgetMenu::Setup(FEPackage *pkg, std::vector<Widget> widgets)
     m_pkg = pkg;
     m_widgets = std::move(widgets);
     m_selected = 0;
+    m_names.clear();
     m_highlighted = SIZE_MAX;
 
     float nameX = 0, nameY = 0, dataX = 0, dataY = 0;

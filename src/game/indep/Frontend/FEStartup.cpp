@@ -248,6 +248,43 @@ bool FEStartupSequence::TrackSelectState(TrackSelectInfo &out) const
     return true;
 }
 
+bool FEStartupSequence::SettingsMenuState(std::string &kicker, std::string &title, std::vector<std::string> &labels, std::vector<std::string> &values,
+                                            size_t &selected) const
+{
+    FEPackage *pkg = m_widgets.Package();
+    if (!pkg || !pkg->GetName() || m_widgets.Count() == 0 || !m_engine)
+        return false;
+    bool onScreen = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        onScreen = onScreen || p == pkg;
+    if (!onScreen)
+        return false;
+    const char *name = pkg->GetName();
+    if (strcasecmp(name, "UI_Options.fng") == 0) {
+        static const char *const kCats[] = {"AUDIO", "VIDEO", "GAMEPLAY", "PLAYER", "CONTROLS", "EA GAMES", "TRAILERS"};
+        kicker = "OPTIONS";
+        title = m_optionCategory >= 0 && m_optionCategory < 7 ? kCats[m_optionCategory] : "SETTINGS";
+    } else if (strcasecmp(name, "UI_QRModeOptions.fng") == 0) {
+        kicker = m_raceMode == 4 ? "SPLIT SCREEN" : "QUICK RACE";
+        title = "RACE OPTIONS";
+    } else
+        return false;
+    labels.clear();
+    values.clear();
+    for (size_t i = 0; i < m_widgets.Count(); ++i) {
+        std::string lab = m_widgets.RowName(i);
+        if (lab.empty())
+            lab = m_fe->LanguageText(m_widgets.TitleHash(i));
+        uint32_t vh = 0;
+        std::string vt;
+        m_widgets.Value(i, vh, vt);
+        labels.push_back(lab);
+        values.push_back(vh ? m_fe->LanguageText(vh) : vt);
+    }
+    selected = m_widgets.Selected();
+    return true;
+}
+
 bool FEStartupSequence::MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const
 {
     if (m_scroller.Empty())
@@ -8932,11 +8969,14 @@ void FEStartupSequence::HandleOptionsLoaded(FEPackage *pkg)
         // UI_Options.fng), so set the row names literally after the generic title pass.
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_2"), "Brightness");
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_3"), "Contrast");
+        m_widgets.SetRowName(1, "Brightness");
+        m_widgets.SetRowName(2, "Contrast");
     } else if (cat == 6) {
         // Trailer row names are literal strings, not language labels.
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_1"), "SSX");
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_2"), "NFL Street");
         FENativeInterface::SetString(pkg, bStringHash("OPTION_NAME_3"), "NASCAR Thunder");
+        m_widgets.SetRowName(0, "SSX"), m_widgets.SetRowName(1, "NFL Street"), m_widgets.SetRowName(2, "NASCAR Thunder");
     }
 }
 

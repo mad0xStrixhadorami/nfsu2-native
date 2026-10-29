@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <string>
@@ -32,6 +33,18 @@ public:
     // FEHASH_INITCOMPLETE: the screen's intro scripts are done; set every row's highlight state.
     void OnInitComplete();
     FEPackage *Package() const { return m_pkg; }
+    // For a native settings list (ISSUES #368): the rows' title hashes, current value text (a language hash or literal), the selection.
+    size_t Count() const { return m_widgets.size(); }
+    size_t Selected() const { return m_selected; }
+    uint32_t TitleHash(size_t i) const { return i < m_widgets.size() ? m_widgets[i].titleLabel : 0; }
+    void Value(size_t i, uint32_t &label, std::string &text) const
+    {
+        label = 0, text.clear();
+        if (i < m_widgets.size())
+            m_widgets[i].draw(label, text);
+    }
+    void SetRowName(size_t i, const std::string &name) { m_names.resize(std::max(m_names.size(), i + 1)), m_names[i] = name; }
+    const std::string &RowName(size_t i) const { static const std::string none; return i < m_names.size() ? m_names[i] : none; }
 
 private:
     void Refresh();
@@ -39,5 +52,6 @@ private:
     FEPackage *m_pkg = nullptr;
     std::vector<Widget> m_widgets;
     size_t m_selected = 0;
+    std::vector<std::string> m_names; // literal row names where the package ships no language label
     size_t m_highlighted = SIZE_MAX; // row whose Highlight script is running
 };

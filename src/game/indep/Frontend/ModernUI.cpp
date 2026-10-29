@@ -855,6 +855,74 @@ void ModernUI::DrawTrackSelect(int w, int h, const TrackSelect &t, float tm)
     key("ARROWS", "MOVE");
 }
 
+void ModernUI::DrawSettings(int w, int h, const Settings &st, float tm)
+{
+    if (!m_font || st.labels.empty())
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.66f, 0}, {W * 0.66f - H * 0.1f, H}, {0, H}, A(ink, 232), A(ink, 0), A(ink, 0), A(ink, 232));
+    Rect(0, 0, W, 90 * s, A(ink, 150), A(ink, 0));
+    Rect(0, H - 110 * s, W, 110 * s, A(ink, 0), A(ink, 190));
+    const float lx = 72 * s;
+    Text(lx, 44 * s, 15 * s, st.kicker, A(paper, 170), 0);
+    Text(lx, 60 * s, 34 * s, st.title, paper, 0);
+    Quad({lx, 104 * s}, {lx + 46 * s, 104 * s}, {lx + 46 * s, 108 * s}, {lx, 108 * s}, signal, signal, signal, signal);
+    const int n = int(st.labels.size()), rows = std::min(n, 10);
+    const int first = std::clamp(st.selected - rows / 2, 0, std::max(0, n - rows));
+    static float hy = -1.0f, last = -1.0f;
+    const float top = 150 * s, pitch = std::min(56 * s, (H - top - 140 * s) / float(rows));
+    const float target = top + pitch * float(st.selected - first);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float bw = W * 0.55f, slant = 14 * s;
+    Quad({lx - 22 * s + slant, hy}, {lx - 22 * s + bw + slant, hy}, {lx - 22 * s + bw, hy + pitch * 0.9f}, {lx - 22 * s, hy + pitch * 0.9f}, signal, signal, signal, signal);
+    const float sz = std::min(34 * s, pitch * 0.62f);
+    for (int i = 0; i < rows; ++i) {
+        const int k = first + i;
+        const bool on = k == st.selected;
+        const float ry = top + pitch * float(i);
+        const float ty = ry + (pitch * 0.9f - sz) * 0.42f;
+        Text(lx, ty, sz, st.labels[size_t(k)], on ? ink : A(paper, 215), 0);
+        const std::string &val = st.values[size_t(k)];
+        if (!val.empty()) {
+            const float vx = lx - 22 * s + bw - 40 * s;
+            Text(vx, ty, sz, val, on ? ink : A(signal, 255), 2);
+            if (on) { // the arrows that say Left / Right change it
+                const float vw = TextWidth(val, sz);
+                const float ax = vx - vw - 18 * s, bx2 = vx + 16 * s, cy = ty + sz * 0.5f, ah = sz * 0.28f;
+                Quad({ax, cy}, {ax + ah, cy - ah}, {ax + ah, cy + ah}, {ax, cy}, ink, ink, ink, ink);
+                Quad({bx2, cy}, {bx2 - ah, cy - ah}, {bx2 - ah, cy + ah}, {bx2, cy}, ink, ink, ink, ink);
+            }
+        }
+    }
+    const float by = H - 52 * s;
+    Quad({lx, by - 10 * s}, {W - lx, by - 10 * s}, {W - lx, by - 9 * s}, {lx, by - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    float x = lx;
+    if (!st.player.empty()) {
+        Text(x, by + 2 * s, 22 * s, st.player, paper, 0);
+        x += TextWidth(st.player, 22 * s) + 28 * s;
+    }
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, by + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, by + 3 * s}, {kx, by + 3 * s}, {kx, by + 25 * s}, {kx - cw, by + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, by + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ESC", "BACK");
+    key("LEFT / RIGHT", "CHANGE");
+    key("UP / DOWN", "MOVE");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {

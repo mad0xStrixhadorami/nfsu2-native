@@ -75,6 +75,15 @@ public:
         std::string title, type, distance, bestLabel, best, region;
     };
     void DrawTrackSelect(int w, int h, const TrackSelect &t, float seconds);
+    // A settings list (ISSUES #368): rows of "label ... < value >", the highlighted row on the yellow blade.
+    struct Settings {
+        std::string kicker, title;
+        std::vector<std::string> labels, values;
+        int selected = 0;
+        std::string player;
+        int money = -1, reputation = -1;
+    };
+    void DrawSettings(int w, int h, const Settings &st, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);

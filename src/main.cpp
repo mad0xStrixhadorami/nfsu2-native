@@ -914,9 +914,29 @@ int main(int argc, char **argv)
         return true;
     };
     // The icon-carousel screens (Career, mode select, options, customize ...) as the flat native list (ISSUES #361); true when one was drawn.
+    bool nativeListVertical = false; // the list just drawn is a carousel (Up / Down map to Left / Right); settings lists are not
     auto drawNativeList = [&](int lw, int lh, float tsec) -> bool {
+        nativeListVertical = false;
         if (!modernUi.Ready() || getenv("NFSU2_CLASSIC_MENU") || startup.IsMessageDialogOpen())
             return false;
+        {
+            ModernUI::Settings st;
+            size_t ssel = 0;
+            if (startup.SettingsMenuState(st.kicker, st.title, st.labels, st.values, ssel)) { // Options / Quick Race options (ISSUES #368)
+                st.selected = int(ssel);
+                for (std::string &v : st.labels)
+                    v.erase(std::remove(v.begin(), v.end(), '?'), v.end());
+                for (std::string &v : st.values)
+                    v.erase(std::remove(v.begin(), v.end(), '?'), v.end());
+                size_t ms = 0;
+                int mon = -1, rep = -1;
+                startup.MainMenuState(ms, st.player, mon, rep);
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawSettings(lw, lh, st, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                return true;
+            }
+        }
         {
             FEStartupSequence::TrackSelectInfo ti;
             if (startup.TrackSelectState(ti)) { // the Quick Race track select (ISSUES #367)
@@ -926,6 +946,7 @@ int main(int argc, char **argv)
                 for (std::string &nm : ts.names)
                     nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
                 SDL_RenderSetLogicalSize(ren, 0, 0);
+                nativeListVertical = true;
                 modernUi.DrawTrackSelect(lw, lh, ts, tsec);
                 SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
                 return true;
@@ -955,6 +976,7 @@ int main(int argc, char **argv)
         size_t ms = 0;
         startup.MainMenuState(ms, lm.player, lm.money, lm.reputation);
         SDL_RenderSetLogicalSize(ren, 0, 0);
+        nativeListVertical = true;
         modernUi.DrawMainMenu(lw, lh, lm, tsec);
         SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
         return true;
@@ -977,9 +999,9 @@ int main(int argc, char **argv)
             sp.distance = 9.0f;
             sp.lookZ = 1.0f;
             // a warm concrete-and-sodium studio instead of the default blue wash (the menu itself carries the one accent colour)
-            sp.accent[0] = 0.42f, sp.accent[1] = 0.36f, sp.accent[2] = 0.28f;
-            sp.accent2[0] = 0.20f, sp.accent2[1] = 0.17f, sp.accent2[2] = 0.08f;
         }
+        sp.accent[0] = 0.42f, sp.accent[1] = 0.36f, sp.accent[2] = 0.28f; // one warm concrete studio for every menu car scene
+        sp.accent2[0] = 0.20f, sp.accent2[1] = 0.17f, sp.accent2[2] = 0.08f;
         sp.time = seconds;
         SDL_RenderSetLogicalSize(ren, 0, 0);
         int bw, bh;
@@ -3632,7 +3654,7 @@ int main(int argc, char **argv)
                 SDL_GetRendererOutputSize(ren, &glw, &glh);
                 nativeGarageList = drawNativeList(glw, glh, float(now) * 0.001f);
             }
-            fe.SetVerticalNav(nativeGarage || nativeGarageList);
+            fe.SetVerticalNav(nativeGarage || (nativeGarageList && nativeListVertical));
             if (nativeGarage) {
                 std::vector<const char *> items;
                 std::vector<char> dead = garageDis;
@@ -3827,7 +3849,7 @@ int main(int argc, char **argv)
             int nlw = 0, nlh = 0;
             SDL_GetRendererOutputSize(ren, &nlw, &nlh);
             const bool nativeList = !nativeMenu && drawNativeList(nlw, nlh, float(elapsed) * 0.001f);
-            fe.SetVerticalNav(nativeMenu || nativeList);
+            fe.SetVerticalNav(nativeMenu || (nativeList && nativeListVertical));
             if (nativeMenu) {
                 static const char *const kItems[] = {"CAREER", "QUICK RACE", "2 PLAYER", "ONLINE", "CUSTOMIZE", "PROFILE", "OPTIONS"};
                 static const char *const kNotes[] = {"Build your reputation across five districts.", "Jump straight into a single event.",

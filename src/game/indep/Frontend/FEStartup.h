@@ -206,6 +206,8 @@ public:
         std::string title, type, distance, bestLabel, best;
     };
     bool TrackSelectState(TrackSelectInfo &out) const;
+    // The settings rows (Options categories, Quick Race options) for the native screen (ISSUES #368).
+    bool SettingsMenuState(std::string &kicker, std::string &title, std::vector<std::string> &labels, std::vector<std::string> &values, size_t &selected) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).
