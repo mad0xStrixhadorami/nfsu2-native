@@ -1250,6 +1250,8 @@ vec4 blocks(vec2 q, float depth, float seed, float soft) {
     vec3 col = base;
     col = mix(col, base * 1.9 + 0.01, balcony);                       // the slab edge catches a little light
     col = mix(col, vec3(0.012, 0.012, 0.02), rail);
+    float ac = box(f, vec2(0.78, 0.40), vec2(0.13, 0.11), soft * 6.0) * step(0.8, h21(cell + id * 1.3 + 11.0)); // an air-conditioning compressor
+    col = mix(col, vec3(0.16, 0.17, 0.2) * (0.7 + 0.5 * step(0.5, fract(f.y * 18.0))), ac);
     col += wcol * win * lit * mix(1.0, 0.55, depth);
     col += vec3(0.30, 0.20, 0.12) * win * (1.0 - lit) * 0.04;
     col = mix(col, haze, depth * 0.55);                               // atmospheric haze: far blocks sink into the glow
@@ -1297,6 +1299,60 @@ vec3 world(vec2 q) {
         col += nc * strokes * inside * 2.0 + vec3(1.0) * strokes * inside * 0.35;
         float gl = exp(-length(max(abs(sp) - 1.0, 0.0) * vec2(0.27, 0.05)) * 18.0);
         col += nc * gl * 0.25;
+    }
+    // left: an elevated neon burger sign on a post (layered orange and green tubes) that floods the street with warm light
+    {
+        vec2 bp = vec2(q.x * 1.1 + par * 0.8 + 0.42, q.y - 0.52);
+        float r = 0.17;
+        float bunTop = bp.y > 0.02 ? abs(length(bp - vec2(0.0, 0.02)) - r) : 9.0;
+        float bunBot = abs(bp.y + 0.115) - 0.0;
+        float bunBotLine = max(bunBot, abs(bp.x) - r * 0.95);
+        float patty = max(abs(bp.y + 0.045) - 0.012, abs(bp.x) - r);
+        float lettuce = abs(bp.y - 0.0 + 0.012 * sin(bp.x * 70.0)) - 0.004;
+        lettuce = max(lettuce, abs(bp.x) - r * 1.02);
+        float tube = min(bunTop, bunBotLine);
+        vec3 neon = vec3(1.0, 0.45, 0.08) * exp(-tube * 150.0) * 2.4 + vec3(1.0, 0.7, 0.4) * exp(-tube * 600.0);
+        neon += vec3(0.15, 1.0, 0.30) * exp(-max(lettuce, 0.0) * 170.0) * 2.0;
+        neon += vec3(0.75, 0.22, 0.05) * exp(-max(patty, 0.0) * 170.0) * 1.6;
+        col += neon;
+        col += vec3(1.0, 0.5, 0.15) * exp(-length(bp * vec2(1.0, 1.2)) * 4.5) * 0.42; // the atmospheric halo
+        float post = box(vec2(bp.x, q.y), vec2(0.0, 0.17), vec2(0.011, 0.19), 0.003);
+        col = mix(col, vec3(0.012), post);
+    }
+    // right: a blue-and-white municipal street sign on a utility pole
+    {
+        vec2 sp2 = vec2(q.x * 1.0 + par * 0.5 - 0.85, q.y - 0.26);
+        float pole = box(sp2, vec2(0.0, -0.12), vec2(0.007, 0.26), 0.002);
+        float board = box(sp2, vec2(0.0, 0.0), vec2(0.13, 0.04), 0.003);
+        float rim = board - box(sp2, vec2(0.0, 0.0), vec2(0.122, 0.032), 0.003);
+        float txt = box(sp2, vec2(0.0, 0.0), vec2(0.1, 0.006), 0.002) + box(sp2, vec2(-0.05, 0.0), vec2(0.004, 0.02), 0.002) * step(0.5, fract(sp2.x * 22.0));
+        col = mix(col, vec3(0.01), pole);
+        col = mix(col, vec3(0.02, 0.10, 0.30) * 1.6, board);
+        col += vec3(0.8, 0.85, 0.9) * (rim + clamp(txt, 0.0, 1.0) * board) * 0.55;
+    }
+    // Mediterranean fan palms against the haze, and parked cars along the curb (silhouettes, softly out of focus)
+    for (int i = 0; i < 3; ++i) {
+        float px = (float(i) * 1.37 - 0.55) - mod(par * 0.45 - float(i) * 0.4 + 5.0, 4.11) + 2.0;
+        vec2 pp = vec2(q.x - px, q.y);
+        float trunk = box(vec2(pp.x - 0.03 * pp.y, pp.y), vec2(0.0, 0.26), vec2(0.012, 0.26), 0.003);
+        vec2 top = vec2(0.0, 0.52 + 0.05 * float(i));
+        float fr = 0.0;
+        for (int k = 0; k < 9; ++k) {
+            float ang = 3.14159 * (float(k) + 0.5) / 9.0;
+            vec2 dv = vec2(cos(ang), sin(ang));
+            vec2 rel = pp - top;
+            float t = clamp(dot(rel, dv), 0.0, 0.2);
+            vec2 cp = dv * t + vec2(0.0, -t * t * 2.2);
+            fr = max(fr, 1.0 - smoothstep(0.002, 0.010, length(rel - cp)));
+        }
+        col = mix(col, vec3(0.008, 0.012, 0.016), max(trunk, fr) * 0.95);
+    }
+    for (int i = 0; i < 4; ++i) {
+        float cxp = float(i) * 0.9 - 1.1 + 0.9 * fract(par * 0.1);
+        vec2 cp = vec2(q.x - cxp, q.y - 0.045);
+        float body = box(cp, vec2(0.0, 0.0), vec2(0.22, 0.035), 0.004) + box(cp, vec2(-0.02, 0.05), vec2(0.12, 0.028), 0.004);
+        col = mix(col, vec3(0.012, 0.014, 0.02), clamp(body, 0.0, 1.0) * 0.9);
+        col += vec3(1.0, 0.05, 0.03) * box(cp, vec2(0.205, 0.012), vec2(0.012, 0.007), 0.003) * 1.6 * step(0.4, h11(float(i) * 3.1));
     }
     // sodium street lamps and other lights as bokeh discs (the depth of field is open wide)
     for (int i = 0; i < 18; ++i) {
