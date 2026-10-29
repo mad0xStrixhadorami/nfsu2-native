@@ -4732,6 +4732,40 @@ void FEStartupSequence::RefreshPaintSwatches(FEPackage *pkg)
     RefreshPaintCost(pkg);
 }
 
+bool FEStartupSequence::PaintShopState(PaintShopInfo &out) const
+{
+    if (m_paintVinyl || !m_engine || strcasecmp(m_lastMenu.c_str(), "UI_Paint.fng") != 0)
+        return false;
+    bool on = false;
+    for (FEPackage *p = m_engine->GetPackageList()->GetFirstPackage(); p; p = p->GetNext())
+        on = on || (p->GetName() && strcasecmp(p->GetName(), "UI_Paint.fng") == 0);
+    if (!on)
+        return false;
+    out = PaintShopInfo();
+    for (size_t i = 0; i < kPaintPartCount; ++i)
+        out.parts.push_back(m_fe->LanguageText(kPaintParts[i].label));
+    out.part = std::min(m_paintPart, kPaintPartCount - 1);
+    const size_t count = m_fe->Paint().Count(m_paintSet);
+    for (size_t i = 0; i < count; ++i) {
+        const PaintColor &c = m_fe->Paint().At(m_paintSet, i);
+        out.colours.push_back(uint32_t(c.r) << 16 | uint32_t(c.g) << 8 | c.b);
+    }
+    out.selected = std::min<size_t>(m_paintSel, count ? count - 1 : 0);
+    char text[48];
+    snprintf(text, sizeof(text), "%s %02u", PaintCatalog::SetName(m_paintSet), unsigned(m_paintSel + 1));
+    out.finish = text;
+    unsigned price = 0;
+    if (m_paintGridActive && count) {
+        const PaintColor &color = m_fe->Paint().At(m_paintSet, out.selected);
+        price = m_fe->Paint().Price(kPaintParts[out.part].id, m_paintSet, color);
+    }
+    snprintf(text, sizeof(text), "$%u", price);
+    out.price = text;
+    out.grid = m_paintGridActive;
+    out.money = m_profile.valid ? m_profile.money : 0;
+    return true;
+}
+
 void FEStartupSequence::PositionPaintHighlight(FEPackage *pkg)
 {
     FEObject *grid = pkg->FindObjectByHash(kPaintSwatchGroup);

@@ -101,6 +101,15 @@ public:
         bool fitted = false;
     };
     void DrawShop(int w, int h, const Shop &sh, float seconds);
+    // The paint shop (ISSUES #372): the part list on the left, the colour grid along the bottom with the selected swatch ringed.
+    struct PaintShop {
+        std::vector<std::string> parts;
+        std::vector<uint32_t> colours;
+        int part = 0, selected = 0, money = 0;
+        std::string finish, price;
+        bool grid = false;
+    };
+    void DrawPaintShop(int w, int h, const PaintShop &p, float seconds);
     void DrawBackdrop(int w, int h, float seconds);
     // Race: the HUD cluster over the world.
     void DrawHud(int w, int h, const Hud &hud, float seconds);

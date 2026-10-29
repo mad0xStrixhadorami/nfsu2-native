@@ -219,6 +219,16 @@ public:
         bool fitted = false;
     };
     bool PartsShopState(PartsShopInfo &out) const;
+    // The Graphics Shop's paint screen for the native view (ISSUES #372).
+    struct PaintShopInfo {
+        std::vector<std::string> parts;
+        size_t part = 0, selected = 0;
+        std::vector<uint32_t> colours; // 0xRRGGBB of the current finish
+        std::string finish, price;
+        bool grid = false; // the swatch grid has the focus
+        int money = 0;
+    };
+    bool PaintShopState(PaintShopInfo &out) const;
     bool MainMenuState(size_t &selected, std::string &player, int &money, int &reputation) const;
     // True while GenericDialog_SMALL.fng is up: the prompt covers the screen that opened it, and the
     // 3D car preview drawn after the packages must stay behind it (ISSUES #189).

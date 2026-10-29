@@ -945,6 +945,19 @@ int main(int argc, char **argv)
             }
         }
         {
+            FEStartupSequence::PaintShopInfo pa;
+            if (startup.PaintShopState(pa)) { // the paint shop (ISSUES #372)
+                ModernUI::PaintShop ps;
+                ps.parts = pa.parts, ps.colours = pa.colours, ps.part = int(pa.part), ps.selected = int(pa.selected), ps.money = pa.money;
+                ps.finish = pa.finish, ps.price = pa.price, ps.grid = pa.grid;
+                SDL_RenderSetLogicalSize(ren, 0, 0);
+                modernUi.DrawPaintShop(lw, lh, ps, tsec);
+                SDL_RenderSetLogicalSize(ren, FENativeInterface::kScreenWidth, FENativeInterface::kScreenHeight);
+                nativeListVertical = false;
+                return true;
+            }
+        }
+        {
             FEStartupSequence::PartsShopInfo pi;
             if (startup.PartsShopState(pi)) { // the Body Shop (ISSUES #371)
                 ModernUI::Shop sh;

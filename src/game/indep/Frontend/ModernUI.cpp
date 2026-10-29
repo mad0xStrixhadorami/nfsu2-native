@@ -1059,6 +1059,83 @@ void ModernUI::DrawShop(int w, int h, const Shop &sh, float tm)
     key("LEFT / RIGHT", "CATEGORY");
 }
 
+void ModernUI::DrawPaintShop(int w, int h, const PaintShop &p, float tm)
+{
+    if (!m_font)
+        return;
+    const float s = float(h) / 720.0f, W = float(w), H = float(h);
+    const SDL_Color ink{10, 10, 11, 255}, paper{244, 244, 240, 255}, signal{255, 214, 10, 255};
+    auto A = [](SDL_Color c, int a) { return SDL_Color{c.r, c.g, c.b, Uint8(a)}; };
+    SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_BLEND);
+    Quad({0, 0}, {W * 0.28f, 0}, {W * 0.28f - H * 0.08f, H}, {0, H}, A(ink, 225), A(ink, 0), A(ink, 0), A(ink, 225));
+    Rect(0, H - 230 * s, W, 230 * s, A(ink, 0), A(ink, 232));
+    Rect(0, 0, W, 80 * s, A(ink, 130), A(ink, 0));
+    const float lx = 56 * s;
+    Text(lx, 38 * s, 15 * s, "GRAPHICS SHOP", A(paper, 170), 0);
+    Text(lx, 54 * s, 30 * s, "PAINT", paper, 0);
+    Quad({lx, 94 * s}, {lx + 46 * s, 94 * s}, {lx + 46 * s, 98 * s}, {lx, 98 * s}, signal, signal, signal, signal);
+    const int n = int(p.parts.size());
+    const float top = 124 * s, pitch = std::min(44 * s, (H - 340 * s - top) / std::max(1, n));
+    static float hy = -1.0f, last = -1.0f;
+    const float target = top + pitch * float(p.part);
+    if (hy < 0)
+        hy = target;
+    const float dt = last < 0 ? 0.016f : std::min(0.05f, tm - last);
+    last = tm;
+    hy += (target - hy) * std::min(1.0f, dt * 18.0f);
+    const float bw = 250 * s, sl = 12 * s;
+    const SDL_Color hc = p.grid ? A(paper, 235) : signal; // the highlight turns white while the swatch grid has the focus
+    Quad({lx - 18 * s + sl, hy}, {lx - 18 * s + bw + sl, hy}, {lx - 18 * s + bw, hy + pitch * 0.9f}, {lx - 18 * s, hy + pitch * 0.9f}, hc, hc, hc, hc);
+    for (int i = 0; i < n; ++i) {
+        std::string nm = p.parts[size_t(i)];
+        nm.erase(std::remove(nm.begin(), nm.end(), '?'), nm.end());
+        const float sz = std::min(26 * s, pitch * 0.62f);
+        Text(lx, top + pitch * float(i) + (pitch * 0.9f - sz) * 0.4f, sz, nm, i == p.part ? ink : A(paper, 205), 0);
+    }
+    // the colour grid: 20 columns, ringed selection
+    const int cols = 20, cnt = int(p.colours.size()), rows = (cnt + cols - 1) / cols;
+    const float cell = std::min(34 * s, (W - 144 * s - 20 * s * 0) / float(cols)), gx = W * 0.5f - cell * float(cols) * 0.5f, gy = H - 160 * s;
+    for (int i = 0; i < cnt; ++i) {
+        const float x = gx + cell * float(i % cols), y = gy + cell * float(i / cols);
+        const uint32_t c = p.colours[size_t(i)];
+        const SDL_Color col{Uint8(c >> 16), Uint8(c >> 8), Uint8(c), 255};
+        Quad({x + 2 * s, y + 2 * s}, {x + cell - 2 * s, y + 2 * s}, {x + cell - 2 * s, y + cell - 2 * s}, {x + 2 * s, y + cell - 2 * s}, col, col, col, col);
+    }
+    if (cnt > 0) {
+        const float x = gx + cell * float(p.selected % cols), y = gy + cell * float(p.selected / cols), r = 3 * s;
+        const SDL_Color ring = p.grid ? signal : A(paper, 160);
+        Quad({x - r, y - r}, {x + cell + r, y - r}, {x + cell + r, y}, {x - r, y}, ring, ring, ring, ring);
+        Quad({x - r, y + cell}, {x + cell + r, y + cell}, {x + cell + r, y + cell + r}, {x - r, y + cell + r}, ring, ring, ring, ring);
+        Quad({x - r, y}, {x, y}, {x, y + cell}, {x - r, y + cell}, ring, ring, ring, ring);
+        Quad({x + cell, y}, {x + cell + r, y}, {x + cell + r, y + cell}, {x + cell, y + cell}, ring, ring, ring, ring);
+    }
+    // the selected colour's name and price
+    const float by = H - 215 * s;
+    Text(lx + 16 * s, by, 44 * s, p.finish, paper, 0);
+    Text(W - 72 * s, by + 4 * s, 15 * s, "PRICE", A(paper, 140), 2);
+    Text(W - 72 * s, by + 20 * s, 40 * s, p.price, signal, 2);
+    (void)rows;
+    const float ky = H - 52 * s;
+    Quad({lx, ky - 10 * s}, {W - lx, ky - 10 * s}, {W - lx, ky - 9 * s}, {lx, ky - 9 * s}, A(paper, 70), A(paper, 70), A(paper, 70), A(paper, 70));
+    char cash[40];
+    snprintf(cash, sizeof(cash), "CASH  $%d", p.money);
+    Text(lx, ky + 2 * s, 22 * s, cash, paper, 0);
+    float kx = W - lx;
+    auto key = [&](const char *cap, const char *what) {
+        const float wl = TextWidth(what, 18 * s);
+        Text(kx, ky + 4 * s, 18 * s, what, A(paper, 200), 2);
+        kx -= wl + 10 * s;
+        const float cw = TextWidth(cap, 14 * s) + 16 * s;
+        Quad({kx - cw, ky + 3 * s}, {kx, ky + 3 * s}, {kx, ky + 25 * s}, {kx - cw, ky + 25 * s}, A(paper, 235), A(paper, 235), A(paper, 235), A(paper, 235));
+        Text(kx - cw * 0.5f, ky + 6 * s, 14 * s, cap, ink, 1);
+        kx -= cw + 26 * s;
+    };
+    key("ESC", "BACK");
+    key("ENTER", p.grid ? "INSTALL" : "PICK");
+    key("Q / E", "FINISH");
+    key("ARROWS", "MOVE");
+}
+
 void ModernUI::DrawEngage(int w, int h, std::string_view kicker, std::string_view title, const char *const *lines, int lineCount, int selected,
                           float t)
 {
