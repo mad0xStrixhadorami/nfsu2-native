@@ -37,6 +37,9 @@ add_executable(bware_test tests/bware_test.cpp src/platform/linux/bFunkStub.cpp 
 target_include_directories(bware_test PRIVATE src)
 target_link_libraries(bware_test PRIVATE bware)
 add_test(NAME bware COMMAND bware_test)
+add_executable(roadnet_test tests/roadnet_test.cpp src/game/indep/World/RoadNet.cpp)
+target_include_directories(roadnet_test PRIVATE src)
+add_test(NAME roadnet COMMAND roadnet_test)
 
 # Career save format: best-time direction key (0x4fb4ac) and v1 compatibility.
 add_executable(profile_test tests/profile_test.cpp src/game/indep/Career/Profile.cpp src/game/indep/Career/Records.cpp src/game/indep/Career/Memcard.cpp)
